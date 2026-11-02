@@ -1,12 +1,11 @@
 [general]
-email=seantobrien@gmail.com
 name=DCS Core
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Shared base of the Canadian Lidar Data Collection Systems plugins (PosPro, AlignPro, CloudPro): one project per job, handover files between stages, stale-result detection, shared menu and look.
 version=1.0.1
 author=Canadian Lidar
-email=
+email=seantobrien@gmail.com
 about=Install this before PosPro, AlignPro and CloudPro. It keeps one project per job in Processing/<Name>/ beside the captures, records what each stage published and what it was built from, flags results that are out of date when an earlier stage is re-run, and gives every plugin the same menu, look and chain bar. It has no window of its own.
 tracker=
 repository=
