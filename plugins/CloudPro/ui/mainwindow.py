@@ -1,0 +1,1987 @@
+"""CloudPro main window (DCS stage 03).
+
+  header   logo · name · MENU · PROJECT · PROPERTIES ........ chain bar · inputs · update
+  tools    pan · selection shape · above/below line · measure · info | action · inside/outside ·
+           class · line | undo · redo · rejected · zoom all · sizes   (movable, can float)
+  quarters PLAN (+ project grid, drive lines, Inspection Area)  |  3D
+           SLICE (cross-section or profile, slice tool bar)     |  AUTOMATIC FILTERS · LINES CLASSES INFO · HISTORY
+  status   cursor · counts · messages · progress
+
+Every bar, button and handle is painted by CloudPro (ui/chrome.py) so a
+platform style cannot turn it white; the rest of the look comes from DCS
+Core."""
+import datetime as _dt
+import math
+import os
+import threading
+import time
+import traceback
+
+import numpy as np
+
+from .. import __version__ as VERSION
+from ..core import chain
+from ..core import filters as F
+from ..core import importer as IM
+from ..core.edits import EditManager
+from ..core.pointset import PointSet, rect_corners, to_box_frame
+from ..core.project import Project
+from ..core.store import REJ_AUTO, REJ_MANUAL, REJ_ORIG, REJECTED
+from ..qt import QShortcut, QtCore, QtGui, QtWidgets, Qt, Signal, exec_
+from . import chrome, icons, render, theme
+from .dialogs import ExportDialog, ImportDialog
+from .filterpanel import FilterPanel
+from .props import AreaProperties, InfoPanel, ProjectProperties
+from .viewpanes import PlanPane, SlicePane, View3DPane
+
+PLUGIN = "CloudPro"
+CLASS_SHORTLIST = [1, 2, 3, 4, 5, 6, 7, 9, 11, 14, 18, 64, 65, 66, 67, 68, 69, 70, 71]
+FILE_COLOURS = np.array([render.hex_rgb(c) for c in ("#00e5aa", "#3ab4f2", "#9b7bff", "#f5a623", "#e84855", "#7bd389",
+                                                     "#ff8fab", "#4dd0e1", "#ffd166", "#c792ea", "#80cbc4", "#f78c6c")],
+                        np.uint8)
+
+
+class Bridge(QtCore.QObject):
+    progress = Signal(float, str)
+    done = Signal(object, object)
+
+
+class MainWindow(QtWidgets.QMainWindow):
+    def __init__(self, iface=None, parent=None):
+        super().__init__(parent)
+        self.iface = iface
+        self.map_pick = None
+        self.setWindowTitle("CloudPro  -  Canadian Lidar  -  Data Collection Systems")
+        self.resize(1680, 1000)
+        self.project = None
+        self.edits = None
+        self.ps = PointSet(0)
+        self.box = None
+        self.lut = "Rainbow"
+        self.show_rejected = True
+        self.tool = "pan"
+        self.shape = "rect"
+        self.linemode = "above"
+        self.action = "reject"
+        self.where = "inside"
+        self.edit_class = 2
+        self.edit_line = -1
+        self.line_enabled = {}
+        self.class_hidden = set()
+        self.file_hidden = set()
+        self.track_hidden = set()
+        self.file_idx = np.zeros(0, np.int32)
+        self.selected = None
+        self.preview = None
+        self.follow_line = -1
+        self.tracks = {}
+        self._col_cache = {}
+        self._busy = False
+        self._prev_cancel = None
+        self._prev_pending = False
+        self._edit_lock = None
+        self._props = None
+        self._area = None
+        self.bridge = Bridge()
+        self.bridge.progress.connect(self._on_progress)
+        self.bridge.done.connect(self._on_done)
+        self._build()
+        theme.apply(self)
+        self._grid_timer = QtCore.QTimer(self)
+        self._grid_timer.timeout.connect(self._rebuild_dirty_grids)
+        self._grid_timer.start(2500)
+        self._chain_timer = QtCore.QTimer(self)
+        self._chain_timer.timeout.connect(self.refresh_chain)
+        self._chain_timer.start(5000)
+
+    # =================================================================== build
+    def _build(self):
+        self.setMenuWidget(self._header())
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self._tools())
+        self.plan_pane = PlanPane()
+        self.slice_pane = SlicePane()
+        self.v3d_pane = View3DPane()
+        self.plan = self.plan_pane.view
+        self.slice = self.slice_pane.view
+        self.v3d = self.v3d_pane.view
+        for v in (self.plan, self.slice):
+            v.selectionMade.connect(lambda m, t, vv=v: self.edit_selection(vv, m))
+            v.pointPicked.connect(lambda j, vv=v: self.show_point(vv.idx[j] if j >= 0 else -1))
+            v.cursorMoved.connect(lambda a, b, vv=v: self._cursor(vv, a, b))
+            v.keyNav.connect(self._key_nav)
+            v.measured.connect(lambda t: self.status("Measure: " + t, 15000))
+            v.toolRequested.connect(self.set_tool)
+            v.menu_provider = self._view_menu
+        self.v3d.selectionMade.connect(lambda m, t: self.edit_selection(self.v3d, m))
+        self.v3d.pointPicked.connect(lambda j: self.show_point(self.v3d.idx[j] if j >= 0 else -1))
+        self.plan.boxChanged.connect(self._box_from_plan)
+        self.plan.slice_lines = self._plan_slice_lines
+        self.slice.overlays.append(self._slice_overlay)
+        self.plan_pane.colourChanged.connect(lambda m: self._view_colour("plan", m))
+        self.slice_pane.colourChanged.connect(lambda m: self._view_colour("slice", m))
+        self.v3d_pane.colourChanged.connect(lambda m: self._view_colour("3d", m))
+        self.plan_pane.grid.currentTextChanged.connect(self._grid_attr)
+        self.slice_pane.sliceChanged.connect(self._slice_changed)
+        self.slice_pane.stepRequested.connect(lambda d: self.step("sec_next" if d > 0 else "sec_prev"))
+        self.v3d_pane.what.currentTextChanged.connect(lambda _t: self.refresh_views(which=("3d",)))
+
+        self.filters = FilterPanel()
+        self.filters.previewRequested.connect(self.run_preview)
+        self.filters.previewOff.connect(self.clear_preview)
+        self.filters.acceptRequested.connect(self.accept_preview)
+        self.filters.runRequested.connect(self.run_scope)
+        self.infop = InfoPanel()
+        self.lines_w, self.classes_w, self.info = self.infop.lines_w, self.infop.classes_w, self.infop.info
+        self.lines_w.itemChanged.connect(self._line_toggled)
+        self.lines_w.customContextMenuRequested.connect(self._lines_menu)
+        self.classes_w.itemChanged.connect(self._class_toggled)
+        self.history = QtWidgets.QListWidget()
+        self.history.setFont(theme.mono(10))
+        self.tabs = QtWidgets.QTabWidget()
+        self.tabs.addTab(self.filters, "AUTOMATIC FILTERS")
+        self.tabs.addTab(self.infop, "LINES · CLASSES · INFO")
+        self.tabs.addTab(self.history, "HISTORY")
+
+        self.left = chrome.Splitter(Qt.Orientation.Vertical)
+        self.left.addWidget(self.plan_pane)
+        self.left.addWidget(self.slice_pane)
+        self.right = chrome.Splitter(Qt.Orientation.Vertical)
+        self.right.addWidget(self.v3d_pane)
+        self.right.addWidget(self.tabs)
+        self.outer = chrome.Splitter(Qt.Orientation.Horizontal)
+        self.outer.addWidget(self.left)
+        self.outer.addWidget(self.right)
+        for s in (self.left, self.right, self.outer):
+            s.setHandleWidth(3)
+            s.setChildrenCollapsible(False)
+        self.left.setSizes([500, 500])
+        self.right.setSizes([500, 500])
+        self.outer.setSizes([840, 840])
+        host = QtWidgets.QWidget()
+        hl = QtWidgets.QVBoxLayout(host)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(0)
+        hl.addWidget(self.outer, 1)
+        hl.addWidget(self._status_strip())
+        self.setCentralWidget(host)
+        self._shortcuts()
+        self._apply_tool()
+
+    # ------------------------------------------------------------------ header
+    def _header(self):
+        from dcs_core.stepbar import StepBar
+        from dcs_core.widgets import Logo
+        h = chrome.HeaderStrip()
+        lay = QtWidgets.QHBoxLayout(h)
+        lay.setContentsMargins(12, 6, 12, 6)
+        lay.setSpacing(12)
+        lay.addWidget(Logo(42))
+        brand = QtWidgets.QVBoxLayout()
+        brand.setSpacing(1)
+        t1 = QtWidgets.QLabel("DATA COLLECTION SYSTEMS")
+        t1.setObjectName("ppBrandTitle")
+        t2 = QtWidgets.QLabel("CLOUDPRO · POINT CLOUD")
+        t2.setObjectName("ppBrandSub")
+        brand.addWidget(t1)
+        brand.addWidget(t2)
+        lay.addLayout(brand)
+        lay.addSpacing(8)
+        self.btn_menu = chrome.IconButton("menu", "Georeference, publish, export, save, pick on map, QGIS layers",
+                                          size=34, text="MENU")
+        self.btn_menu.clicked.connect(self._main_menu)
+        lay.addWidget(self.btn_menu)
+        self.btn_project = QtWidgets.QToolButton()
+        self.btn_project.setObjectName("ppProject")
+        self.btn_project.setText("NO PROJECT  \u25be")
+        self.btn_project.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        m = QtWidgets.QMenu(self.btn_project)
+        m.addAction("New job project...", self.new_project)
+        m.addAction("Open project...", self.open_project)
+        self.recent_menu = m.addMenu("Recent")
+        self.recent_menu.aboutToShow.connect(self._fill_recent)
+        m.addSeparator()
+        m.addAction("Open the project folder", self.open_folder)
+        m.addAction("Raw data moved? Relocate the job folder...", self.relocate)
+        m.addAction("Save the QGIS project in the project folder", self.save_qgis_project)
+        theme.dark_menu(m)
+        theme.dark_menu(self.recent_menu)
+        self.btn_project.setMenu(m)
+        lay.addWidget(self.btn_project)
+        self.btn_props = chrome.IconButton("props", "Project properties: information, geodetics, survey "
+                                                    "configuration, project files (stays open while you work)",
+                                           size=34, text="PROPERTIES")
+        self.btn_props.clicked.connect(self.show_properties)
+        lay.addWidget(self.btn_props)
+        lay.addStretch(1)
+        self.chainbar = StepBar("cloudpro")
+        self.chainbar.setFixedWidth(360)
+        lay.addWidget(self.chainbar)
+        self.lbl_inputs = QtWidgets.QLabel("")
+        self.lbl_inputs.setObjectName("ppVal")
+        self.lbl_inputs.setWordWrap(True)
+        self.lbl_inputs.setFixedWidth(250)
+        lay.addWidget(self.lbl_inputs)
+        self.btn_update = QtWidgets.QPushButton("Update")
+        self.btn_update.setObjectName("ppPrimary")
+        self.btn_update.setToolTip("Re-georeference with the current PosPro trajectory and AlignPro calibration; "
+                                   "every manual and filter edit is carried over")
+        self.btn_update.clicked.connect(self.georeference)
+        self.btn_update.hide()
+        lay.addWidget(self.btn_update)
+        return h
+
+    def _main_menu(self):
+        m = QtWidgets.QMenu(self)
+        for txt, fn, sc in (("Georeference / update the points...", self.georeference, "Ctrl+I"),
+                            ("Publish for the job (LAS, ground grid, cloud.json)...", self.publish_dialog, "Ctrl+P"),
+                            ("Export (LAS, XYZ, grid) anywhere...", self.export, "Ctrl+E"),
+                            ("Save", self.save_project, "Ctrl+S"), (None, None, None),
+                            ("Pick the Inspection Area on the QGIS map", self.pick_on_map, ""),
+                            ("Add the drive lines and Inspection Area to QGIS", self.add_qgis_layers, ""),
+                            (None, None, None),
+                            ("Add other .clraw files to the job...", self.import_lines, ""),
+                            ("Remove all points (keep settings)...", self.reset_points, ""),
+                            (None, None, None), ("Keys and mouse", self.show_help, "F1")):
+            if txt is None:
+                m.addSeparator()
+                continue
+            a = m.addAction(txt, fn)
+            if sc:
+                a.setShortcut(QtGui.QKeySequence(sc))
+        theme.dark_menu(m)
+        exec_(m, self.btn_menu.mapToGlobal(self.btn_menu.rect().bottomLeft()))
+
+    # ------------------------------------------------------------------ tool bar
+    def _tools(self):
+        tb = chrome.ToolBar("Tools", self)
+        tb.setToolTip("Drag the grip to move this tool bar or float it")
+        self.b_pan = chrome.IconButton("hand", "Pan (Space): drag to move the view; drag the Inspection Area's "
+                                               "edge, corners or round handle in the Plan view")
+        self.b_shape = chrome.IconButton("", options=[
+            ("rect", "rect", "Rectangle: drag a box (G)"),
+            ("poly", "poly", "Polygon: click the corners, right click or Enter to finish (P)"),
+            ("lasso", "lasso", "Lasso: draw freehand (L)"),
+            ("brush", "brush", "Brush: paint over the points (B)")])
+        self.b_line = chrome.IconButton("", options=[
+            ("above", "above", "Above a line: draw a line in the Slice view; everything above it is edited (U)"),
+            ("below", "below", "Below a line: everything below the drawn line is edited (J)")])
+        self.b_measure = chrome.IconButton("ruler", "Measure (M): distance, bearing, height difference, slope")
+        self.b_info = chrome.IconButton("info", "Point information (I): click a point")
+        for b in (self.b_shape, self.b_line):
+            b.exclusive = True
+        self.b_pan.clicked.connect(lambda: self.set_tool("pan"))
+        self.b_shape.optionChanged.connect(lambda k: self.set_tool(k))
+        self.b_line.optionChanged.connect(lambda k: self.set_tool(k))
+        self.b_measure.clicked.connect(lambda: self.set_tool("measure"))
+        self.b_info.clicked.connect(lambda: self.set_tool("pick"))
+        for b in (self.b_pan, self.b_shape, self.b_line, self.b_measure, self.b_info):
+            tb.addWidget(b)
+        tb.add_sep()
+        self.b_action = chrome.IconButton("", options=[
+            ("reject", "reject", "Reject the points (X)", theme.RED),
+            ("accept", "accept", "Accept (re-accept) rejected points (V)", theme.ACCENT),
+            ("select", "select", "Select the points (then right click: reject, accept, classify, filter)",
+             theme.BRIGHT),
+            ("class", "classify", "Classify the points with the class chosen next to it (K)", theme.AMBER),
+            ("filter", "filter", "Run the current filter group on the points (F)", theme.BLUE)])
+        self.b_action.optionChanged.connect(self.set_mode)
+        self.b_where = chrome.IconButton("", options=[
+            ("inside", "inside", "Edit the points INSIDE the shape"),
+            ("outside", "outside", "Edit the visible points OUTSIDE the shape")])
+        self.b_where.optionChanged.connect(lambda k: setattr(self, "where", k))
+        tb.addWidget(self.b_action)
+        tb.addWidget(self.b_where)
+        self.cmb_class = QtWidgets.QComboBox()
+        for k in CLASS_SHORTLIST:
+            self.cmb_class.addItem("%d  %s" % (k, F.ASPRS.get(k, "")), k)
+        self.cmb_class.setCurrentIndex(self.cmb_class.findData(2))
+        self.cmb_class.setToolTip("Class used by Classify")
+        self.cmb_class.setFixedWidth(170)
+        self.cmb_class.currentIndexChanged.connect(lambda _: setattr(self, "edit_class", self.cmb_class.currentData()))
+        self.a_class = tb.addWidget(self.cmb_class)
+        self.a_class.setVisible(False)
+        self.cmb_eline = QtWidgets.QComboBox()
+        self.cmb_eline.addItem("All lines", -1)
+        self.cmb_eline.setToolTip("Edit only one line (the other lines are left alone)")
+        self.cmb_eline.setFixedWidth(110)
+        self.cmb_eline.currentIndexChanged.connect(lambda _: setattr(self, "edit_line", self.cmb_eline.currentData()))
+        tb.addWidget(self.cmb_eline)
+        tb.add_sep()
+        self.b_undo = chrome.IconButton("undo", "Undo (Ctrl+Z)")
+        self.b_redo = chrome.IconButton("redo", "Redo (Ctrl+Y)")
+        self.b_undo.clicked.connect(self.undo)
+        self.b_redo.clicked.connect(self.redo)
+        self.b_rej = chrome.IconButton("", options=[("show", "eye", "Rejected points shown in red (H)"),
+                                                    ("hide", "eye_off", "Rejected points hidden (H)")])
+        self.b_rej.optionChanged.connect(lambda k: self._toggle_rej(k == "show"))
+        self.b_zoom = chrome.IconButton("zoomall", "Zoom all views to the Inspection Area (Ctrl+Home)")
+        self.b_zoom.clicked.connect(self.zoom_all)
+        for b in (self.b_undo, self.b_redo, self.b_rej, self.b_zoom):
+            tb.addWidget(b)
+        tb.add_sep()
+        tb.addWidget(chrome.label(" POINT "))
+        self.sp_size = QtWidgets.QSpinBox()
+        self.sp_size.setRange(1, 6)
+        self.sp_size.setValue(2)
+        self.sp_size.setToolTip("Point size (pixels)")
+        self.sp_size.valueChanged.connect(self._point_size)
+        tb.addWidget(self.sp_size)
+        tb.addWidget(chrome.label(" BRUSH "))
+        self.sp_brush = QtWidgets.QSpinBox()
+        self.sp_brush.setRange(2, 200)
+        self.sp_brush.setValue(18)
+        self.sp_brush.setSuffix(" px")
+        self.sp_brush.setToolTip("Brush radius")
+        self.sp_brush.valueChanged.connect(lambda v: [setattr(w, "brush_px", v) for w in (self.plan, self.slice)])
+        tb.addWidget(self.sp_brush)
+        tb.addWidget(chrome.label(" COLOURS "))
+        self.cmb_lut = QtWidgets.QComboBox()
+        self.cmb_lut.addItems(list(render.LUTS))
+        self.cmb_lut.setToolTip("Colour ramp for height, intensity, range")
+        self.cmb_lut.currentTextChanged.connect(self._lut)
+        tb.addWidget(self.cmb_lut)
+        self.toolbar = tb
+        return tb
+
+    def _status_strip(self):
+        s = chrome.Strip(line="top")
+        s.setFixedHeight(26)
+        lay = QtWidgets.QHBoxLayout(s)
+        lay.setContentsMargins(8, 0, 8, 0)
+        self.lbl_msg = QtWidgets.QLabel("")
+        self.lbl_msg.setObjectName("ppHint")
+        self.lbl_xyz = QtWidgets.QLabel("")
+        self.lbl_xyz.setObjectName("ppVal")
+        self.lbl_cnt = QtWidgets.QLabel("")
+        self.lbl_cnt.setObjectName("ppVal")
+        self.prog = QtWidgets.QProgressBar()
+        self.prog.setMaximumWidth(220)
+        self.prog.setRange(0, 1000)
+        self.prog.hide()
+        self.btn_cancel = QtWidgets.QPushButton("Cancel")
+        self.btn_cancel.setObjectName("ppStop")
+        self.btn_cancel.hide()
+        self.btn_cancel.clicked.connect(self._cancel)
+        lay.addWidget(self.lbl_msg, 1)
+        lay.addWidget(self.lbl_xyz)
+        lay.addSpacing(16)
+        lay.addWidget(self.lbl_cnt)
+        lay.addWidget(self.prog)
+        lay.addWidget(self.btn_cancel)
+        self._msg_timer = QtCore.QTimer(self)
+        self._msg_timer.setSingleShot(True)
+        self._msg_timer.timeout.connect(lambda: self.lbl_msg.setText(""))
+        return s
+
+    def status(self, msg, ms=6000):
+        self.lbl_msg.setText(msg)
+        if ms:
+            self._msg_timer.start(ms)
+
+    def statusBar(self):                     # older code paths: status messages go to the painted strip
+        return _StatusShim(self)
+
+    def _shortcuts(self):
+        for seq, fn in (("PgUp", lambda: self.step("sec_next")), ("PgDown", lambda: self.step("sec_prev")),
+                        ("Shift+PgUp", lambda: self.step("fwd")), ("Shift+PgDown", lambda: self.step("back")),
+                        ("Ctrl+Z", self.undo), ("Ctrl+Y", self.redo), ("Ctrl+Home", self.zoom_all),
+                        ("Ctrl+I", self.georeference), ("Ctrl+P", self.publish_dialog), ("Ctrl+E", self.export),
+                        ("Ctrl+S", self.save_project), ("F1", self.show_help),
+                        ("Space", lambda: self.set_tool("pan")), ("G", lambda: self._shape_key("rect")),
+                        ("P", lambda: self._shape_key("poly")), ("L", lambda: self._shape_key("lasso")),
+                        ("B", lambda: self._shape_key("brush")), ("U", lambda: self._line_key("above")),
+                        ("J", lambda: self._line_key("below")), ("M", lambda: self.set_tool("measure")),
+                        ("I", lambda: self.set_tool("pick")), ("X", lambda: self.set_mode("reject")),
+                        ("V", lambda: self.set_mode("accept")), ("K", lambda: self.set_mode("class")),
+                        ("F", lambda: self.set_mode("filter")), ("S", lambda: self.set_mode("select")),
+                        ("H", lambda: self.b_rej.set_key("hide" if self.show_rejected else "show", emit=True)),
+                        ("Delete", lambda: self.edit_selected("reject")), ("Ctrl+D", self.clear_selection)):
+            s = QShortcut(QtGui.QKeySequence(seq), self)
+            s.setContext(Qt.ShortcutContext.WindowShortcut)
+            s.activated.connect(fn)
+
+    # ------------------------------------------------------------------ tools
+    def _shape_key(self, k):
+        self.b_shape.set_key(k)
+        self.set_tool(k)
+
+    def _line_key(self, k):
+        self.b_line.set_key(k)
+        self.set_tool(k)
+
+    def set_tool(self, k):
+        self.tool = k
+        if k in ("rect", "poly", "lasso", "brush"):
+            self.shape = k
+            self.b_shape.set_key(k)
+        if k in ("above", "below"):
+            self.linemode = k
+            self.b_line.set_key(k)
+        self._apply_tool()
+
+    def _apply_tool(self):
+        k = self.tool
+        self.b_pan.set_active(k == "pan")
+        self.b_shape.set_active(k in ("rect", "poly", "lasso", "brush"))
+        self.b_line.set_active(k in ("above", "below"))
+        self.b_measure.set_active(k == "measure")
+        self.b_info.set_active(k == "pick")
+        for w in (self.plan, self.slice):
+            w.set_tool(k)
+        self.v3d.sel_mode = "rect" if k == "rect" else "lasso"
+
+    def set_mode(self, k):
+        self.action = k
+        self.b_action.set_key(k)
+        self.a_class.setVisible(k == "class")
+        if k == "accept" and not self.show_rejected:
+            self.b_rej.set_key("show", emit=True)
+        if self.tool in ("pan", "measure", "pick"):
+            self.set_tool(self.shape)
+
+    # =============================================================== project
+    def new_project(self):
+        from dcs_core import dialogs
+        dcs = dialogs.new_project(self, PLUGIN)
+        if dcs is None:
+            return
+        try:
+            p = Project.from_dcs(dcs)
+        except Exception as ex:
+            self._error("Cannot create the project", ex)
+            return
+        self.set_project(p)
+        if chain.clraw_files(dcs):
+            self.georeference()
+
+    def open_project(self, path=None):
+        if not path:
+            from dcs_core import dialogs
+            path = dialogs.pick_project_file(self, ";;Older CloudPro project (*.cloudpro.json)")
+        if not path:
+            return
+        if self.project is not None and os.path.abspath(path) in (os.path.abspath(self.project.path),
+                                                                  os.path.abspath(getattr(self.project.dcs, "path", ""))):
+            self.raise_()
+            return
+        try:
+            p = Project.open_any(path)
+        except Exception as ex:
+            self._error("Cannot open the project", ex)
+            return
+        if p.dcs is not None:
+            from dcs_core import dialogs
+            dialogs.check_raw(self, p.dcs, PLUGIN)
+        self.set_project(p)
+
+    def set_project(self, p, reopen=False):
+        if self.project is not None and not reopen:
+            self.save_project()
+            self.project.store.close()
+            if self._edit_lock is not None:
+                self._edit_lock.release()
+                self._edit_lock = None
+        if p.dcs is not None and self._edit_lock is None:
+            from dcs_core import locks
+            lk = locks.Lock(p.root, "CloudPro editing", PLUGIN, name=".edit.lock")
+            try:
+                lk.acquire()
+                self._edit_lock = lk
+            except locks.Locked as ex:
+                theme.msg_warn(self, "CloudPro", "This job's point cloud is open elsewhere:\n%s\n\nClose it there "
+                               "first; two editors would overwrite each other's edits." % ex)
+                return
+        self.project = p
+        self._remember(p.dcs.path if p.dcs is not None else p.path)
+        self.edits = EditManager(p, on_change=self._edited)
+        self.tracks = p.tracks()
+        self._ensure_file_spans()
+        self.file_hidden = set(p.data.get("view", {}).get("files_hidden", []))
+        self.track_hidden = set(p.data.get("view", {}).get("tracks_hidden", []))
+        self.filters.load(p.filters_dir)
+        self._fill_lines()
+        self.plan.set_project(p.store, self.tracks, {l["id"]: l["colour"] for l in p.lines})
+        self.plan.b_offset_z = float(self._origin()[2])
+        self._track_masks()
+        self.setWindowTitle("CloudPro  -  %s  -  %s" % (p.name, p.crs))
+        self.btn_project.setText("%s  \u25be" % p.name.upper())
+        self.btn_project.setToolTip(p.dcs.path if p.dcs is not None else p.path)
+        v = p.data.get("view", {})
+        if v.get("slice"):
+            sl = v["slice"]
+            self.slice_pane.dir.set_key("along" if sl.get("along") else "across")
+            self.slice_pane.thick.setValue(sl.get("th", 0.5))
+        box = v.get("box") or self._default_box()
+        self.set_box(box, load=True, fit=True)
+        if v.get("slice"):
+            self.slice_pane.set_position(v["slice"].get("pos", 0.0), self._slice_half())
+        self.plan.zoom_box()
+        self._refresh_history()
+        self._raster_layers()
+        self.refresh_chain()
+        if self._area is not None:
+            self._area.set_lines(p.lines)
+        if self._props is not None and self._props.isVisible():
+            self._props.refresh()
+
+    def _origin(self):
+        if self.project is None or self.project.store.origin is None:
+            return np.zeros(3)
+        return self.project.store.origin
+
+    def _default_box(self):
+        if self.tracks:
+            lid = sorted(self.tracks)[0]
+            tr = self.tracks[lid]
+            j = len(tr["E"]) // 2
+            j0, j1 = max(0, j - 20), min(len(tr["E"]) - 1, j + 20)
+            brg = math.degrees(math.atan2(tr["E"][j1] - tr["E"][j0], tr["N"][j1] - tr["N"][j0])) % 360
+            return {"cx": float(tr["E"][j]), "cy": float(tr["N"][j]), "length": 60.0, "width": 30.0, "bearing": brg}
+        ext = self.project.store.extent() if self.project else None
+        if ext:
+            return {"cx": (ext[0] + ext[2]) / 2, "cy": (ext[1] + ext[3]) / 2, "length": 60.0, "width": 30.0,
+                    "bearing": 0.0}
+        return {"cx": 0.0, "cy": 0.0, "length": 60.0, "width": 30.0, "bearing": 0.0}
+
+    def save_project(self):
+        if self.project is None:
+            return
+        sp = self.slice_pane
+        self.project.data["view"] = {"box": self.box, "files_hidden": sorted(self.file_hidden),
+                                     "tracks_hidden": sorted(self.track_hidden),
+                                     "slice": {"along": sp.along, "th": sp.thick.value(),
+                                               "pos": sp.position(self._slice_half())}}
+        self.project.store.sync()
+        self.project.save()
+        self.filters.save()
+        self.status("Project saved (edits are written to disk as you make them)")
+
+    def shutdown(self):
+        try:
+            self.save_project()
+        finally:
+            if self._edit_lock is not None:
+                self._edit_lock.release()
+                self._edit_lock = None
+            for w in (self._props, self._area):
+                if w is not None:
+                    w.close()
+
+    def closeEvent(self, e):
+        try:
+            self.shutdown()
+        except Exception:       # noqa: BLE001
+            pass
+        super().closeEvent(e)
+
+    def _fill_recent(self):
+        from qgis.PyQt.QtCore import QSettings
+        self.recent_menu.clear()
+        for f in (QSettings().value("CloudPro/recent", []) or [])[:10]:
+            self.recent_menu.addAction(f, lambda f=f: self.open_project(f))
+
+    def _remember(self, path):
+        try:
+            from qgis.PyQt.QtCore import QSettings
+            r = [f for f in (QSettings().value("CloudPro/recent", []) or []) if f != path]
+            QSettings().setValue("CloudPro/recent", [path] + r[:9])
+        except Exception:          # noqa: BLE001
+            pass
+
+    def open_folder(self):
+        if self.project is not None:
+            QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(
+                self.project.dcs.folder if self.project.dcs is not None else self.project.root))
+
+    def relocate(self):
+        p = self.project
+        if p is None or p.dcs is None:
+            return
+        d = QtWidgets.QFileDialog.getExistingDirectory(self, "New location of the job folder", p.dcs.job_folder)
+        if not d:
+            return
+        still = p.dcs.relocate(d, PLUGIN)
+        if still:
+            theme.msg_warn(self, "Relocate", "Not found under %s:\n%s" % (d, "\n".join(still[:5])))
+        else:
+            theme.msg_info(self, "Relocate", "The job folder now points to %s" % d)
+        self.refresh_chain()
+
+    def save_qgis_project(self):
+        if self.project is None:
+            return
+        try:
+            from qgis.core import QgsProject
+            path = self.project.qgis_project_path
+            QgsProject.instance().write(path)
+            self.status("QGIS project saved: %s" % path, 8000)
+        except Exception as ex:        # noqa: BLE001
+            self._error("Cannot save the QGIS project", ex)
+
+    def reset_points(self):
+        if self.project is None:
+            return
+        if theme.msg_question(self, "CloudPro", "Remove all imported points and edits of this project? The raw "
+                              "captures are not touched; Georeference rebuilds the points.") != \
+                QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        self.project.reset_points()
+        self.set_project(self.project, reopen=True)
+
+    # ------------------------------------------------------------------ chain header
+    def refresh_chain(self):
+        p = self.project
+        if p is None:
+            return
+        if p.dcs is not None:
+            self.chainbar.set_project(p.dcs)
+        inp = p.data.get("inputs") or {}
+        why = chain.quick_state(p) if p.dcs is not None else []
+        if not p.lines:
+            txt, lvl = "No points yet: Menu > Georeference", "warn"
+        elif why:
+            txt, lvl = "Out of date: " + "; ".join(why), "warn"
+        else:
+            cal = (inp.get("alignment") or {}).get("calibration", "no calibration")
+            src = (inp.get("trajectory") or {}).get("source", "")
+            txt = "%s trajectory · %s" % ({"pospro": "PosPro", "realtime": "Real-time"}.get(src, src or "?"),
+                                          "AlignPro calibration" if cal == "applied" else cal)
+            lvl = "ok" if cal == "applied" and src == "pospro" else "warn"
+        self.lbl_inputs.setText(txt)
+        self.lbl_inputs.setToolTip(txt)
+        self.lbl_inputs.setProperty("level", lvl)
+        self.lbl_inputs.style().unpolish(self.lbl_inputs)
+        self.lbl_inputs.style().polish(self.lbl_inputs)
+        self.btn_update.setVisible(bool(why) and p.dcs is not None)
+
+    # ------------------------------------------------------------------ properties windows
+    def show_properties(self):
+        if self.project is None:
+            theme.msg_info(self, "CloudPro", "Open or create a job project first (PROJECT button).")
+            return
+        if self._props is None:
+            self._props = ProjectProperties(self)
+        self._props.show()
+        self._props.raise_()
+        self._props.refresh()
+
+    def show_area_properties(self):
+        if self._area is None:
+            a = AreaProperties(self)
+            a.boxEdited.connect(lambda b: self.set_box(b, load=True))
+            a.stepRequested.connect(self.step)
+            a.followChanged.connect(self._follow)
+            a.gotoRequested.connect(self.goto)
+            a.vstep.valueChanged.connect(self._view_step)
+            self._area = a
+        if self.project is not None:
+            self._area.set_lines(self.project.lines)
+        if self.box:
+            self._area.set_box(self.box, self._origin())
+        self._area.show()
+        self._area.raise_()
+
+    def apply_geodetics(self, crs, ortho, geoid, share):
+        p = self.project
+        if p is None:
+            return
+        if ortho and not geoid:
+            theme.msg_warn(self, "CloudPro", "Choose a geoid grid for orthometric heights.")
+            return
+        if share and p.dcs is not None:
+            c = dict(p.dcs.shared("crs") or {})
+            c["horizontal"] = crs
+            p.dcs.set_shared("crs", c, PLUGIN)
+        p.data["crs"] = crs
+        p.store.crs = crs
+        p.data["geoid_path"] = geoid if ortho else ""
+        p.save()
+        if p.lines:
+            self.georeference(force=True)
+
+    def apply_override(self, ov):
+        p = self.project
+        if p is None:
+            return
+        p.data["override"] = ov if ov.get("source") != "alignpro" else {}
+        p.save()
+        self.refresh_chain()
+        if p.lines:
+            self.georeference(force=True)
+
+    def lat_lon(self, E, N):
+        try:
+            import pyproj
+            tr = pyproj.Transformer.from_crs(self.project.crs, pyproj.CRS(self.project.crs).geodetic_crs,
+                                             always_xy=True)
+            lon, lat = tr.transform(E, N)
+            return lat, lon
+        except Exception:       # noqa: BLE001
+            pass
+        try:
+            from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsPointXY, QgsProject
+            src = QgsCoordinateReferenceSystem(self.project.crs)
+            q = QgsCoordinateTransform(src, src.toGeographicCrs(), QgsProject.instance()).transform(QgsPointXY(E, N))
+            return q.y(), q.x()
+        except Exception:       # noqa: BLE001
+            return None
+
+    # ------------------------------------------------------------------ files
+    def _ensure_file_spans(self):
+        """Time span of every .clraw file of every line (older projects: read from the files)."""
+        changed = False
+        for ln in self.project.lines:
+            if ln.get("file_spans") and len(ln["file_spans"]) == len(ln.get("files", [])):
+                continue
+            spans, sizes = [], []
+            for f in ln.get("files", []):
+                try:
+                    from ..core import mcap
+                    m = mcap.McapFile(f).scan()
+                    spans.append([min(c[5] for c in m.chunk_pos) * 1e-9, max(c[6] for c in m.chunk_pos) * 1e-9]
+                                 if m.chunk_pos else [None, None])
+                    sizes.append(os.path.getsize(f))
+                except Exception:       # noqa: BLE001
+                    spans.append([None, None])
+                    sizes.append(0)
+            ln["file_spans"], ln["file_sizes"] = spans, sizes
+            changed = True
+        if changed:
+            self.project.save()
+        self._file_base = {}
+        g = 0
+        for ln in self.project.lines:
+            self._file_base[ln["id"]] = g
+            g += max(1, len(ln.get("files", [])))
+
+    def file_table(self):
+        rows = []
+        for ln in self.project.lines:
+            base = self._file_base.get(ln["id"], 0)
+            for k, f in enumerate(ln.get("files", [])):
+                sp = (ln.get("file_spans") or [[None, None]] * (k + 1))[k] if ln.get("file_spans") else [None, None]
+                gid = base + k
+                rows.append({"gid": gid, "line": ln["id"], "path": f, "t0": sp[0], "t1": sp[1],
+                             "size": (ln.get("file_sizes") or [0] * (k + 1))[k] if ln.get("file_sizes") else 0,
+                             "visible": gid not in self.file_hidden, "track": gid not in self.track_hidden,
+                             "colour": ln.get("colour", theme.ACCENT)})
+        return rows
+
+    def _compute_file_idx(self):
+        ps = self.ps
+        out = np.zeros(len(ps), np.int32)
+        if self.project is None:
+            self.file_idx = out
+            return
+        for ln in self.project.lines:
+            m = ps.line == ln["id"]
+            if not m.any():
+                continue
+            base = self._file_base.get(ln["id"], 0)
+            starts = [s[0] if s and s[0] is not None else -1e18 for s in (ln.get("file_spans") or [[None, None]])]
+            k = np.searchsorted(np.array(starts), ps.t[m], side="right") - 1
+            out[m] = base + np.clip(k, 0, max(0, len(starts) - 1))
+        self.file_idx = out
+
+    def set_files_visible(self, gids, on):
+        if gids is None:
+            gids = [r["gid"] for r in self.file_table()]
+        for g in gids:
+            (self.file_hidden.discard if on else self.file_hidden.add)(g)
+        if self._props is not None and gids and len(gids) > 1:
+            self._props.refresh()
+        self.refresh_views()
+
+    def set_file_track(self, gid, on):
+        (self.track_hidden.discard if on else self.track_hidden.add)(gid)
+        self._track_masks()
+        self.plan.update()
+
+    def _track_masks(self):
+        """Which drive-line samples to draw: those inside a file whose Track is ticked."""
+        vis = {}
+        for ln in self.project.lines if self.project else []:
+            tr = self.tracks.get(ln["id"])
+            if tr is None:
+                continue
+            m = np.zeros(len(tr["t"]), bool)
+            base = self._file_base.get(ln["id"], 0)
+            spans = ln.get("file_spans") or [[None, None]]
+            for k, sp in enumerate(spans):
+                if base + k in self.track_hidden:
+                    continue
+                if sp[0] is None:
+                    m[:] = True
+                else:
+                    m |= (tr["t"] >= sp[0] - 0.5) & (tr["t"] <= sp[1] + 0.5)
+            vis[ln["id"]] = m
+        self.plan.track_masks = vis
+        self.plan.track_visible = {k: bool(v.any()) for k, v in vis.items()}
+
+    def select_file(self, gid):
+        """Select (highlight) one file's points in the Inspection Area and show its drive line."""
+        if len(self.ps) == 0:
+            return
+        self.selected = self.file_idx == gid
+        lid = None
+        for ln in self.project.lines:
+            b = self._file_base.get(ln["id"], 0)
+            if b <= gid < b + max(1, len(ln.get("files", []))):
+                lid = ln["id"]
+        self.plan.highlight_line = lid
+        n = int(self.selected.sum())
+        self.status("File selected: %s points in the Inspection Area%s" % (
+            "{:,}".format(n), "" if n else " (move the Inspection Area onto its drive line)"), 8000)
+        self.refresh_views()
+        self._area_info()
+
+    # ------------------------------------------------------------------ lines / classes lists
+    def _fill_lines(self):
+        self.lines_w.blockSignals(True)
+        self.lines_w.clear()
+        self.cmb_eline.blockSignals(True)
+        self.cmb_eline.clear()
+        self.cmb_eline.addItem("All lines", -1)
+        for ln in self.project.lines:
+            it = QtWidgets.QListWidgetItem("L%d  %s   %s pts" % (ln["id"] + 1, ln.get("name", ""),
+                                                                 "{:,}".format(ln.get("points", 0))))
+            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            on = self.line_enabled.get(ln["id"], ln.get("enabled", True))
+            self.line_enabled[ln["id"]] = on
+            it.setCheckState(Qt.CheckState.Checked if on else Qt.CheckState.Unchecked)
+            it.setData(Qt.ItemDataRole.UserRole, ln["id"])
+            pm = QtGui.QPixmap(12, 12)
+            pm.fill(QtGui.QColor(ln.get("colour", theme.ACCENT)))
+            it.setIcon(QtGui.QIcon(pm))
+            it.setToolTip("%s\n%s" % (ln.get("trajectory", ""), "\n".join(ln.get("files", []))))
+            self.lines_w.addItem(it)
+            self.cmb_eline.addItem("Only L%d" % (ln["id"] + 1), ln["id"])
+        self.lines_w.blockSignals(False)
+        self.cmb_eline.blockSignals(False)
+        self.plan.line_enabled = dict(self.line_enabled)
+
+    def _line_toggled(self, it):
+        self.line_enabled[it.data(Qt.ItemDataRole.UserRole)] = it.checkState() == Qt.CheckState.Checked
+        self.plan.line_enabled = dict(self.line_enabled)
+        self.refresh_views()
+
+    def _lines_menu(self, pos):
+        it = self.lines_w.itemAt(pos)
+        if it is None:
+            return
+        lid = it.data(Qt.ItemDataRole.UserRole)
+        m = QtWidgets.QMenu(self)
+        a1 = m.addAction("Show only this line")
+        a2 = m.addAction("Show all lines")
+        a3 = m.addAction("Edit only this line")
+        a4 = m.addAction("Inspection Area follows this line")
+        theme.dark_menu(m)
+        a = exec_(m, self.lines_w.mapToGlobal(pos))
+        if a is a1:
+            for i in range(self.lines_w.count()):
+                w = self.lines_w.item(i)
+                w.setCheckState(Qt.CheckState.Checked if w.data(Qt.ItemDataRole.UserRole) == lid else
+                                Qt.CheckState.Unchecked)
+        elif a is a2:
+            for i in range(self.lines_w.count()):
+                self.lines_w.item(i).setCheckState(Qt.CheckState.Checked)
+        elif a is a3:
+            self.cmb_eline.setCurrentIndex(self.cmb_eline.findData(lid))
+        elif a is a4:
+            self._follow(lid)
+
+    def _fill_classes(self):
+        self.classes_w.blockSignals(True)
+        self.classes_w.clear()
+        if len(self.ps):
+            cls = self.preview.cls if self.preview is not None else self.ps.cls
+            u, c = np.unique(cls, return_counts=True)
+            for k, n in zip(u, c):
+                it = QtWidgets.QListWidgetItem("%3d  %-20s %s" % (k, F.ASPRS.get(int(k), "class %d" % k),
+                                                                  "{:,}".format(int(n))))
+                it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                it.setCheckState(Qt.CheckState.Unchecked if int(k) in self.class_hidden else Qt.CheckState.Checked)
+                it.setData(Qt.ItemDataRole.UserRole, int(k))
+                rgb = render.CLASS_COLOURS[int(k)]
+                pm = QtGui.QPixmap(12, 12)
+                pm.fill(QtGui.QColor(int(rgb[0]), int(rgb[1]), int(rgb[2])))
+                it.setIcon(QtGui.QIcon(pm))
+                self.classes_w.addItem(it)
+        self.classes_w.blockSignals(False)
+
+    def _class_toggled(self, it):
+        k = it.data(Qt.ItemDataRole.UserRole)
+        (self.class_hidden.discard if it.checkState() == Qt.CheckState.Checked else self.class_hidden.add)(k)
+        self.refresh_views()
+
+    # ======================================================= georeference (chain)
+    def georeference(self, force=False):
+        p = self.project
+        if p is None:
+            if theme.msg_question(self, "CloudPro", "Create or open a job project first. Create one now?") == \
+                    QtWidgets.QMessageBox.StandardButton.Yes:
+                self.new_project()
+            return
+        if p.dcs is None:
+            self.import_lines()
+            return
+        try:
+            inp = chain.resolve(p.dcs, override=p.data.get("override"))
+        except Exception as ex:
+            self._error("Cannot read the chain's inputs", ex)
+            return
+        if not inp.files:
+            theme.msg_warn(self, "CloudPro", "No .clraw files were found in the job's captures (%s).\nUse "
+                           "Menu > Add other .clraw files, or record the captures in PosPro." % p.dcs.job_folder)
+            return
+        from .dialogs import GeorefDialog
+        d = GeorefDialog(self, inp, p)
+        if p.data.get("geoid_path"):
+            d.geoid.setText(p.data["geoid_path"])
+        if exec_(d) != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        opts = d.options()
+        keep = d.keep_edits.isChecked()
+        if d.geoid.text().strip():
+            try:
+                from ..core.export import geoid_sampler
+                opts.geoid = geoid_sampler(d.geoid.text().strip())
+                p.data["vertical"] = "orthometric"
+                p.data["geoid"] = os.path.basename(d.geoid.text().strip())
+            except Exception as ex:
+                self._error("Cannot read the geoid grid", ex)
+                return
+        else:
+            p.data["vertical"] = "ellipsoidal"
+            p.data["geoid"] = ""
+        self.clear_preview(refresh=False)
+        self.edits.ps = None
+        self.ps = PointSet(0)
+        project = p
+
+        def job(progress, cancel):
+            with project.dcs.run("cloudpro", PLUGIN, VERSION):
+                out, rest = IM.import_chain(project, inp, opts, None, progress, cancel, keep_edits=keep)
+            project.run_log("georeference", inp.summary() + ["warning: " + w for w in inp.warnings] +
+                            ["L%d: %s points %s" % (l + 1, st["points"], st) for l, st in out] +
+                            ["edits carried over: %d" % rest])
+            return out, rest, inp
+        self._run("georef", job, "Georeferencing %d .clraw file(s)" % len(inp.files))
+
+    def publish_dialog(self):
+        p = self.project
+        if p is None:
+            return
+        if p.dcs is None:
+            theme.msg_info(self, "CloudPro", "Publishing is for job projects of the DCS chain; use Export for "
+                           "this older stand-alone project.")
+            return
+        if not p.lines:
+            theme.msg_info(self, "CloudPro", "Georeference the captures first.")
+            return
+        from .dialogs import PublishDialog
+        d = PublishDialog(self, p, chain.quick_state(p))
+        if exec_(d) != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        from ..core import publish as PB
+        from ..core.spatial import parse_set
+        las, cell = d.las.isChecked(), d.dem.value() if d.dem_on.isChecked() else 0.0
+        classes = parse_set(d.classes.text()) or None
+        inc = d.rejected.isChecked()
+        add = d.add_qgis.isChecked()
+        p.store.sync()
+        p.save()
+
+        def job(progress, cancel):
+            with p.dcs.run("cloudpro", PLUGIN, VERSION):
+                doc = PB.deliver(p, las=las, dem_cell=cell, include_rejected=inc, classes=classes,
+                                 progress=progress, cancel=cancel, version=VERSION)
+            p.run_log("publish", ["cloud.json %s" % doc["id"], "calibration: %s" % doc["calibration"]] +
+                      ["%s: %s" % (k, v) for k, v in doc["files"].items()] + doc.get("warnings", []))
+            return doc, add
+        self._run("publish", job, "Publishing")
+
+    def import_lines(self):
+        if self.project is None:
+            if theme.msg_question(self, "CloudPro", "Create a new project first?") == \
+                    QtWidgets.QMessageBox.StandardButton.Yes:
+                self.new_project()
+            return
+        if self.project.dcs is not None:
+            dcs = self.project.dcs
+            ps, _ = QtWidgets.QFileDialog.getOpenFileNames(self, "Other .clraw captures for this job", dcs.job_folder,
+                                                           "Mapper recordings (*.clraw)")
+            if not ps:
+                return
+            if theme.msg_question(self, "CloudPro", "Add %d file(s) to the job's captures? The captures are shared "
+                                  "by PosPro, AlignPro and CloudPro." % len(ps)) != \
+                    QtWidgets.QMessageBox.StandardButton.Yes:
+                return
+            dcs.set_capture_files(sorted(set(dcs.capture_files()) | {os.path.abspath(x) for x in ps}), PLUGIN)
+            self.georeference()
+            return
+        d = ImportDialog(self, self.project.data.get("last_dir", ""))
+        if exec_(d) != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        recs = d.recs
+        self.project.data["last_dir"] = d.start_dir
+        opts = d.options()
+        use_rt = d.r_rt.isChecked()
+        sbet = d.sbet.text().strip()
+        ws = d.week_start()
+        project = self.project
+
+        def job(progress, cancel):
+            traj = None if use_rt else IM.load_trajectory(sbet, week_start=ws)
+            out = []
+            for k, rec in enumerate(recs):
+                tr = IM.load_trajectory(rec) if use_rt else traj
+                lid, st = IM.import_recording(project, rec, tr, opts, cancel=cancel,
+                                              progress=lambda f, s, k=k: progress((k + f) / len(recs), "line %s" %
+                                                                                  rec.line))
+                out.append((lid, st))
+                if cancel():
+                    break
+            IM.rebuild_grids(project)
+            return out
+        self._run("import", job, "Importing %d line(s)" % len(recs))
+
+    # ================================================================== Inspection Area
+    def set_box(self, box, load=True, fit=False):
+        self.box = dict(box)
+        self.plan.box = dict(box)
+        self.v3d.box_bearing = box["bearing"]
+        if self._area is not None:
+            self._area.set_box(box, self._origin())
+        self.plan.update()
+        if load:
+            self.load_box(fit=fit)
+
+    def _box_from_plan(self, box, final):
+        if not box:
+            return
+        self.box = dict(box)
+        if self._area is not None:
+            self._area.set_box(box, self._origin())
+        if final:
+            self.set_box(box, load=True, fit=False)
+
+    def load_box(self, fit=False):
+        if self.project is None or self.box is None:
+            return
+        t = time.time()
+        QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            self.clear_preview(refresh=False)
+            ps = PointSet.from_store(self.project.store, self.box)
+            if len(ps):
+                ps = ps.subset(np.random.default_rng(int(len(ps)) % 9973).permutation(len(ps)))
+            self.ps = ps
+            self.edits.ps = ps
+            self.selected = None
+            self._compute_file_idx()
+            self._col_cache = {}
+            self._fill_classes()
+            self.refresh_views(fit=fit)
+            self._area_info()
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+        self.status("Loaded %s points in %.2f s" % ("{:,}".format(len(self.ps)), time.time() - t), 4000)
+
+    # ================================================================ navigation
+    def _slice_half(self):
+        b = self.box or {"length": 60, "width": 30}
+        return (b["width"] if self.slice_pane.along else b["length"]) / 2.0
+
+    def _slice(self):
+        """(along, centre, thickness, full) of the slice in the box frame."""
+        sp = self.slice_pane
+        half = self._slice_half()
+        return sp.along, sp.position(half), sp.thick.value(), sp.along and sp.full.isChecked()
+
+    def _slice_changed(self):
+        self.plan.update()
+        self.refresh_views(which=("slice", "3d", "plan"))
+
+    def step(self, k):
+        if self.box is None:
+            return
+        b = dict(self.box)
+        br = math.radians(b["bearing"])
+        u = np.array([math.sin(br), math.cos(br)])
+        v = np.array([math.cos(br), -math.sin(br)])
+        a = self._area
+        st = a.box_step() if a is not None else b["length"] * 0.9
+        if k in ("fwd", "back"):
+            d = st if k == "fwd" else -st
+            if self.follow_line >= 0 and self.follow_line in self.tracks:
+                b = self._along_track(b, d)
+            else:
+                b["cx"] += u[0] * d
+                b["cy"] += u[1] * d
+            self.set_box(b)
+        elif k in ("left", "right"):
+            d = a.side_step() if a is not None else b["width"] * 0.9
+            d = d if k == "right" else -d
+            b["cx"] += v[0] * d
+            b["cy"] += v[1] * d
+            self.set_box(b)
+        elif k in ("rotl", "rotr"):
+            r = a.rot.value() if a is not None else 5.0
+            b["bearing"] = (b["bearing"] + (r if k == "rotr" else -r)) % 360
+            self.set_box(b)
+        elif k.startswith("sec_"):
+            sp = self.slice_pane
+            s = sp.step.value() * (5 if k.endswith("big") else 1)
+            s = s if k.startswith("sec_next") else -s
+            half = self._slice_half()
+            along, pos, th, full = self._slice()
+            npos = pos + s
+            if abs(npos) > half - th / 2 and not along:
+                # walking a corridor: the slice leaves the area, so the area moves on by half its length
+                shift = b["length"] * 0.5 * (1 if s > 0 else -1)
+                if self.follow_line >= 0 and self.follow_line in self.tracks:
+                    b = self._along_track(b, shift)
+                else:
+                    b["cx"] += u[0] * shift
+                    b["cy"] += u[1] * shift
+                self.set_box(b)
+                sp.set_position(npos - shift, half)
+                self._slice_changed()
+                return
+            sp.set_position(float(np.clip(npos, -half, half)), half)
+            self._slice_changed()
+
+    def _along_track(self, b, d):
+        tr = self.tracks[self.follow_line]
+        E, N = tr["E"], tr["N"]
+        s = np.r_[0, np.cumsum(np.hypot(np.diff(E), np.diff(N)))]
+        j = int(np.argmin(np.hypot(E - b["cx"], N - b["cy"])))
+        j2, j1 = min(len(E) - 1, j + 5), max(0, j - 5)
+        tb = math.degrees(math.atan2(E[j2] - E[j1], N[j2] - N[j1])) % 360
+        sign = 1 if abs(((tb - b["bearing"] + 180) % 360) - 180) < 90 else -1
+        s1 = float(np.clip(s[j] + sign * d, 0, s[-1]))
+        e0, n0 = float(np.interp(max(0, s1 - 5), s, E)), float(np.interp(max(0, s1 - 5), s, N))
+        e1, n1 = float(np.interp(min(s[-1], s1 + 5), s, E)), float(np.interp(min(s[-1], s1 + 5), s, N))
+        brg = math.degrees(math.atan2(e1 - e0, n1 - n0)) % 360
+        if sign < 0:
+            brg = (brg + 180) % 360
+        b = dict(b)
+        b.update(cx=float(np.interp(s1, s, E)), cy=float(np.interp(s1, s, N)), bearing=brg)
+        if self._area is not None:
+            self._area.chain.setText("L%d chainage %.2f m of %.1f" % (self.follow_line + 1, s1, s[-1]))
+        return b
+
+    def _follow(self, lid):
+        self.follow_line = lid if lid is not None else -1
+        if self._area is not None:
+            self._area.follow.blockSignals(True)
+            self._area.follow.setCurrentIndex(max(0, self._area.follow.findData(self.follow_line)))
+            self._area.follow.blockSignals(False)
+        if self.follow_line >= 0 and self.box:
+            self.set_box(self._along_track(self.box, 0.0))
+
+    def goto(self, E, N):
+        if not self.box:
+            return
+        o = self._origin()
+        b = dict(self.box)
+        b["cx"], b["cy"] = E - o[0], N - o[1]
+        self.set_box(b)
+        self.plan.center_on(b["cx"], b["cy"])
+
+    def goto_world(self, E, N):
+        self.goto(E, N)
+
+    def _key_nav(self, name):
+        self.step({"next": "sec_next", "prev": "sec_prev", "next_big": "sec_next_big", "prev_big": "sec_prev_big",
+                   "box_fwd": "fwd", "box_back": "back", "box_left": "left", "box_right": "right"}.get(name, name))
+
+    def _view_step(self, v):
+        for w in (self.plan, self.slice):
+            w.pan_step = v
+        self.v3d.step = v
+
+    def zoom_all(self):
+        self.plan.zoom_box()
+        self.slice.zoom_all()
+        self.v3d.fit()
+
+    # ================================================================== display
+    def _colours_for(self, mode):
+        if len(self.ps) == 0:
+            return np.zeros(0, np.uint32)
+        key = (mode, self.lut, self.preview is not None)
+        c = self._col_cache.get(key)
+        if c is not None:
+            return c
+        if mode == "File":
+            c = render.pack(FILE_COLOURS[self.file_idx % len(FILE_COLOURS)])
+        else:
+            lc = np.array([render.hex_rgb(l.get("colour", "#00e5aa")) for l in self.project.lines] or [(0, 229, 170)],
+                          np.uint8)
+            src = self.ps
+            if self.preview is not None and mode == "Classification":
+                src = _Proxy(self.ps, cls=self.preview.cls)
+            c = render.colour_points(src, mode, self.lut, line_colours=lc)
+        self._col_cache[key] = c
+        return c
+
+    def _view_colour(self, view, mode):
+        self.refresh_views(which=(view,))
+
+    def _grid_attr(self, a):
+        self.plan.attr = a
+        self.plan.invalidate()
+
+    def _lut(self, m):
+        self.lut = m
+        self.plan.lut = m
+        self.plan.invalidate()
+        self._col_cache = {}
+        self.refresh_views()
+
+    def _point_size(self, v):
+        for w in (self.plan, self.slice, self.v3d):
+            w.point_size = v
+            w._dirty = True
+            w.update()
+
+    def _toggle_rej(self, on):
+        self.show_rejected = on
+        self.refresh_views()
+
+    def _visible(self):
+        ps = self.ps
+        n = len(ps)
+        if n == 0:
+            return np.zeros(0, bool)
+        vis = np.ones(n, bool)
+        off = [l for l, on in self.line_enabled.items() if not on]
+        if off:
+            vis &= ~np.isin(ps.line, off)
+        if self.file_hidden:
+            vis &= ~np.isin(self.file_idx, list(self.file_hidden))
+        if self.class_hidden:
+            cls = self.preview.cls if self.preview is not None else ps.cls
+            vis &= ~np.isin(cls, list(self.class_hidden))
+        rej = ps.rejected
+        if self.preview is not None:
+            prej = (self.preview.flag & REJECTED) != 0
+            newly = prej & ~rej
+            if not self.show_rejected:
+                vis &= ~rej | newly
+                vis &= ~(prej & ~newly)
+        elif not self.show_rejected:
+            vis &= ~rej
+        return vis
+
+    def _colours(self, mode):
+        col = self._colours_for(mode).copy()
+        if len(col) == 0:
+            return col
+        rej = self.ps.rejected
+        if self.preview is not None:
+            prej = (self.preview.flag & REJECTED) != 0
+            newly = prej & ~rej
+            reacc = rej & ~prej
+            col[rej & prej] = render.pack(np.array(render.REJECT_RGB, np.uint8))
+            col[newly] = render.pack(np.array(render.PREVIEW_REJECT_RGB, np.uint8))
+            col[reacc] = render.pack(np.array((120, 255, 120), np.uint8))
+        else:
+            col[rej] = render.pack(np.array(render.REJECT_RGB, np.uint8))
+        if self.selected is not None and len(self.selected) == len(col):
+            col[self.selected] = render.pack(np.array(render.SELECT_RGB, np.uint8))
+        return col
+
+    def refresh_views(self, fit=False, which=("plan", "slice", "3d")):
+        ps = self.ps
+        o = self._origin()
+        b = self.box or {"cx": 0, "cy": 0, "bearing": 0, "length": 1, "width": 1}
+        vis = self._visible()
+        u, v = to_box_frame(ps.x, ps.y, b["cx"], b["cy"], b["bearing"]) if len(ps) else (np.zeros(0), np.zeros(0))
+        z = ps.z if self.preview is None else self.preview.z
+        along, pos, th, full = self._slice()
+        if along:
+            sm = vis if full else vis & (np.abs(v - pos) <= th / 2)
+        else:
+            sm = vis & (np.abs(u - pos) <= th / 2)
+        if "plan" in which:
+            idx = np.flatnonzero(vis)
+            col = self._colours(self.plan_pane.colour.currentText())
+            self.plan.a_offset, self.plan.b_offset = o[0], o[1]
+            self.plan.set_points(ps.x[idx], ps.y[idx], z[idx], col[idx], idx, fit=False)
+            self.plan_pane.title.setText("PLAN  %s pts" % "{:,}".format(len(idx)))
+        if "slice" in which:
+            idx = np.flatnonzero(sm)
+            col = self._colours(self.slice_pane.colour.currentText())
+            self.slice.b_offset = o[2]
+            if along:
+                self.slice.kind = "profile"
+                self.slice.a_offset = b["length"] / 2
+                self.slice.set_points(u[idx], z[idx], v[idx], col[idx], idx, fit=fit or len(self.slice.a) == 0)
+                self.slice_pane.lbl.setText("offset %+.2f m" % pos if not full else "full width")
+                self.slice_pane.title.setText("SLICE · PROFILE  %s pts" % "{:,}".format(len(idx)))
+            else:
+                self.slice.kind = "section"
+                self.slice.a_offset = 0.0
+                self.slice.set_points(v[idx], z[idx], -u[idx], col[idx], idx, fit=fit or len(self.slice.a) == 0)
+                self.slice_pane.lbl.setText("chainage %.2f m" % (pos + b["length"] / 2))
+                self.slice_pane.title.setText("SLICE · CROSS-SECTION  %s pts" % "{:,}".format(len(idx)))
+        if "3d" in which:
+            m = sm if self.v3d_pane.what.currentText() == "Slice" else vis
+            idx = np.flatnonzero(m)
+            col = self._colours(self.v3d_pane.colour.currentText())
+            P = np.column_stack([ps.x[idx], ps.y[idx], z[idx]])
+            self.v3d.set_points(P, col[idx], idx, fit=fit or len(self.v3d.P) == 0)
+            self.v3d_pane.title.setText("3D  %s pts" % "{:,}".format(len(idx)))
+            self.v3d.overlay_lines = self._box_lines3d()
+        nsel = int(self.selected.sum()) if self.selected is not None else 0
+        self.lbl_cnt.setText("%s pts  ·  %s rejected%s" % (
+            "{:,}".format(len(ps)), "{:,}".format(int(ps.rejected.sum())) if len(ps) else 0,
+            ("  ·  %s selected" % "{:,}".format(nsel)) if nsel else ""))
+        self._update_undo()
+
+    def _box_lines3d(self):
+        if not self.box or len(self.ps) == 0:
+            return []
+        b = self.box
+        z0 = float(np.percentile(self.ps.z, 2))
+        cor = rect_corners(b["cx"], b["cy"], b["length"], b["width"], b["bearing"])
+        out = [(np.column_stack([np.r_[cor[:, 0], cor[0, 0]], np.r_[cor[:, 1], cor[0, 1]], np.full(5, z0)]),
+                theme.ACCENT)]
+        for l, tr in self.tracks.items():
+            if not self.line_enabled.get(l, True):
+                continue
+            uu, vv = to_box_frame(tr["E"], tr["N"], b["cx"], b["cy"], b["bearing"])
+            m = (np.abs(uu) <= b["length"] / 2) & (np.abs(vv) <= b["width"] / 2)
+            if m.sum() > 1:
+                out.append((np.column_stack([tr["E"][m], tr["N"][m], tr["Z"][m]]),
+                            self.project.lines[l].get("colour", theme.ACCENT)))
+        return out
+
+    def _plan_slice_lines(self):
+        if not self.box:
+            return []
+        b = self.box
+        br = math.radians(b["bearing"])
+        u = np.array([math.sin(br), math.cos(br)])
+        v = np.array([math.cos(br), -math.sin(br)])
+        c = np.array([b["cx"], b["cy"]])
+        along, pos, th, full = self._slice()
+        out = []
+        if along:
+            if full:
+                return []
+            for s in (pos - th / 2, pos + th / 2):
+                out.append((tuple(c - u * b["length"] / 2 + v * s), tuple(c + u * b["length"] / 2 + v * s),
+                            theme.BRIGHT, False))
+        else:
+            for s in (pos - th / 2, pos + th / 2):
+                out.append((tuple(c + u * s - v * b["width"] / 2), tuple(c + u * s + v * b["width"] / 2),
+                            theme.BRIGHT, False))
+        return out
+
+    def _slice_overlay(self, p, view):
+        if not self.box:
+            return
+        b = self.box
+        along, pos, th, full = self._slice()
+        for l, tr in self.tracks.items():
+            if not self.line_enabled.get(l, True):
+                continue
+            uu, vv = to_box_frame(tr["E"], tr["N"], b["cx"], b["cy"], b["bearing"])
+            col = QtGui.QColor(self.project.lines[l].get("colour", theme.ACCENT))
+            if along:
+                m = np.abs(uu) <= b["length"] / 2
+                if m.sum() < 2:
+                    continue
+                sx, sy = view.to_screen(uu[m], tr["Z"][m])
+                p.setPen(QtGui.QPen(col, 1))
+                p.drawPolyline(QtGui.QPolygonF([QtCore.QPointF(a, bb) for a, bb in zip(sx, sy)]))
+            else:
+                m = np.abs(uu - pos) <= max(th, 1.0)
+                if not m.any():
+                    continue
+                j = np.flatnonzero(m)[0]
+                sx, sy = view.to_screen(vv[j], tr["Z"][j])
+                p.setPen(QtGui.QPen(col, 1.5))
+                p.setBrush(col)
+                p.drawEllipse(QtCore.QPointF(sx, sy), 4, 4)
+                p.drawText(QtCore.QPointF(sx + 6, sy - 6), "L%d" % (l + 1))
+
+    def _cursor(self, view, a, b):
+        o = self._origin()
+        if view is None or view.kind == "plan":
+            self.lbl_xyz.setText("E %.3f  N %.3f" % (a + o[0], b + o[1]))
+        elif view.kind == "profile" and self.box:
+            self.lbl_xyz.setText("chainage %.3f  Z %.3f" % (a + self.box["length"] / 2, b + o[2]))
+        else:
+            self.lbl_xyz.setText("offset %+.3f  Z %.3f" % (a, b + o[2]))
+
+    # ------------------------------------------------------------------ right-click menus of the views
+    def _view_menu(self, m, a, b, view):
+        if self.selected is not None and self.selected.any():
+            n = int(self.selected.sum())
+            sm = m.addMenu("Selection (%s points)" % "{:,}".format(n))
+            sm.addAction("Reject the selection", lambda: self.edit_selected("reject"))
+            sm.addAction("Accept the selection", lambda: self.edit_selected("accept"))
+            cm = sm.addMenu("Classify the selection as")
+            for k in CLASS_SHORTLIST:
+                cm.addAction("%d  %s" % (k, F.ASPRS.get(k, "")), lambda k=k: self.edit_selected("class", k))
+            sm.addAction("Run the filter group on the selection", lambda: self.edit_selected("filter"))
+            sm.addAction("Clear the selection", self.clear_selection)
+            theme.dark_menu(sm)
+            theme.dark_menu(cm)
+            m.addSeparator()
+        if view is self.plan:
+            m.addAction("Place the Inspection Area here", lambda: self._place_box(a, b))
+            m.addAction("Inspection Area properties...", self.show_area_properties)
+            m.addAction("Place the slice here", lambda: self._slice_at(a, b))
+            m.addAction("Align the Inspection Area with the nearest line", lambda: self.plan.align_to_track(a, b))
+            m.addSeparator()
+            m.addAction("Zoom to the Inspection Area", self.plan.zoom_box)
+            m.addAction("Zoom to the whole project", self.plan.zoom_project)
+            m.addAction("New Inspection Area: Shift + drag with the Pan tool").setEnabled(False)
+        if view is self.slice:
+            m.addAction("Rotate the slice 90 degrees", self.slice_pane._rotate)
+            m.addAction("Previous slice", lambda: self.step("sec_prev"))
+            m.addAction("Next slice", lambda: self.step("sec_next"))
+
+    def _place_box(self, x, y):
+        if self.box:
+            b = dict(self.box)
+            b["cx"], b["cy"] = x, y
+            self.set_box(b)
+
+    def _slice_at(self, x, y):
+        if not self.box:
+            return
+        b = self.box
+        u, v = to_box_frame(np.array([x]), np.array([y]), b["cx"], b["cy"], b["bearing"])
+        if abs(u[0]) > b["length"] / 2 or abs(v[0]) > b["width"] / 2:
+            nb = dict(b)
+            nb["cx"], nb["cy"] = x, y
+            self.set_box(nb)
+            u, v = np.array([0.0]), np.array([0.0])
+        self.slice_pane.set_position(float(v[0] if self.slice_pane.along else u[0]), self._slice_half())
+        self._slice_changed()
+
+    # =============================================================== editing
+    def edit_selection(self, view, mask):
+        if self.edits is None or len(self.ps) == 0:
+            return
+        if self.where == "outside":
+            mask = ~mask
+        idx = view.idx[mask]
+        if self.edit_line >= 0:
+            idx = idx[self.ps.line[idx] == self.edit_line]
+        if self.action == "select":
+            add = bool(QtWidgets.QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier)
+            if self.selected is None or not add or len(self.selected) != len(self.ps):
+                self.selected = np.zeros(len(self.ps), bool)
+            self.selected[idx] = True
+            self.status("%s points selected (Shift adds); right click for what to do with them, Delete rejects"
+                        % "{:,}".format(int(self.selected.sum())), 8000)
+            self.refresh_views()
+            return
+        self._edit_idx(idx, self.action, self.edit_class)
+
+    def edit_selected(self, action, cls=None):
+        if self.selected is None or not self.selected.any():
+            return
+        idx = np.flatnonzero(self.selected)
+        self.selected = None
+        self._edit_idx(idx, action, cls if cls is not None else self.edit_class)
+
+    def clear_selection(self):
+        self.selected = None
+        self.plan.highlight_line = None
+        self.refresh_views()
+
+    def _edit_idx(self, idx, action, cls):
+        if len(idx) == 0:
+            return
+        if self.preview is not None:
+            self.clear_preview(refresh=False)
+            self.filters.preview_done()
+        if action == "filter":
+            g = self.filters.group
+            if g is None:
+                return
+            scope = np.zeros(len(self.ps), bool)
+            scope[idx] = True
+            ctx = F.Ctx(self.ps, tracks=self.tracks, scope_mask=scope, origin=self._origin(),
+                        reference=self._reference())
+            try:
+                g.run(ctx)
+            except Exception as ex:
+                self._error("Filter failed", ex)
+                return
+            act = self.edits.apply_ctx(ctx, "Filter '%s' on a selection" % g.name, scope=scope)
+            self.edits.commit(act)
+            if act is not None:
+                self.project.record_filter(g.to_dict(), "selection", act.size)
+            if ctx.messages:
+                self.status("; ".join(ctx.messages), 8000)
+        elif action == "class":
+            self.edits.apply(idx, "class", int(cls))
+        else:
+            self.edits.apply(idx, action)
+        self.after_edit()
+
+    def after_edit(self):
+        self._col_cache = {}
+        self._fill_classes()
+        self.refresh_views()
+        self._area_info()
+
+    def _edited(self, act):
+        self._refresh_history()
+        self._update_undo()
+
+    def _update_undo(self):
+        if self.edits is None:
+            return
+        self.b_undo.setEnabled(self.edits.can_undo())
+        self.b_redo.setEnabled(self.edits.can_redo())
+        self.b_undo.setToolTip("Undo " + (self.edits.undo_stack[-1].label if self.edits.undo_stack else "") +
+                               " (Ctrl+Z)")
+
+    def undo(self):
+        if self.edits and self.edits.undo():
+            self.after_edit()
+
+    def redo(self):
+        if self.edits and self.edits.redo():
+            self.after_edit()
+
+    def _rebuild_dirty_grids(self):
+        st = self.project.store if self.project else None
+        if st is None or self._busy:
+            return
+        d = getattr(st, "dirty_tiles", set())
+        if not d:
+            return
+        keys = list(d)[:24]
+        for k in keys:
+            st.build_grid(k)
+            d.discard(k)
+        self.plan.invalidate(keys)
+
+    def _refresh_history(self):
+        if self.project is None:
+            return
+        self.history.clear()
+        for h in self.project.data.get("history", [])[-400:]:
+            self.history.addItem("%s  %s" % (h["utc"], h["text"]))
+        self.history.scrollToBottom()
+
+    # ================================================================== info
+    def show_point(self, j):
+        if j is None or j < 0 or j >= len(self.ps):
+            return
+        ps = self.ps
+        o = self._origin()
+        t = _dt.datetime.fromtimestamp(float(ps.t[j]), _dt.timezone.utc)
+        fl = int(ps.flag[j])
+        st = "rejected" if fl & REJECTED else "accepted"
+        why = [n for b, n in ((REJ_MANUAL, "manual"), (REJ_AUTO, "automatic"), (REJ_ORIG, "original")) if fl & b]
+        ln = self.project.lines[ps.line[j]]
+        fk = int(self.file_idx[j]) - self._file_base.get(ln["id"], 0) if len(self.file_idx) > j else 0
+        fname = os.path.basename(ln["files"][fk]) if 0 <= fk < len(ln.get("files", [])) else ""
+        txt = ("E        %.3f\nN        %.3f\nZ        %.3f\n" % (ps.x[j] + o[0], ps.y[j] + o[1], ps.z[j] + o[2]) +
+               "time     %s.%06d UTC\n" % (t.strftime("%Y-%m-%d %H:%M:%S"), t.microsecond) +
+               "line     L%d  %s\nfile     %s\n" % (ps.line[j] + 1, ln.get("name", ""), fname) +
+               "laser    %d   return %s\n" % (ps.ch[j] + 1, {0: "last", 1: "strongest", 2: "single"}[int(ps.ret[j])]) +
+               "range    %.2f m   azimuth %.2f deg\n" % (ps.rng[j] * 0.01, ps.az[j] * 0.01) +
+               "intens.  %d\nclass    %d  %s\nstatus   %s %s\n" % (ps.i[j], ps.cls[j], F.ASPRS.get(int(ps.cls[j]), ""),
+                                                                 st, ("(" + ", ".join(why) + ")") if why else "") +
+               ("dz       %+.3f m\n" % (ps.dz[j] * 1e-3) if ps.dz[j] else ""))
+        self.info.setPlainText(txt + "\n" + self._area_text())
+        self.tabs.setCurrentWidget(self.infop)
+
+    def _area_text(self):
+        ps = self.ps
+        if len(ps) == 0:
+            return ""
+        rej = ps.rejected
+        lines = ["AREA  %s points, %s rejected (%.2f%%)" % ("{:,}".format(len(ps)), "{:,}".format(int(rej.sum())),
+                                                            100 * rej.mean())]
+        if self.selected is not None and self.selected.any():
+            lines.append("      %s selected" % "{:,}".format(int(self.selected.sum())))
+        for l in np.unique(ps.line):
+            m = ps.line == l
+            lines.append("  L%-3d %10s pts  %8s rej" % (l + 1, "{:,}".format(int(m.sum())),
+                                                        "{:,}".format(int((rej & m).sum()))))
+        return "\n".join(lines)
+
+    def _area_info(self):
+        self.info.setPlainText(self._area_text())
+
+    # ================================================================== filters
+    def _reference(self):
+        p = self.filters.reference()
+        if not p:
+            return None
+        try:
+            from ..core.export import raster_sampler
+            return raster_sampler(p, self._origin())
+        except Exception as ex:     # noqa: BLE001
+            self.status("Reference raster: %s" % ex, 8000)
+            return None
+
+    def _scope_mask(self, scope):
+        ps = self.ps
+        if len(ps) == 0 or scope != "Slice":
+            return None
+        b = self.box
+        u, v = to_box_frame(ps.x, ps.y, b["cx"], b["cy"], b["bearing"])
+        along, pos, th, full = self._slice()
+        if along:
+            return np.ones(len(ps), bool) if full else np.abs(v - pos) <= th / 2
+        return np.abs(u - pos) <= th / 2
+
+    def run_preview(self):
+        if self.edits is None or len(self.ps) == 0 or self.filters.group is None:
+            self.filters.preview_done()
+            return
+        if self._prev_cancel is not None:
+            self._prev_cancel[0] = True
+            self._prev_pending = True
+            return
+        g = F.FilterGroup.from_dict(self.filters.group.to_dict())
+        scope = self._scope_mask(self.filters.cmb_scope.currentText())
+        ps = self.ps
+        flag = [False]
+        self._prev_cancel = flag
+        ref, tracks, origin = self._reference(), self.tracks, self._origin()
+        self.filters.set_status("Preview running...")
+
+        def work():
+            t = time.time()
+            try:
+                ctx = F.Ctx(ps, tracks=tracks, scope_mask=scope, cancel=lambda: flag[0], origin=origin, reference=ref)
+                g.run(ctx)
+                res = (ctx, time.time() - t, ps)
+            except Exception as ex:     # noqa: BLE001
+                res = ex
+                traceback.print_exc()
+            self.bridge.done.emit("preview", res)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _preview_done(self, res):
+        cancelled = self._prev_cancel is not None and self._prev_cancel[0]
+        self._prev_cancel = None
+        if self._prev_pending:
+            self._prev_pending = False
+            self.run_preview()
+            return
+        if cancelled or not self.filters.btn_prev.isChecked():
+            return
+        if isinstance(res, Exception):
+            self.filters.set_status("Preview failed: %s" % res)
+            return
+        ctx, dt_, ps = res
+        if ps is not self.ps:
+            return
+        self.preview = ctx
+        newly = int((((ctx.flag & REJECTED) != 0) & ~self.ps.rejected).sum())
+        reacc = int((((ctx.flag & REJECTED) == 0) & self.ps.rejected).sum())
+        ncls = int((ctx.cls != self.ps.cls).sum())
+        tim = ", ".join("%s %.1fs" % (n, t) for n, t in getattr(ctx, "timings", []))
+        self.filters.set_status("Preview: %s to reject (orange), %s re-accepted, %s re-classified in %.1f s\n%s%s" % (
+            "{:,}".format(newly), "{:,}".format(reacc), "{:,}".format(ncls), dt_, tim,
+            ("\n" + "\n".join(ctx.messages)) if ctx.messages else ""))
+        self._col_cache = {}
+        self._fill_classes()
+        self.refresh_views()
+
+    def clear_preview(self, refresh=True):
+        if self._prev_cancel is not None:
+            self._prev_cancel[0] = True
+        had = self.preview is not None
+        self.preview = None
+        if had:
+            self._col_cache = {}
+            if refresh:
+                self._fill_classes()
+                self.refresh_views()
+
+    def accept_preview(self):
+        if self.preview is None:
+            return
+        g = self.filters.group
+        act = self.edits.apply_ctx(self.preview, "Filter '%s' (preview accepted)" % (g.name if g else ""))
+        self.edits.commit(act)
+        if act is not None and g is not None:
+            self.project.record_filter(g.to_dict(), "inspection area (preview accepted)", act.size)
+        self.preview = None
+        self.filters.preview_done()
+        self.filters.set_status("Accepted: %s points changed" % ("{:,}".format(act.size) if act else 0))
+        self.after_edit()
+
+    def run_scope(self, scope):
+        if self.edits is None or self.filters.group is None:
+            return
+        g = F.FilterGroup.from_dict(self.filters.group.to_dict())
+        if scope in ("Inspection Area", "Slice"):
+            mask = self._scope_mask(scope)
+            ps = self.ps
+            tracks, origin, ref = self.tracks, self._origin(), self._reference()
+
+            def job(progress, cancel):
+                ctx = F.Ctx(ps, tracks=tracks, scope_mask=mask, cancel=cancel, origin=origin, reference=ref)
+                g.run(ctx, progress=lambda f, n: progress(f, n))
+                return ctx, ps
+            self._run("filter_area", job, "Filter '%s' on the %s" % (g.name, scope.lower()))
+            return
+        lines = None
+        if scope.startswith("Selected"):
+            lines = [self.edit_line] if self.edit_line >= 0 else [l for l, on in self.line_enabled.items() if on]
+        if theme.msg_question(self, "CloudPro", "Run '%s' on %s?\n\nThis edits the stored points tile by tile.%s" % (
+                g.name, "the selected lines" if lines else "the entire project",
+                "" if self.project.store.total < 20_000_000 else
+                "\nLarge runs cannot be undone; use 'Reset modifications' to revert automatic rejections.")) != \
+                QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        from ..core.runner import run_group_tiled
+        project, edits = self.project, self.edits
+        self.edits.ps = None
+
+        def job(progress, cancel):
+            def inner():
+                n = run_group_tiled(project, g, edits, lines=lines, progress=progress, cancel=cancel)
+                project.record_filter(g.to_dict(), scope, n)
+                return n
+            if project.dcs is not None:
+                with project.dcs.run("cloudpro", PLUGIN, VERSION):
+                    return inner()
+            return inner()
+        self._run("filter_tiled", job, "Filter '%s'" % g.name)
+
+    # ================================================================== export
+    def export(self):
+        if self.project is None:
+            return
+        d = ExportDialog(self, self.project.lines, os.path.join(self.project.root, self.project.name + ".las"))
+        if exec_(d) != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        from ..core import export as EX
+        from ..core.spatial import parse_set
+        path, kind = d.path.text().strip(), d.kind.currentIndex()
+        box = self.box if d.scope.currentText() == "Inspection Area" else None
+        lines, classes = d.selected_lines(), parse_set(d.classes.text()) or None
+        inc, per_line = d.rejected.isChecked(), d.per_line.isChecked()
+        cell, stat, fill = d.cell.value(), d.stat.currentText(), d.fill.value()
+        add = d.add_qgis.isChecked()
+        project = self.project
+        project.store.sync()
+
+        def job(progress, cancel):
+            if kind == 0:
+                return ("las", path, EX.export_las(project, path, box, lines, inc, classes, per_line, progress,
+                                                   cancel), add)
+            if kind == 1:
+                return ("xyz", path, EX.export_xyz(project, path, box, lines, inc, classes, progress, cancel), add)
+            G, x0, yt = EX.grid_surface(project, cell, stat, box, lines, classes, fill, progress)
+            return ("grid", EX.write_grid(path, G, x0, yt, cell, project.crs), int(np.isfinite(G).sum()), add)
+        self._run("export", job, "Exporting")
+
+    def pick_on_map(self):
+        if self.map_pick is None or self.iface is None:
+            theme.msg_info(self, "CloudPro", "Available inside QGIS")
+            return
+        self.map_pick()
+
+    def add_qgis_layers(self):
+        if self.iface is None or self.project is None:
+            theme.msg_info(self, "CloudPro", "Available inside QGIS")
+            return
+        from . import qgis_layers
+        qgis_layers.add_project_layers(self.iface, self.project, self.tracks, self.box)
+
+    def _raster_layers(self):
+        try:
+            from qgis.core import QgsProject, QgsRasterLayer
+            self.filters.set_raster_layers([(l.name(), l.source()) for l in QgsProject.instance().mapLayers().values()
+                                            if isinstance(l, QgsRasterLayer)])
+        except Exception:       # noqa: BLE001
+            pass
+
+    # ========================================================= background jobs
+    def _run(self, tag, fn, label):
+        if self._busy:
+            theme.msg_info(self, "CloudPro", "Another task is still running.")
+            return
+        self._busy = True
+        self._cancel_flag = [False]
+        cancel = lambda: self._cancel_flag[0]      # noqa: E731
+        self.prog.setValue(0)
+        self.prog.show()
+        self.btn_cancel.show()
+        self.status(label + "...", 0)
+
+        def progress(f, msg=None):
+            self.bridge.progress.emit(float(f), msg or "")
+
+        def work():
+            try:
+                res = fn(progress, cancel)
+            except Exception as ex:     # noqa: BLE001
+                traceback.print_exc()
+                res = ex
+            self.bridge.done.emit(tag, res)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _cancel(self):
+        if getattr(self, "_cancel_flag", None):
+            self._cancel_flag[0] = True
+
+    def _on_progress(self, f, msg):
+        self.prog.setValue(int(1000 * f))
+        if msg:
+            self.status(msg, 0)
+
+    def _after_points_changed(self):
+        self.tracks = self.project.tracks()
+        self._ensure_file_spans()
+        self._fill_lines()
+        self.edits = EditManager(self.project, on_change=self._edited)
+        self.plan.set_project(self.project.store, self.tracks, {l["id"]: l["colour"] for l in self.project.lines})
+        self.plan.b_offset_z = float(self._origin()[2])
+        self._track_masks()
+        if self._area is not None:
+            self._area.set_lines(self.project.lines)
+        if self.box is None or not self.project.data.get("view", {}).get("box"):
+            self.set_box(self._default_box(), load=True, fit=True)
+            self.plan.zoom_box()
+        else:
+            self.load_box(fit=True)
+        self._refresh_history()
+        self.refresh_chain()
+        if self._props is not None and self._props.isVisible():
+            self._props.refresh()
+
+    def _on_done(self, tag, res):
+        if tag == "preview":
+            self._preview_done(res)
+            return
+        self._busy = False
+        self.prog.hide()
+        self.btn_cancel.hide()
+        self.status("", 1)
+        if isinstance(res, Exception):
+            self._error("%s failed" % tag.replace("_", " ").title(), res)
+            if tag in ("filter_tiled", "georef"):
+                self._after_points_changed()
+            return
+        if tag == "georef":
+            out, rest, inp = res
+            n = sum(st["points"] for _, st in out)
+            self._after_points_changed()
+            msg = "Georeferenced %d line(s): %s points.\n\n%s" % (len(out), "{:,}".format(n), "\n".join(inp.summary()))
+            if rest:
+                msg += "\n\n%s edited points carried over from the previous georeferencing." % "{:,}".format(rest)
+            if inp.warnings:
+                msg += "\n\n" + "\n".join("! " + w for w in inp.warnings)
+            theme.msg_info(self, "CloudPro", msg)
+        elif tag == "import":
+            self._after_points_changed()
+            theme.msg_info(self, "CloudPro", "Imported %d line(s), %s points" % (
+                len(res), "{:,}".format(sum(st["points"] for _, st in res))))
+        elif tag == "publish":
+            doc, add = res
+            self.refresh_chain()
+            self._refresh_history()
+            if add and self.iface is not None:
+                from . import qgis_layers
+                for k, f in doc["files"].items():
+                    path = os.path.join(self.project.out_dir, f)
+                    kind = "las" if f.endswith(".las") else "grid" if f.endswith((".tif", ".asc")) else None
+                    if kind:
+                        qgis_layers.add_file(self.iface, path, kind)
+            theme.msg_info(self, "CloudPro", "Published cloud.json for the job (%s).\n\n%s\n\nFolder: %s%s" % (
+                doc["calibration"], "\n".join("%s: %s" % kv for kv in doc["files"].items()), self.project.out_dir,
+                ("\n\n" + "\n".join("! " + w for w in doc.get("warnings", []))) if doc.get("warnings") else ""))
+        elif tag == "filter_area":
+            ctx, ps = res
+            if ps is not self.ps:
+                return
+            act = self.edits.apply_ctx(ctx, "Filter '%s'" % self.filters.group.name, scope=ctx.scope)
+            self.edits.commit(act)
+            if act is not None:
+                self.project.record_filter(self.filters.group.to_dict(), self.filters.cmb_scope.currentText(),
+                                           act.size)
+            self.filters.set_status("%s points changed%s" % ("{:,}".format(act.size if act else 0),
+                                                             ("\n" + "\n".join(ctx.messages)) if ctx.messages else ""))
+            self.after_edit()
+        elif tag == "filter_tiled":
+            self.filters.set_status("%s points changed" % "{:,}".format(res))
+            self.edits.ps = self.ps
+            self.load_box()
+        elif tag == "export":
+            kind, path, n, add = res
+            self.status("Exported %s to %s" % ("{:,}".format(n), path), 10000)
+            if add and self.iface is not None:
+                from . import qgis_layers
+                qgis_layers.add_file(self.iface, path, kind)
+            theme.msg_info(self, "CloudPro", "Exported %s %s to\n%s" % (
+                "{:,}".format(n), "cells" if kind == "grid" else "points", path))
+        self._refresh_history()
+
+    def _error(self, title, ex):
+        theme.msg_warn(self, "CloudPro", "%s:\n%s" % (title, ex))
+
+    def show_help(self):
+        theme.msg_info(self, "CloudPro - keys and mouse", HELP_TEXT)
+
+
+class _StatusShim:
+    def __init__(self, w):
+        self.w = w
+
+    def showMessage(self, msg, ms=6000):     # noqa: N802
+        self.w.status(msg, ms)
+
+
+class _Proxy:
+    """A point set view with some fields replaced (preview classes)."""
+
+    def __init__(self, ps, **over):
+        self._ps = ps
+        self._over = over
+
+    def __getattr__(self, k):
+        if k in self._over:
+            return self._over[k]
+        return getattr(self._ps, k)
+
+
+HELP_TEXT = """VIEWS
+  Wheel: zoom at the cursor.  Shift+wheel: vertical exaggeration (slice).
+  Middle drag: pan in every tool.  Double click: centre here.  Home: zoom to the points.
+  Arrows: pan by the step (Inspection Area properties).  Right click: the view's menu.
+
+PLAN AND INSPECTION AREA
+  With the Pan tool (hand): drag the area's edge to move it, a corner to resize, the round
+  handle to rotate; Shift+drag draws a new one.  Right click: place here, properties
+  (exact values, steps, follow a line, go to), place the slice, align with a line.
+  Shift+arrows or Shift+PgUp/PgDn: step the area.
+
+SLICE
+  The bar on top: cross-section / profile, rotate 90, whole area, thickness, step, previous /
+  next, position.  PgUp / PgDn or ] / [ : next / previous slice (Shift = 5 steps).
+
+EDITING
+  Tools: Pan (Space), shape button (click to cycle: rectangle G, polygon P, lasso L, brush B),
+  line button (above U / below J), Measure (M), Info (I).  Right click a cycling button to pick.
+  Action button: Reject (X), Accept (V), Select (S), Classify (K), Filter (F); next to it, inside or
+  outside the shape.  Selected points: right click for reject / accept / classify / filter,
+  Delete rejects them, Ctrl+D clears.  H shows / hides rejected points.  Ctrl+Z / Ctrl+Y.
+
+3D
+  Left drag: orbit.  Shift+left or middle drag: pan.  Wheel: zoom, Ctrl+wheel: Z scale.
+  Right drag: lasso / rectangle edit.  Double click: new centre.  W/S/A/D/Q/E: fly by the step.
+  1 top, 2 along, 3 across, 4 oblique, O orthographic, 0 fit.
+"""

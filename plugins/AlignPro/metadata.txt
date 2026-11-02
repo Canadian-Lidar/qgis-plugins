@@ -1,0 +1,19 @@
+[general]
+name=AlignPro
+qgisMinimumVersion=3.34
+qgisMaximumVersion=4.99
+supportsQt6=True
+description=Lidar boresight calibration (patch test) for the Canadian Lidar mobile mapper: stage 02 of the Data Collection Systems chain (PosPro, AlignPro, CloudPro).
+about=AlignPro calibrates the Lidar mounting angles of the mobile mapper from its .clraw captures. It opens the job's shared processing project, uses the trajectory PosPro published, pairs the passes, finds planar surfaces seen by several passes and solves roll, pitch and heading with a point-to-plane adjustment; leaving each line out in turn gives the SDEV. A Data View shows plan, profile and section of the points live while roll, pitch, heading, lever arm and latency are adjusted by hand. The applied values are published for CloudPro (alignment.json) and given in the mapper's mounting convention, ready for Settings > Hardware > Survey sensor. Quality control, sweeps, PDF and text reports and calibration history. Needs the DCS Core plugin. Menu: Plugins > Canadian Lidar > Data Collection Systems.
+version=1.1.0
+author=Canadian Lidar
+email=
+category=Plugins
+tags=lidar,boresight,patch test,calibration,mobile mapping,clraw,dcs
+icon=icons/alignpro.svg
+experimental=False
+deprecated=False
+hasProcessingProvider=no
+plugin_dependencies=DCS Core
+changelog=1.1.0 Part of the DCS chain: needs the DCS Core plugin. Opens the job's shared project (Processing/<Name>/<Name>.dcsproj) and works in 02_AlignPro (work/, out/, log/); uses the captures recorded in the project and PosPro's published trajectory (trajectory.json) instead of choosing an SBET; starts from the Lidar mounting in the shared hardware record; publishes alignment.json for CloudPro when values are applied (stage lock while running; out of date when PosPro is re-run or the mounting is edited); chain bar PosPro / AlignPro / CloudPro; relocate a moved job folder; save the QGIS project in the project folder; older .alignpro.json projects still open. Look, menus, menu entry and title bars from DCS Core. "Lidar" spelling throughout.
+    1.0.0 First release: auto calibration with leave-one-out combinations, Data View with live manual tuning, quality control, sweeps, reports and history.
