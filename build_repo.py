@@ -29,14 +29,39 @@ if not base_url:
     sys.exit("Give the Pages URL, e.g. python build_repo.py https://user.github.io/repo")
 
 
-def read_metadata(folder: Path) -> dict:
+REQUIRED = ("name", "version", "qgisMinimumVersion", "description", "author", "email")
+
+
+def read_metadata(folder: Path, problems: list):
+    """Returns the metadata dict, or None after adding plain-English problems to the list."""
     cp = configparser.ConfigParser(interpolation=None)
     cp.optionxform = str  # keep key case
-    cp.read(folder / "metadata.txt", encoding="utf-8")
+    where = f"{folder.name}/metadata.txt"
+    try:
+        cp.read(folder / "metadata.txt", encoding="utf-8")
+    except configparser.DuplicateOptionError as e:
+        problems.append(f"{where}: '{e.option}' appears more than once (line {e.lineno}). Delete the extra line.")
+        return None
+    except configparser.DuplicateSectionError as e:
+        problems.append(f"{where}: the [{e.section}] heading appears more than once. Keep only one.")
+        return None
+    except configparser.MissingSectionHeaderError:
+        problems.append(f"{where}: the first line must be [general].")
+        return None
+    except configparser.Error as e:
+        problems.append(f"{where}: can't be read ({e.message.splitlines()[0]}).")
+        return None
+    except UnicodeDecodeError:
+        problems.append(f"{where}: isn't saved as UTF-8. In Notepad use File > Save As > Encoding: UTF-8.")
+        return None
+    if not cp.has_section("general"):
+        problems.append(f"{where}: has no [general] heading on the first line.")
+        return None
     md = dict(cp["general"])
-    for key in ("name", "version", "qgisMinimumVersion", "description", "author", "email"):
-        if not md.get(key):
-            sys.exit(f"{folder.name}/metadata.txt is missing '{key}'")
+    missing = [k for k in REQUIRED if not md.get(k, "").strip()]
+    if missing:
+        problems.append(f"{where}: missing {', '.join(missing)}.")
+        return None
     return md
 
 
@@ -83,16 +108,24 @@ def main() -> None:
         shutil.rmtree(OUT)
     OUT.mkdir()
     today = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    entries, rows = [], []
+    entries, rows, problems = [], [], []
 
     for folder in sorted(p for p in SRC.iterdir() if (p / "metadata.txt").exists()):
-        md = read_metadata(folder)
+        md = read_metadata(folder, problems)
+        if md is None:
+            continue
         zip_name = f"{folder.name}.{md['version']}.zip"
         make_zip(folder, OUT / zip_name)
         entries.append(xml_entry(folder, md, zip_name, today))
         rows.append(f"<li><b>{escape(md['name'])}</b> {escape(md['version'])} - "
                     f"<a href='{zip_name}'>download zip</a></li>")
         print(f"Built {zip_name}")
+
+    if problems:
+        print("\nFix these, then commit and push again:")
+        for msg in problems:
+            print(f"  - {msg}")
+        sys.exit(1)
 
     if not entries:
         sys.exit("No plugins found. Each plugin needs its own folder in ./plugins with a metadata.txt")
