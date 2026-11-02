@@ -1,4 +1,5 @@
 [general]
+email=seantobrien@gmail.com
 name=DCS Core
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
