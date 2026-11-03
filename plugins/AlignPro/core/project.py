@@ -25,7 +25,7 @@ import numpy as np
 
 from . import clraw, engine, geo, lines as lines_mod, trajectory
 
-VERSION = "1.1.0"
+VERSION = "1.1.2"
 STAGE_FILE = "alignpro.json"
 PLUGIN = "AlignPro"
 CONVENTION = {"name": "navaq_hesai", "matrix": "M = Rz(heading) Ry(pitch) Rx(-roll) Z0",

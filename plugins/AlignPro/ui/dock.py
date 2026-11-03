@@ -22,7 +22,9 @@ from .maptools import DragLineTool, PolygonTool, SliceCursor
 from .pages import AnalyzePage, CalibPage, DataPage, InstallPage, PairsPage, QualityPage, ReportPage, WelcomePage
 from .dataview import DataView
 from .slices import SliceView
-from .widgets import DockTitle, Logo, StepButton, Toast
+from . import docksafe
+from .widgets import Logo, StepButton, Toast
+from .docktitle import LockedDockTitle
 from dcs_core.stepbar import StepBar
 
 
@@ -45,7 +47,8 @@ def _scroll(widget):
 class AlignProDock(QDockWidget):
     def __init__(self, iface, parent=None):
         super().__init__("AlignPro \u2013 Lidar Boresight Calibration", parent)
-        self.setTitleBarWidget(DockTitle(self, "AlignPro \u2013 Lidar Boresight Calibration"))
+        self.setTitleBarWidget(LockedDockTitle(self, "AlignPro \u2013 Lidar Boresight Calibration", iface,
+                                               (1100, 900), (1400, 950)))
         self.setObjectName("AlignProDock")
         self.iface = iface
         self.p = None
@@ -231,7 +234,8 @@ class AlignProDock(QDockWidget):
     def _build_dataview(self, parent):
         self.view_dock = QDockWidget("AlignPro \u2013 Data View & Fine Tuning", parent)
         self.view_dock.setObjectName("AlignProDataViewDock")
-        self.view_dock.setTitleBarWidget(DockTitle(self.view_dock, "AlignPro \u2013 Data View & Fine Tuning"))
+        self.view_dock.setTitleBarWidget(LockedDockTitle(self.view_dock, "AlignPro \u2013 Data View & Fine Tuning",
+                                                         self.iface, (1500, 850), (1700, 1000)))
         self.dv = DataView()
         theme.apply(self.dv)
         theme.apply_dock(self.view_dock)
@@ -260,28 +264,16 @@ class AlignProDock(QDockWidget):
 
     def show_dataview(self, how="dock"):
         d = self.view_dock
-        if how == "dock":
-            if d.isMaximized():
-                d.showNormal()
-            d.setFloating(False)
-            self.iface.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, d)
-            d.show()
-            d.raise_()
+        if not docksafe.alive(d):
             return
-        if not d.isFloating():
-            d.setFloating(True)
-        d.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint |
-                         Qt.WindowType.WindowMinMaxButtonsHint | Qt.WindowType.WindowCloseButtonHint)
-        d.show()
+        if how == "dock":
+            docksafe.dock_to(self.iface, d, Qt.DockWidgetArea.BottomDockWidgetArea)
+            return
         if how == "max":
-            d.showMaximized()
+            if not (d.property(docksafe.WINDOWED) and d.isMaximized()):
+                docksafe.toggle_maximised(self.iface, d)
         else:
-            scr = d.screen().availableGeometry() if d.screen() else None
-            if scr is not None:
-                w, h = min(1700, int(scr.width() * 0.9)), min(1000, int(scr.height() * 0.88))
-                d.setGeometry(scr.x() + (scr.width() - w) // 2, scr.y() + (scr.height() - h) // 2, w, h)
-        d.raise_()
-        d.activateWindow()
+            docksafe.float_window(self.iface, d, (1700, 1000))
 
     # ============================================================ state
     def set_enabled(self, on):
@@ -363,40 +355,16 @@ class AlignProDock(QDockWidget):
 
     # ============================================================ window
     def _as_window(self):
-        if not self.isFloating():
-            self.setFloating(True)
-        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.CustomizeWindowHint |
-                            Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowMinMaxButtonsHint |
-                            Qt.WindowType.WindowCloseButtonHint)
-        self.show()
+        docksafe.make_window(self)
 
     def float_window(self):
-        self._as_window()
-        if self.isMaximized():
-            self.showNormal()
-        scr = self.screen().availableGeometry() if self.screen() else None
-        if scr is not None:
-            w, h = min(1400, int(scr.width() * 0.8)), min(950, int(scr.height() * 0.85))
-            self.setGeometry(scr.x() + (scr.width() - w) // 2, scr.y() + (scr.height() - h) // 2, w, h)
-        self.raise_()
+        docksafe.float_window(self.iface, self, (1400, 950))
 
     def toggle_maximised(self):
-        if self.isFloating() and self.isMaximized():
-            self.showNormal()
-            return
-        self._as_window()
-        self.showMaximized()
-        self.raise_()
+        docksafe.toggle_maximised(self.iface, self)
 
     def dock_side(self, area):
-        if self.isMaximized():
-            self.showNormal()
-        if self.isFloating():
-            self.setFloating(False)
-        self.iface.mainWindow().removeDockWidget(self)
-        self.iface.addDockWidget(area, self)
-        self.show()
-        self.raise_()
+        docksafe.dock_to(self.iface, self, area)
 
     def _win_menu_text(self):
         self.act_max.setText("Restore window size" if (self.isFloating() and self.isMaximized())
@@ -955,10 +923,36 @@ class AlignProDock(QDockWidget):
         self._run("Reset", lambda prog, canc: self.p.reset(), lambda _: self.refresh_all())
 
     def cleanup(self):
-        self.cursor.hide()
-        self.layers.remove_all()
-        self.iface.removeDockWidget(self.view_dock)
-        self.view_dock.deleteLater()
+        """Called by the plugin's unload (also when QGIS closes): stop everything AlignPro started and
+        release the Data View panel safely (see docksafe)."""
+        for t in (getattr(self, "_chain_timer", None), getattr(getattr(self, "dv", None), "_timer", None)):
+            try:
+                if t is not None:
+                    t.stop()
+            except RuntimeError:
+                pass
+        try:
+            if self.job is not None:
+                self.job.cancel()
+        except RuntimeError:
+            pass
+        try:
+            canvas = self.iface.mapCanvas()
+            tool = canvas.mapTool()
+            if tool is not None and tool is getattr(self, "_tool", None):
+                canvas.unsetMapTool(tool)
+        except RuntimeError:
+            pass
+        try:
+            self.cursor.hide()
+        except RuntimeError:
+            pass
+        try:
+            self.layers.remove_all()
+        except RuntimeError:
+            pass
+        docksafe.release(self.iface, getattr(self, "view_dock", None))
+        self.view_dock = None
 
 
 def _write_pdf(html, path):

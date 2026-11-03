@@ -59,9 +59,14 @@ class AlignProPlugin:
             else:
                 self.iface.removePluginMenu("&Canadian Lidar", self.action)
         if self.dock is not None:
-            self.dock.cleanup()
-            self.iface.removeDockWidget(self.dock)
-            self.dock.deleteLater()
+            from .ui import docksafe
+            if docksafe.alive(self.dock):
+                try:
+                    self.dock.visibilityChanged.disconnect(self.action.setChecked)
+                except (TypeError, RuntimeError):
+                    pass
+                self.dock.cleanup()
+                docksafe.release(self.iface, self.dock)
             self.dock = None
 
     def toggle(self, on=True):

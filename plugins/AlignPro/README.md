@@ -13,6 +13,13 @@ Install **DCS Core** first, then AlignPro (Plugins ▸ Manage and Install Plugin
 zip at a time), then restart QGIS once. Without DCS Core, AlignPro shows a message instead of opening.
 QGIS 3.34 or later (QGIS 4 / Qt6 supported). No extra Python packages.
 
+## Panels and docking
+
+The AlignPro panel and the Data View dock only when you ask: **right-click the panel's title bar** and
+choose Dock right, Dock left, Dock bottom or Dock top (or Float, Float as a window, Maximise, Close).
+Dragging a panel just moves it; it never snaps into a dock area. Double-click the title of a docked panel
+to float it.
+
 ## The shared project
 
 AlignPro works on the job's processing project, created by whichever plugin is used first:
