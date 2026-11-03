@@ -9,7 +9,7 @@ clm_menu_data_collection_systems) are set on whatever menu is used. The last
 plugin to leave removes the empty submenus.
 """
 TOP = "Canadian Lidar"
-GROUP = "Data Collection Systems"
+GROUP = "Data Systems"
 _NAMES = {
     TOP: ("clm_menu_canadian_lidar", "CanadianLidar_CanadianLidar"),
     GROUP: ("clm_menu_data_collection_systems", "CanadianLidar_DataCollectionSystems"),
