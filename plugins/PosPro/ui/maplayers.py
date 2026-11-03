@@ -196,3 +196,41 @@ def zoom_to(iface, layer):
     canvas.setExtent(ext)
     canvas.refresh()
 
+
+
+REVIEW_COLOURS = {"open": "232,72,85", "exclude": "58,180,242", "poor": "245,166,35", "interpolate": "155,123,255",
+                  "accept": "0,229,170"}
+
+
+def review_layer(project, qc, items):
+    """Trajectory Review windows on the map: one line per anomaly or edit,
+    coloured by what was decided (red open, blue GNSS excluded, amber poor,
+    violet interpolated, mint accepted)."""
+    import bisect
+    from qgis.core import QgsCategorizedSymbolRenderer, QgsRendererCategory
+    crs = _crs(project)
+    lyr = QgsVectorLayer("LineString?crs=%s" % crs.authid(), "Review windows", "memory")
+    pr = lyr.dataProvider()
+    pr.addAttributes([_field("id", "s"), _field("what", "s"), _field("state", "s"), _field("start_utc", "s"),
+                      _field("duration_s", "d")])
+    lyr.updateFields()
+    t = qc["gps_time"] if qc else []
+    feats = []
+    for it in items:
+        i0 = bisect.bisect_left(t, it["t0"])
+        i1 = bisect.bisect_right(t, it["t1"])
+        pts = [QgsPointXY(qc["lon_deg"][i], qc["lat_deg"][i]) for i in range(max(0, i0 - 1), min(len(t), i1 + 1))]
+        if len(pts) < 2:
+            continue
+        f = QgsFeature(lyr.fields())
+        f.setGeometry(QgsGeometry.fromPolylineXY(pts))
+        f.setAttributes([it["id"], it["what"], it["state"], geo.gps_to_utc(it["t0"]).strftime("%H:%M:%S"),
+                         round(it["t1"] - it["t0"], 1)])
+        feats.append(f)
+    pr.addFeatures(feats)
+    cats = []
+    for k, rgb in REVIEW_COLOURS.items():
+        s = QgsLineSymbol.createSimple({"color": rgb + ",230", "width": "1.6", "capstyle": "round"})
+        cats.append(QgsRendererCategory(k, s, k))
+    lyr.setRenderer(QgsCategorizedSymbolRenderer("state", cats))
+    return _replace(project, lyr, "Review windows")

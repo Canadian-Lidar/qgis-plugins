@@ -257,3 +257,19 @@ def base_runs(base, t0, t1):
         if b + dt > t0 and a < t1:
             out.append([max(a, t0), min(b + dt, t1), "#f5a623", "base tracks fewer than 5 satellites"])
     return out
+
+
+def write_gpx(qc, path, name="PosPro trajectory"):
+    """The trajectory at 1 s (Certus reference point) as a GPX track with
+    ellipsoidal heights."""
+    from xml.sax.saxutils import escape
+    from . import geo
+    with open(path + ".tmp", "w", encoding="utf-8") as fh:
+        fh.write('<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="PosPro" '
+                 'xmlns="http://www.topografix.com/GPX/1/1">\n<trk><name>%s</name><trkseg>\n' % escape(name))
+        for t, la, lo, h in zip(qc["gps_time"], qc["lat_deg"], qc["lon_deg"], qc["h_m"]):
+            fh.write('<trkpt lat="%.9f" lon="%.9f"><ele>%.3f</ele><time>%s</time></trkpt>\n' % (
+                la, lo, h, geo.gps_to_utc(t).strftime("%Y-%m-%dT%H:%M:%SZ")))
+        fh.write("</trkseg></trk>\n</gpx>\n")
+    os.replace(path + ".tmp", path)
+    return path

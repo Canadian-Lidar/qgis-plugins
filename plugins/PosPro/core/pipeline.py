@@ -612,6 +612,9 @@ def ins_conf(project, direction, navs, bobs=None, bxyz=None, base=None, atx=None
     if span:
         w("time.start = %.3f" % span[0])
         w("time.end = %.3f" % span[1])
+    from . import review as _review
+    if _review.exclusions(project):
+        w("gnss.exclude = %s" % _review.engine_exclude_value(project))
     for k, v in imu.items():
         w("imu.%s = %s" % (k, v))
     w("imu.time_offset_s = %.6f" % (float(inst.get("time_offset_ms", 0)) / 1000.0))
@@ -779,6 +782,34 @@ def combine(project, ctx):
     return r.results
 
 
+def rt_trajectory(project, ctx):
+    """Real-time mode: the Certus's own solution (packet 20) as the
+    trajectory, cleaned in Trajectory Review."""
+    from . import review
+    rt = os.path.join(project.work_dir, "extract", "rt.bin")
+    if not os.path.exists(rt):
+        raise StepError("the rover files hold no real-time solution (packet 20)")
+    idir = project.wpath("ins", "x")[:-2]
+    rdir = project.wpath("results", "x")[:-2]
+    fwd = os.path.join(idir, "rt_fwd.bin")
+    n = review.rt_to_pass(rt, fwd)
+    ctx.log("info", "real-time solution: %d records" % n)
+    r = _check(engine.run(["combine", "--out", os.path.join(rdir, "trajectory.bin"), "--qc",
+                           os.path.join(rdir, "qc.csv"), "--fwd", fwd], ctx.progress, ctx.log, ctx.cancelled),
+               "Real-time trajectory")
+    return r.results
+
+
+def _finish_review(project, ctx):
+    """Keep the processed trajectory untouched for Trajectory Review and
+    re-apply its edits (poor, interpolate)."""
+    from . import review
+    review.snapshot_original(project)
+    n = review.apply(project)
+    if n:
+        ctx.log("info", "Trajectory Review edits applied to %d records" % n)
+
+
 def run_all(project, ctx):
     """The whole processing chain. Returns the results summary."""
     t0 = time.time()
@@ -788,6 +819,15 @@ def run_all(project, ctx):
     extract(project, ctx.sub(0.0, 0.10))
     if ctx.cancelled():
         raise engine.Cancelled()
+    if p.get("mode") == "rt":
+        summary["combine"] = rt_trajectory(project, ctx.sub(0.10, 1.0))
+        summary["frame"] = "as the Certus real-time solution (RTK corrections' frame)"
+        _finish_review(project, ctx)
+        summary["elapsed_s"] = round(time.time() - t0, 1)
+        summary["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        project.cfg["results"] = summary
+        project.dirty = True
+        return summary
     if p.get("positioning") == "ppp" and p.get("mode") == "tc":
         raise StepError("tight coupling needs a base station; for PPP choose \"Loosely coupled\"")
     if p.get("mode") == "lc" or p.get("mode") == "gnss" or p.get("positioning") == "ppp":
@@ -798,6 +838,7 @@ def run_all(project, ctx):
         summary["combine"] = gnss_trajectory(project, ctx.sub(0.45, 1.0))
         summary["frame"] = summary.get("frame") or "%s %s" % (project.cfg["frame"].get("name"),
                                                               project.cfg["frame"].get("epoch"))
+        _finish_review(project, ctx)
         summary["elapsed_s"] = round(time.time() - t0, 1)
         summary["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")
         project.cfg["results"] = summary
@@ -812,6 +853,7 @@ def run_all(project, ctx):
         ctx.log("warning", "PPP: the trajectory is in ITRF2020 at the observation date, not NAD83(CSRS)")
     summary["ins"] = ins(project, ctx.sub(0.45, 0.92))
     summary["combine"] = combine(project, ctx.sub(0.92, 1.0))
+    _finish_review(project, ctx)
     summary["frame"] = summary.get("frame") or "%s %s" % (project.cfg["frame"].get("name"), project.cfg["frame"].get("epoch"))
     summary["elapsed_s"] = round(time.time() - t0, 1)
     summary["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -873,6 +915,11 @@ def plugin_version():
     return ""
 
 
+def review_summary(project):
+    from . import review
+    return review.summary(project)
+
+
 def publish_handover(project, ctx):
     """Publish the trajectory for the next stages: SBET + SMRMSG at the
     Certus reference point (IMU centre), every sample, the 1 Hz quality table
@@ -929,6 +976,7 @@ def publish_handover(project, ctx):
                     "sep_h_p95_m": num("sep_h_p95_m"), "max_sd_h_m": num("max_sd_h_m"),
                     "max_sd_v_m": num("max_sd_v_m")},
         "base_station": (project.base() or {}).get("name"),
+        "review": review_summary(project),
     }
     if c["processing"].get("mode") == "gnss":
         fields["attitude"] = "not observed (GNSS only): roll and pitch 0, heading from the direction of travel"

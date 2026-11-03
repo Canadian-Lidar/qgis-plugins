@@ -2,7 +2,7 @@
 name=DCS Core
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
-description=Shared base of the Canadian Lidar Data Collection Systems plugins (PosPro, AlignPro, CloudPro): one project per job, handover files between stages, stale-result detection, shared menu and look.
+description=Shared base of the Canadian Lidar Data Collection Systems plugins (PosPro, AlignPro, CloudPro): one project per job, handover files between stages, stale-result detection, shared menu and look. Menu: Plugins > CLAM > Data Systems.
 version=1.0.1
 author=Canadian Lidar
 email=seantobrien@gmail.com

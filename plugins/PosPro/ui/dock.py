@@ -1145,7 +1145,10 @@ class ProcessPage(Page):
                               ("lc", "Loosely coupled",
                                "GNSS positions (RTKLIB) are computed first and then blended with the IMU. "
                                "Needed for PPP without a base."),
-                              ("gnss", "GNSS only (no IMU)", "RTKLIB kinematic solution for comparison.")):
+                              ("gnss", "GNSS only (no IMU)", "RTKLIB kinematic solution for comparison."),
+                              ("rt", "Real-time solution (no base station)",
+                               "The Certus's own real-time trajectory, cleaned in Trajectory Review. For when there is "
+                               "no base station or RTK was used in the field.")):
             rb = QRadioButton(label)
             rb.setProperty("key", k)
             rb.setToolTip(tip)
@@ -1419,6 +1422,425 @@ class QualityPage(Page):
 
 
 # ---------------------------------------------------------------------------
+class ReviewPage(Page):
+    """Trajectory Review: find the parts of the trajectory that miss the
+    quality limits and decide what to do with each (see core/review.py)."""
+
+    COLS = ["#", "Found by", "Start (UTC)", "Duration", "Worst", "Decision"]
+
+    def __init__(self, dock):
+        super().__init__(dock)
+        self.tool = None
+        self.items = []
+        v = QVBoxLayout(self)
+        v.addWidget(_title("Trajectory Review"))
+        v.addWidget(_hint("Find where the trajectory misses your limits, look at each place on the map and in the "
+                          "plots, then decide: exclude the GNSS there and let the IMU carry it (processed again), "
+                          "mark it poor so later stages know, accept it, or \u2013 for real-time and GNSS-only "
+                          "trajectories \u2013 interpolate across it."))
+        # ---- limits ----
+        lw = QWidget()
+        g = QGridLayout(lw)
+        g.setContentsMargins(0, 0, 0, 0)
+        self.use, self.val = {}, {}
+        rows = (("solution", "Solution worse than", None),
+                ("sd_h", "Horizontal \u03c3 above", (" m", 3, 0.001, 10.0, 0.01)),
+                ("sd_v", "Vertical \u03c3 above", (" m", 3, 0.001, 10.0, 0.01)),
+                ("sep_h", "Fwd/bwd separation above", (" m", 3, 0.001, 10.0, 0.01)),
+                ("imu_only", "IMU only longer than", (" s", 1, 0.5, 600.0, 1.0)),
+                ("heading", "Heading \u03c3 above", ("\u00b0", 2, 0.01, 10.0, 0.05)))
+        keymap = {"solution": ("use_solution", "min_solution"), "sd_h": ("use_sd_h", "sd_h_m"),
+                  "sd_v": ("use_sd_v", "sd_v_m"), "sep_h": ("use_sep_h", "sep_h_m"),
+                  "imu_only": ("use_imu_only", "imu_only_s"), "heading": ("use_heading", "heading_sd_deg")}
+        self.keymap = keymap
+        for r, (k, label, spec) in enumerate(rows):
+            cb = QCheckBox(label)
+            cb.toggled.connect(self.store)
+            g.addWidget(cb, r, 0)
+            if spec is None:
+                w = QComboBox()
+                for key, lab in (("fixed", "fixed"), ("float", "float"), ("dgnss", "DGNSS"), ("any", "single")):
+                    w.addItem(lab, key)
+                w.currentIndexChanged.connect(self.store)
+            else:
+                suf, dec, lo, hi, step = spec
+                w = _dspin(lo, hi, dec, step, suf)
+                w.valueChanged.connect(self.store)
+            g.addWidget(w, r, 1)
+            self.use[k], self.val[k] = cb, w
+        r = len(rows)
+        g.addWidget(QLabel("Widen each by (before / after)"), r, 0)
+        ext = QHBoxLayout()
+        self.eb = _dspin(0, 60, 1, 0.5, " s")
+        self.ea = _dspin(0, 60, 1, 0.5, " s")
+        for s in (self.eb, self.ea):
+            s.valueChanged.connect(self.store)
+            ext.addWidget(s)
+        g.addLayout(ext, r, 1)
+        g.addWidget(QLabel("\u03c3 given to poor parts"), r + 1, 0)
+        self.poor_sd = _dspin(0.01, 10, 3, 0.05, " m")
+        self.poor_sd.valueChanged.connect(self.store)
+        g.addWidget(self.poor_sd, r + 1, 1)
+        g.setColumnStretch(1, 1)
+        v.addWidget(Section("Limits", lw, expanded=True))
+        br = QHBoxLayout()
+        self.b_detect = QPushButton("Find anomalies")
+        self.b_detect.setObjectName("ppPrimary")
+        self.b_detect.clicked.connect(self.detect)
+        br.addWidget(self.b_detect)
+        br.addStretch(1)
+        for mode, label in (("rectangle", "Rectangle"), ("polygon", "Polygon"), ("lasso", "Lasso")):
+            b = QPushButton(label)
+            b.setToolTip("Select part of the trajectory on the map with a %s; it is added to the list." % label.lower())
+            b.clicked.connect(lambda _=False, m=mode: self.select_on_map(m))
+            br.addWidget(b)
+        b = QPushButton("Plot view")
+        b.setToolTip("Add the time range shown in the quality plots")
+        b.clicked.connect(self.select_plot_range)
+        br.addWidget(b)
+        v.addLayout(br)
+        # ---- list ----
+        self.table = QTableWidget(0, len(self.COLS))
+        self.table.setHorizontalHeaderLabels(self.COLS)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setMinimumHeight(220)
+        self.table.itemSelectionChanged.connect(self.selection_changed)
+        self.table.cellDoubleClicked.connect(lambda *_: self.zoom())
+        v.addWidget(self.table, 1)
+        ar = QGridLayout()
+        self.b_zoom = QPushButton("Zoom to")
+        self.b_zoom.clicked.connect(self.zoom)
+        self.b_excl = QPushButton("Exclude GNSS")
+        self.b_excl.setToolTip("Do not use GNSS in these windows; the IMU carries the trajectory. Needs processing "
+                               "again.")
+        self.b_excl.clicked.connect(lambda: self.decide("exclude"))
+        self.b_poor = QPushButton("Mark poor")
+        self.b_poor.setToolTip("Keep it, but raise its \u03c3 to the value above (SMRMSG, quality, handover) so "
+                               "later stages know not to trust it.")
+        self.b_poor.clicked.connect(lambda: self.decide("poor"))
+        self.b_interp = QPushButton("Interpolate")
+        self.b_interp.setToolTip("Straight line between the good samples on both sides. Only for real-time and "
+                                 "GNSS-only trajectories: with the IMU, excluding the GNSS is better.")
+        self.b_interp.clicked.connect(lambda: self.decide("interpolate"))
+        self.b_accept = QPushButton("Accept")
+        self.b_accept.clicked.connect(lambda: self.decide("accept"))
+        self.b_clear = QPushButton("Clear decision")
+        self.b_clear.clicked.connect(self.clear_decision)
+        for i, b in enumerate((self.b_zoom, self.b_excl, self.b_poor, self.b_interp, self.b_accept, self.b_clear)):
+            ar.addWidget(b, i // 3, i % 3)
+        v.addLayout(ar)
+        hr = QHBoxLayout()
+        self.interp_h = QCheckBox("Horizontal")
+        self.interp_v = QCheckBox("Vertical")
+        self.interp_h.setChecked(True)
+        self.interp_v.setChecked(True)
+        self.interp_lab = QLabel("Interpolate:")
+        hr.addWidget(self.interp_lab)
+        hr.addWidget(self.interp_h)
+        hr.addWidget(self.interp_v)
+        hr.addStretch(1)
+        v.addLayout(hr)
+        self.pending = QLabel("")
+        self.pending.setWordWrap(True)
+        self.pending.setObjectName("ppHint")
+        v.addWidget(self.pending)
+        er = QHBoxLayout()
+        self.b_reproc = QPushButton("Process again")
+        self.b_reproc.setObjectName("ppPrimary")
+        self.b_reproc.clicked.connect(self.dock.run_processing)
+        er.addWidget(self.b_reproc)
+        er.addStretch(1)
+        for label, fn in (("Undo", self.undo), ("Reset to original", self.reset), ("Edit log", self.show_log)):
+            b = QPushButton(label)
+            b.clicked.connect(fn)
+            er.addWidget(b)
+        v.addLayout(er)
+        self._loading = False
+
+    # ------------------------------------------------------------- state
+    def refresh(self):
+        p = self.project
+        if not p:
+            return
+        from ..core import review
+        r = review.state(p)
+        th = r["thresholds"]
+        self._loading = True
+        for k, (uk, vk) in self.keymap.items():
+            self.use[k].setChecked(bool(th[uk]))
+            w = self.val[k]
+            if isinstance(w, QComboBox):
+                w.setCurrentIndex(max(0, w.findData(th[vk])))
+            else:
+                w.setValue(float(th[vk]))
+            w.setEnabled(bool(th[uk]))
+        self.eb.setValue(float(th["extend_before_s"]))
+        self.ea.setValue(float(th["extend_after_s"]))
+        self.poor_sd.setValue(float(th["poor_sd_m"]))
+        self._loading = False
+        mode = p.cfg["processing"].get("mode")
+        can_interp = mode in ("gnss", "rt")
+        for w in (self.b_interp, self.interp_h, self.interp_v, self.interp_lab):
+            w.setVisible(can_interp)
+        self.b_excl.setVisible(mode in ("tc", "lc"))
+        self.b_excl.setEnabled(mode in ("tc", "lc"))
+        self.fill()
+
+    def store(self, *_):
+        if self._loading or not self.project:
+            return
+        from ..core import review
+        th = review.state(self.project)["thresholds"]
+        for k, (uk, vk) in self.keymap.items():
+            th[uk] = self.use[k].isChecked()
+            w = self.val[k]
+            th[vk] = w.currentData() if isinstance(w, QComboBox) else w.value()
+            w.setEnabled(th[uk])
+        th["extend_before_s"], th["extend_after_s"] = self.eb.value(), self.ea.value()
+        th["poor_sd_m"] = self.poor_sd.value()
+        self.dock.save()
+
+    def fill(self):
+        from ..core import review
+        p = self.project
+        r = review.state(p)
+        items = []
+        for a in r["anomalies"]:
+            e = review.edit_for(p, a["t0"], a["t1"])
+            items.append({"id": a["id"], "t0": a["t0"], "t1": a["t1"], "what": review.KIND_LABEL.get(a["kind"], a["kind"]),
+                          "worst": review.describe_max(a), "edit": e})
+        # edits that no anomaly covers (map selections, or found before different limits)
+        for e in r["edits"]:
+            if not any(it["edit"] is e for it in items):
+                items.append({"id": e["id"], "t0": e["t0"], "t1": e["t1"],
+                              "what": review.KIND_LABEL.get(e.get("source"), e.get("source", "")), "worst": "",
+                              "edit": e})
+        items.sort(key=lambda x: x["t0"])
+        self.items = items
+        self.table.setRowCount(len(items))
+        cols = {"exclude": theme.BLUE, "poor": theme.AMBER, "interpolate": theme.VIOLET, "accept": theme.GREEN}
+        for i, it in enumerate(items):
+            e = it["edit"]
+            vals = [it["id"], it["what"], geo.gps_to_utc(it["t0"]).strftime("%H:%M:%S"), "%.1f s" % (it["t1"] - it["t0"]),
+                    it["worst"], review.ACTION_LABEL[e["action"]] if e else "open"]
+            for c, val in enumerate(vals):
+                ti = QTableWidgetItem(str(val))
+                if c == 5:
+                    ti.setForeground(QColor(cols.get(e["action"], theme.TEXT) if e else theme.RED))
+                self.table.setItem(i, c, ti)
+        self.table.resizeColumnsToContents()
+        self.table.horizontalHeader().setStretchLastSection(True)
+        n_open = sum(1 for it in items if not it["edit"])
+        msg = []
+        if review.exclusions_pending(p):
+            msg.append("GNSS exclusions changed since the last processing \u2013 press Process again to apply them.")
+            self.pending.setStyleSheet("color: %s;" % theme.AMBER)
+        else:
+            self.pending.setStyleSheet("")
+        if items:
+            msg.append("%d listed, %d still open." % (len(items), n_open))
+        self.pending.setText(" ".join(msg))
+        self.b_reproc.setVisible(review.exclusions_pending(p))
+        self._draw_map()
+        self.selection_changed()
+
+    def _draw_map(self):
+        if not self.dock.qc:
+            return
+        rows = [{"id": it["id"], "t0": it["t0"], "t1": it["t1"], "what": it["what"],
+                 "state": it["edit"]["action"] if it["edit"] else "open"} for it in self.items]
+        try:
+            maplayers.review_layer(self.project, self.dock.qc, rows)
+        except Exception as e:      # noqa: BLE001
+            self.dock.log("warning", "review layer: %s" % e)
+
+    def selected_items(self):
+        rows = sorted({i.row() for i in self.table.selectedIndexes()})
+        return [self.items[r] for r in rows if r < len(self.items)]
+
+    def selection_changed(self):
+        n = len(self.selected_items())
+        for b in (self.b_zoom, self.b_accept, self.b_poor, self.b_clear):
+            b.setEnabled(n > 0)
+        mode = self.project.cfg["processing"].get("mode") if self.project else ""
+        self.b_excl.setEnabled(n > 0 and mode in ("tc", "lc"))
+        self.b_interp.setEnabled(n > 0 and mode in ("gnss", "rt"))
+
+    # ------------------------------------------------------------- actions
+    def detect(self):
+        from ..core import review
+        if not self.dock.qc:
+            theme.msg_info(self, "PosPro", "Process the project first.")
+            return
+        a = review.detect(self.project)
+        self.dock.save()
+        self.fill()
+        self.dock.toast("%d anomal%s found" % (len(a), "y" if len(a) == 1 else "ies"),
+                        "ok" if not a else "warn")
+
+    def zoom(self):
+        its = self.selected_items()
+        if its:
+            self.dock.goto_time(min(i["t0"] for i in its), max(i["t1"] for i in its))
+
+    def decide(self, action):
+        from ..core import review
+        its = self.selected_items()
+        if not its:
+            return
+        for it in its:
+            if it["edit"] is not None:
+                review.state(self.project)["edits"] = [e for e in review.state(self.project)["edits"]
+                                                       if e is not it["edit"]]
+            review.add_edit(self.project, it["t0"], it["t1"], action,
+                            source=next((k for k, lab in review.KIND_LABEL.items() if lab == it["what"]), "manual"),
+                            horizontal=self.interp_h.isChecked(), vertical=self.interp_v.isChecked())
+        self.dock.save()
+        self.after_edit(action in ("poor", "interpolate"))
+
+    def clear_decision(self):
+        from ..core import review
+        for it in self.selected_items():
+            if it["edit"] is not None:
+                review.remove_edit(self.project, it["edit"]["id"])
+        self.dock.save()
+        self.after_edit(True)
+
+    def undo(self):
+        from ..core import review
+        if review.undo(self.project):
+            self.dock.save()
+            self.after_edit(True)
+
+    def reset(self):
+        from ..core import review
+        if theme.msg_question(self, "PosPro", "Remove every review decision and go back to the trajectory as "
+                                              "processed?") != QMessageBox.StandardButton.Yes:
+            return
+        review.reset(self.project)
+        self.dock.save()
+        self.after_edit(True)
+
+    def after_edit(self, reapply):
+        """Poor / interpolate change the results at once (from the untouched
+        copy); exclusions wait for Process again."""
+        from ..core import review
+        if not reapply:
+            self.fill()
+            self.dock.update_steps()
+            return
+        p = self.project
+        work_p = self.dock._work_copy()
+
+        def work(ctx):
+            n = review.apply(work_p)
+            if work_p.dcs is not None and os.path.exists(os.path.join(work_p.work_dir, "results", "trajectory.bin")):
+                with work_p.dcs.run("pospro", "PosPro", pipeline.plugin_version()):
+                    pipeline.publish_handover(work_p, ctx)
+            return n
+
+        def done(ok, res):
+            if p.dcs is not None:
+                p.dcs.reload()
+                self.dock.chain.refresh()
+            if not ok:
+                theme.msg_warn(self, "PosPro", "Could not apply the review edits:\n%s" % res)
+                return
+            self.dock.qc = results.load_qc(os.path.join(p.work_dir, "results", "qc.csv"))
+            self.dock.show_trajectory()
+            if self.dock.plugin.plots:
+                self.dock.plugin.plots.set_data(self.dock.qc)
+            self.dock.pages[4].refresh()
+            self.fill()
+            self.dock.update_steps()
+        if self.dock.start_task("Applying review edits", work, done) is None:
+            self.fill()
+
+    def select_on_map(self, mode):
+        from .selecttool import SelectTool
+        if not self.dock.qc:
+            theme.msg_info(self, "PosPro", "Process the project first.")
+            return
+        canvas = self.dock.iface.mapCanvas()
+        self.tool = SelectTool(canvas, mode)
+        self.tool.selected.connect(self.map_selected)
+        canvas.setMapTool(self.tool)
+        self.dock.toast({"rectangle": "Drag a rectangle over the trajectory",
+                         "polygon": "Click the corners; right-click or double-click to finish",
+                         "lasso": "Drag around the part of the trajectory"}[mode])
+
+    def map_selected(self, geom):
+        from qgis.core import QgsCoordinateTransform, QgsGeometry, QgsPointXY, QgsProject
+        from ..core import review
+        canvas = self.dock.iface.mapCanvas()
+        tr = QgsCoordinateTransform(maplayers._crs(self.project), canvas.mapSettings().destinationCrs(),
+                                    QgsProject.instance())
+        qc = self.dock.qc
+        flags = []
+        for lat, lon in zip(qc["lat_deg"], qc["lon_deg"]):
+            try:
+                pt = tr.transform(QgsPointXY(lon, lat))
+            except Exception:       # noqa: BLE001
+                flags.append(False)
+                continue
+            flags.append(geom.contains(QgsGeometry.fromPointXY(pt)))
+        runs = review._runs(qc["gps_time"], flags)
+        if not runs:
+            self.dock.toast("No part of the trajectory inside the selection", "warn")
+            return
+        for a, b, _m in runs:
+            review.add_selection(self.project, max(qc["gps_time"][0], a - 0.5), min(qc["gps_time"][-1], b + 0.5))
+        self.dock.save()
+        self.fill()
+        self.dock.toast("%d part%s of the trajectory added" % (len(runs), "" if len(runs) == 1 else "s"))
+
+    def select_plot_range(self):
+        plots = self.dock.plugin.plots
+        pl = next(iter(plots.plots.values()), None) if plots else None
+        if pl is None or pl.x0 is None or pl.x1 is None:
+            theme.msg_info(self, "PosPro", "Open the quality plots and zoom to the part you want, then press this "
+                                           "again.")
+            return
+        from ..core import review
+        review.add_selection(self.project, pl.x0, pl.x1)
+        self.dock.save()
+        self.fill()
+
+    def show_log(self):
+        from ..core import review
+        lines = review.state(self.project)["log"] if self.project else []
+        d = QDialog(self)
+        d.setWindowTitle("Trajectory Review log")
+        lay = QVBoxLayout(d)
+        t = QPlainTextEdit("\n".join(lines) or "No edits yet.")
+        t.setReadOnly(True)
+        lay.addWidget(t)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        bb.rejected.connect(d.reject)
+        lay.addWidget(bb)
+        d.resize(700, 420)
+        d.exec()
+
+    def state(self):
+        from ..core import review
+        p = self.project
+        if not p or not self.dock.qc:
+            return "todo", "after processing"
+        r = review.state(p)
+        if review.exclusions_pending(p):
+            return "warn", "process again"
+        if not r["anomalies"] and not r["edits"]:
+            return "todo", "find anomalies"
+        n_open = sum(1 for a in r["anomalies"] if not review.edit_for(p, a["t0"], a["t1"]))
+        if n_open:
+            return "warn", "%d open" % n_open
+        return "done", "%d reviewed" % (len(r["anomalies"]) + len([e for e in r["edits"] if e.get("source") == "manual"]))
+
+
+# ---------------------------------------------------------------------------
 class CalibPage(Page):
     """Antenna lever arms solved from the drive."""
     LEVER_ROWS = (("lever_antenna", "Primary antenna"), ("lever_antenna2", "Secondary antenna"))
@@ -1611,6 +2033,8 @@ class ExportPage(Page):
         tw.setVisible(False)
         self.layers = QCheckBox("Trajectory layer (GeoPackage)")
         v.addWidget(self.layers)
+        self.gpx = QCheckBox("GPX track (1 s)")
+        v.addWidget(self.gpx)
         self.b_export = QPushButton("Export")
         self.b_export.setObjectName("ppPrimary")
         self.b_export.clicked.connect(self.run)
@@ -1645,6 +2069,7 @@ class ExportPage(Page):
         self.sbet.setChecked(bool(e.get("sbet", True)))
         self.ascii.setChecked(bool(e.get("ascii", False)))
         self.layers.setChecked(bool(e.get("gpkg", False)))
+        self.gpx.setChecked(bool(e.get("gpx", False)))
         want = (e.get("ascii_cols") or "").split(",")
         for i in range(self.cols.count()):
             it = self.cols.item(i)
@@ -1660,6 +2085,7 @@ class ExportPage(Page):
         e["sbet"] = self.sbet.isChecked()
         e["ascii"] = self.ascii.isChecked()
         e["gpkg"] = self.layers.isChecked()
+        e["gpx"] = self.gpx.isChecked()
         cols = [self.cols.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.cols.count())
                 if self.cols.item(i).checkState() == Qt.CheckState.Checked]
         e["ascii_cols"] = ",".join(cols)
@@ -1692,6 +2118,12 @@ class ExportPage(Page):
                 path = self.dock.save_layer_gpkg(out_dir)
                 if path:
                     res.append(path)
+            if e.get("gpx") and self.dock.qc:
+                try:
+                    res.append(results.write_gpx(self.dock.qc, os.path.join(out_dir, "%s_trajectory.gpx" % p.name),
+                                                 p.name))
+                except OSError as ex:
+                    self.dock.log("warning", "GPX: %s" % ex)
             note = os.path.join(out_dir, "%s_export_note.txt" % p.name)
             try:
                 with open(note, "w", encoding="utf-8") as fh:
@@ -1803,8 +2235,9 @@ class PosProDock(QDockWidget):
         sl.setSpacing(4)
         self.stack = QStackedWidget()
         self.pages = [DataPage(self), BasePage(self), InstallPage(self), ProcessPage(self), QualityPage(self),
+                      ReviewPage(self),
                       CalibPage(self), ExportPage(self)]
-        titles = ["Data", "Base", "Installation", "Processing", "Quality", "Calibration", "Export"]
+        titles = ["Data", "Base", "Installation", "Processing", "Quality", "Review", "Calibration", "Export"]
         self.step_buttons = []
         grp = QButtonGroup(self)
         grp.setExclusive(True)
@@ -2130,6 +2563,7 @@ class PosProDock(QDockWidget):
             dst["rover"][k] = src["rover"].get(k)
         dst["results"] = src.get("results") or {}
         dst["frame"] = src.get("frame") or dst.get("frame")
+        dst.setdefault("review", {})["excluded_in_run"] = (src.get("review") or {}).get("excluded_in_run", [])
 
     def cancel(self):
         if self.task:
@@ -2164,7 +2598,7 @@ class PosProDock(QDockWidget):
         problems = []
         if not (p.cfg["rover"].get("extract") or {}):
             problems.append("Read the rover files (Data).")
-        if p.cfg["processing"].get("positioning") != "ppp":
+        if p.cfg["processing"].get("positioning") != "ppp" and p.cfg["processing"].get("mode") != "rt":
             b = p.base()
             if not b:
                 problems.append("Add a base station (Base stations).")
@@ -2212,6 +2646,7 @@ class PosProDock(QDockWidget):
             self.qc = results.load_qc(os.path.join(p.work_dir, "results", "qc.csv"))
             self.show_trajectory()
             self.pages[4].refresh()
+            self.pages[5].refresh()
             self.goto_page(4)
             if self.plugin.plots:
                 self.plugin.plots.set_data(self.qc)
