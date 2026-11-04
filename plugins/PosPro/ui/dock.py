@@ -20,7 +20,7 @@ from qgis.core import Qgis, QgsApplication, QgsCoordinateReferenceSystem, QgsPro
 from qgis.PyQt.QtCore import QDateTime, QSettings, Qt, QTimer, pyqtSignal
 from qgis.PyQt.QtGui import QColor, QFont, QIcon
 from qgis.PyQt.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDateTimeEdit,
-                                 QDialog, QDialogButtonBox, QDockWidget, QDoubleSpinBox, QFileDialog, QFormLayout,
+                                 QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                  QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
                                  QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
                                  QProgressBar, QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSpinBox,
@@ -31,6 +31,7 @@ from ..core.project import FRAMES, IMU_PRESETS, PROJECT_SUFFIX, VEHICLE_PROFILES
 from . import maplayers, theme
 from .tasks import WorkTask
 from dcs_core.stepbar import StepBar
+from dcs_core.window import PluginWindow
 
 from .widgets import VEHICLE_PRESETS, Card, CoverageView, Logo, Section, StepButton, Toast, VehicleView
 from .plots import Donut
@@ -2142,10 +2143,11 @@ class ExportPage(Page):
 
 
 # ===========================================================================
-class PosProDock(QDockWidget):
+class PosProDock(PluginWindow):
+    """PosPro's window: DCS Core's standard plugin window (floating by default, docked on request)."""
+
     def __init__(self, iface, plugin):
-        super().__init__("PosPro \u2013 Positioning & Motion Post-Processing")
-        self.setObjectName("PosProDock")
+        super().__init__(iface, "pospro", "PosPro", size=(1400, 950), dock_size=720, object_name="PosProDock")
         self.iface = iface
         self.plugin = plugin
         self.project = None
@@ -2171,7 +2173,7 @@ class PosProDock(QDockWidget):
         from dcs_core import menu as _dcs_menu
         t1 = QLabel(_dcs_menu.GROUP)
         t1.setObjectName("ppBrandTitle")
-        t2 = QLabel("PosPro \u00b7 Positioning & Motion Post-Processing")
+        t2 = QLabel("PosPro")
         t2.setObjectName("ppBrandSub")
         for t_ in (t1, t2):
             theme.caps(t_, 107)
@@ -2196,21 +2198,12 @@ class PosProDock(QDockWidget):
         mm.addAction("User guide (this version)", self.open_guide)
         self.pbox.setMenu(mm)
         head.addWidget(self.pbox)
-        # window placement: maximise, float, dock left or right
+        # the Window menu (DCS Core): floating, maximise, dock left / right / top / bottom, reset
         self.wbtn = QToolButton()
         self.wbtn.setObjectName("ppWinBtn")
         self.wbtn.setText("\u2922")
-        self.wbtn.setToolTip("Window: maximise, float, or dock to the left or right")
-        self.wbtn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.wbtn.setFixedSize(34, 34)
-        wm = QMenu(self.wbtn)
-        self.act_max = wm.addAction("Maximise window", self.toggle_maximised)
-        wm.addAction("Float as a window", self.float_window)
-        wm.addSeparator()
-        wm.addAction("Dock on the right", lambda: self.dock_side(Qt.DockWidgetArea.RightDockWidgetArea))
-        wm.addAction("Dock on the left", lambda: self.dock_side(Qt.DockWidgetArea.LeftDockWidgetArea))
-        wm.aboutToShow.connect(self._win_menu_text)
-        self.wbtn.setMenu(wm)
+        self.attach_menu(self.wbtn)
         head.addWidget(self.wbtn)
         self.helpbtn = QToolButton()
         self.helpbtn.setObjectName("ppWinBtn")
@@ -2493,49 +2486,6 @@ class PosProDock(QDockWidget):
         self.goto_page(self.stack.currentIndex())
 
     # ------------------------------------------------------------------
-    # ------------------------------------------------------------ window
-    def _as_window(self):
-        """Floating docks are tool windows without a maximise button; give the
-        floating panel normal window buttons."""
-        if not self.isFloating():
-            self.setFloating(True)
-        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.CustomizeWindowHint |
-                            Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowMinMaxButtonsHint |
-                            Qt.WindowType.WindowCloseButtonHint)
-        self.show()
-
-    def float_window(self):
-        self._as_window()
-        if self.isMaximized():
-            self.showNormal()
-        scr = self.screen().availableGeometry() if self.screen() else None
-        if scr is not None:
-            w, h = min(1400, int(scr.width() * 0.8)), min(950, int(scr.height() * 0.85))
-            self.setGeometry(scr.x() + (scr.width() - w) // 2, scr.y() + (scr.height() - h) // 2, w, h)
-        self.raise_()
-
-    def toggle_maximised(self):
-        if self.isFloating() and self.isMaximized():
-            self.showNormal()
-            return
-        self._as_window()
-        self.showMaximized()
-        self.raise_()
-
-    def dock_side(self, area):
-        if self.isMaximized():
-            self.showNormal()
-        if self.isFloating():
-            self.setFloating(False)
-        self.iface.mainWindow().removeDockWidget(self)
-        self.iface.addDockWidget(area, self)
-        self.show()
-        self.raise_()
-
-    def _win_menu_text(self):
-        self.act_max.setText("Restore window size" if (self.isFloating() and self.isMaximized())
-                             else "Maximise window")
-
     def start_task(self, title, fn, on_done):
         if self.task is not None:
             theme.msg_info(self, "PosPro", "Wait for the current job to finish (or cancel it).")

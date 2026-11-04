@@ -4,7 +4,6 @@ AlignPro is stage 02 of the DCS chain and needs the DCS Core plugin (shared proj
 files, menu and look). Without it a message bar says so instead of failing."""
 import os
 
-from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
 
 try:
@@ -13,7 +12,7 @@ except ImportError:          # QGIS 3 / Qt5
     from qgis.PyQt.QtWidgets import QAction
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CORE_API = 2
+CORE_API = 3
 
 
 def _core():
@@ -80,7 +79,7 @@ class AlignProPlugin:
                 except (TypeError, RuntimeError):
                     pass
                 self.dock.cleanup()
-                docksafe.release(self.iface, self.dock)
+                self.dock.release_window()  # remembers the window, removes it safely
             self.dock = None
 
     def toggle(self, on=True):
@@ -94,11 +93,11 @@ class AlignProPlugin:
         if self.dock is None:
             from .ui.dock import AlignProDock
             self.dock = AlignProDock(self.iface, self.iface.mainWindow())
-            self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
             self.dock.visibilityChanged.connect(self.action.setChecked)
-        self.dock.setVisible(bool(on) or not self.dock.isVisible())
-        if self.dock.isVisible():
-            self.dock.raise_()
+        if bool(on) or not self.dock.isVisible():
+            self.dock.show_window()     # where it was left; floating the first time
+        else:
+            self.dock.hide()
 
     def open_guide(self, *_):
         """The user guide PDF for the installed version (Help > Plugins > AlignPro user guide)."""

@@ -186,7 +186,8 @@ class MainWindow(QtWidgets.QMainWindow):
         lay.addWidget(Logo(42))
         brand = QtWidgets.QVBoxLayout()
         brand.setSpacing(1)
-        t1 = QtWidgets.QLabel("DATA COLLECTION SYSTEMS")
+        from dcs_core import menu as _dcs_menu
+        t1 = QtWidgets.QLabel(_dcs_menu.GROUP.upper())
         t1.setObjectName("ppBrandTitle")
         t2 = QtWidgets.QLabel("CLOUDPRO · POINT CLOUD")
         t2.setObjectName("ppBrandSub")
@@ -236,11 +237,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_update.clicked.connect(self.georeference)
         self.btn_update.hide()
         lay.addWidget(self.btn_update)
+        # the Window menu (DCS Core), connected by the plugin once this window sits in its standard window
+        self.btn_window = QtWidgets.QToolButton(h)
+        self.btn_window.setObjectName("ppWinBtn")
+        self.btn_window.setText("\u2922")
+        self.btn_window.setFixedSize(34, 34)
+        self.btn_window.hide()
+        lay.addWidget(self.btn_window)
         self.btn_guide = chrome.IconButton("help", "User guide for this version of CloudPro (PDF)", size=34)
         self.btn_guide.setObjectName("ppGuideBtn")
         self.btn_guide.clicked.connect(self.open_guide)
         lay.addWidget(self.btn_guide)
         return h
+
+    def attach_window(self, panel):
+        """Sit inside DCS Core's standard plugin window: the header button gets its Window menu."""
+        panel.attach_menu(self.btn_window)
+        self.btn_window.show()
 
     def open_guide(self):
         from .. import guide
@@ -513,7 +526,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if self.project is not None and os.path.abspath(path) in (os.path.abspath(self.project.path),
                                                                   os.path.abspath(getattr(self.project.dcs, "path", ""))):
-            self.raise_()
+            self.window().raise_()
             return
         try:
             p = Project.open_any(path)

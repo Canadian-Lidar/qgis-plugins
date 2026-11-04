@@ -595,7 +595,7 @@ class DataView(QWidget):
                 p.drawText(QPointF(60, y), "■ " + ln.name)
                 y += 14
             if self.ghost is not None:
-                p.setPen(QColor(120, 140, 136))
+                p.setPen(QColor(160, 169, 177))
                 p.drawText(QPointF(60, y), "■ ghost: " + self.compare.currentText().lower())
 
     def _rect(self, p, to_s, p0, p1, width, col, pw, style):

@@ -30,13 +30,13 @@ def paint(p, name, r, col, width=1.6):
     p.restore()
 
 
-def icon(name, size=22, col="#b8d4ce", active=None):
+def icon(name, size=22, col="#c9cfd4", active=None):
     """QIcon with Normal (col) and Active/On (active colour) pixmaps."""
     ic = QtGui.QIcon()
     for mode_col, mode, state in ((col, QtGui.QIcon.Mode.Normal, QtGui.QIcon.State.Off),
-                                  (active or "#e8f5f0", QtGui.QIcon.Mode.Normal, QtGui.QIcon.State.On),
-                                  (active or "#e8f5f0", QtGui.QIcon.Mode.Active, QtGui.QIcon.State.Off),
-                                  ("#3d5a54", QtGui.QIcon.Mode.Disabled, QtGui.QIcon.State.Off)):
+                                  (active or "#e3e7ea", QtGui.QIcon.Mode.Normal, QtGui.QIcon.State.On),
+                                  (active or "#e3e7ea", QtGui.QIcon.Mode.Active, QtGui.QIcon.State.Off),
+                                  ("#5c636a", QtGui.QIcon.Mode.Disabled, QtGui.QIcon.State.Off)):
         pm = QtGui.QPixmap(size * 2, size * 2)
         pm.fill(Qt.GlobalColor.transparent)
         p = QtGui.QPainter(pm)

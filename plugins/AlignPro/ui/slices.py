@@ -77,6 +77,7 @@ class SliceView(QWidget):
         p = QPainter(self)
         p.fillRect(self.rect(), QColor(theme.SURF))
         a = self._area()
+        p.fillRect(a, QColor(theme.VIEW_BG))
         x0, x1, y0, y1 = self._range()
         if self.equal and not self.view:
             sx = (x1 - x0) / a.width()

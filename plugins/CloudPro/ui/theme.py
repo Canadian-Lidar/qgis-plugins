@@ -6,7 +6,7 @@ from dcs_core import theme as _t
 from dcs_core.theme import (ACCENT, AMBER, BG, BLUE, BORDER, BRIGHT, DIM, FIELD, MAPLE, RED, SURF, SURF2,  # noqa: F401
                             TEXT, VIOLET, dark_menu, font, mark, msg_info, msg_question, msg_warn, polish)
 
-VIEW_BG = (9, 16, 15)
+VIEW_BG = (42, 45, 49)          # dcs_core.theme.VIEW_BG
 UI = _t.UI
 BODY = _t.BODY
 MONO = _t.MONO

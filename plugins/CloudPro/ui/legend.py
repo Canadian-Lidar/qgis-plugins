@@ -41,7 +41,7 @@ def paint(p, view, info, x=None, y=10):
     h = fm.height() + 8 + bar_h + 6 + (len(extra) * (fm.height() + 2) + 4 if extra else 0)
     box = QtCore.QRectF(x, y, w, h)
     p.setPen(QtGui.QPen(QtGui.QColor(theme.BORDER), 1))
-    p.setBrush(QtGui.QColor(10, 20, 18, 215))
+    p.setBrush(QtGui.QColor(38, 41, 45, 215))
     p.drawRect(box)
     p.setPen(QtGui.QColor(theme.ACCENT))
     p.drawText(QtCore.QRectF(x + 8, y + 4, w - 12, fm.height()), int(Qt.AlignmentFlag.AlignLeft), title)

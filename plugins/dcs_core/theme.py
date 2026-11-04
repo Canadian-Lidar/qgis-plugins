@@ -14,22 +14,27 @@ FONT_DIR = os.path.join(HERE, "fonts")
 ICON_DIR = os.path.join(HERE, "icons")
 LOGO = os.path.join(ICON_DIR, "logo.png")
 
-# design tokens (app.css :root)
-BG = "#09100f"
-SURF = "#0e1a18"
-SURF2 = "#132320"
-BORDER = "#1d3330"
+# design tokens: neutral graphite (DCS Core 1.2.0) so coloured points, tracks and classes stand out;
+# accent, status and solution colours are the Mobile Mapper's (app.css)
+BG = "#26292d"
+SURF = "#2e3237"
+SURF2 = "#363b41"
+BORDER = "#464c53"
 ACCENT = "#00e5aa"
 GREEN = ACCENT
 RED = "#e84855"
 AMBER = "#f5a623"
 BLUE = "#3ab4f2"
 MAPLE = "#c8102e"
-TEXT = "#b8d4ce"
-BRIGHT = "#e8f5f0"
-DIM = "#5d857c"
+TEXT = "#c9cfd4"
+BRIGHT = "#e3e7ea"
+DIM = "#a0a9b1"            # quiet text (4.5:1 or better on every surface)
+FAINT = "#6f777f"          # lines and marks that are not text
+DISABLED = "#5c636a"
 VIOLET = "#9b7bff"
-FIELD = "#0b1513"          # rgba(9,16,15,.6) over the surface
+FIELD = "#1f2226"          # input fields, a step darker than the window
+VIEW_BG = "#2a2d31"        # 3D, slice, plan, point views, plots and map canvases
+GRID = "#3a3f45"           # grid lines in those views
 
 LEVEL = {"ok": GREEN, "warn": AMBER, "bad": RED, "off": DIM, "busy": BLUE}
 
@@ -89,9 +94,9 @@ def palette():
                       (QPalette.ColorRole.Dark, DIM), (QPalette.ColorRole.Light, SURF2),
                       (QPalette.ColorRole.PlaceholderText, DIM), (QPalette.ColorRole.BrightText, "#ffffff")):
         p.setColor(role, QColor(col))
-    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor("#3d5a54"))
-    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor("#3d5a54"))
-    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor("#3d5a54"))
+    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor("#5c636a"))
+    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor("#5c636a"))
+    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor("#5c636a"))
     return p
 
 
@@ -145,10 +150,10 @@ QToolButton#ppSectHead {{ background: transparent; border: none; padding: 8px 6p
 QPushButton {{ font-family: '{UI}'; font-size: 13px; font-weight: 700; color: {TEXT}; background: transparent;
                border: 1px solid {BORDER}; border-radius: 2px; padding: 6px 14px; }}
 QPushButton:hover {{ border-color: {DIM}; color: {BRIGHT}; }}
-QPushButton:disabled {{ color: #3d5a54; border-color: #16292600; }}
+QPushButton:disabled {{ color: #5c636a; border-color: #00000000; }}
 QPushButton#ppPrimary {{ background: {GREEN}; color: #04130f; border: 1px solid {GREEN}; padding: 8px 20px; font-size: 14px; }}
 QPushButton#ppPrimary:hover {{ background: #35ffc9; border-color: #35ffc9; }}
-QPushButton#ppPrimary:disabled {{ background: #2c4a44; color: #6f9088; border-color: #2c4a44; }}
+QPushButton#ppPrimary:disabled {{ background: #3c4248; color: #7c858d; border-color: #3c4248; }}
 QPushButton#ppStop {{ color: {RED}; border-color: {RED}; }}
 QPushButton#ppStop:hover {{ background: rgba(232,72,85,36); }}
 QToolButton {{ font-family: '{UI}'; font-weight: 700; color: {TEXT}; background: transparent;
@@ -197,7 +202,7 @@ QMenu {{ background-color: {SURF}; color: {BRIGHT}; border: 1px solid {DIM}; fon
          font-weight: 600; padding: 4px 0; }}
 QMenu::item {{ background-color: transparent; color: {BRIGHT}; padding: 7px 22px; }}
 QMenu::item:selected {{ background-color: rgba(0,229,170,45); color: #ffffff; }}
-QMenu::item:disabled {{ color: #4f6f68; }}
+QMenu::item:disabled {{ color: #6f777f; }}
 QMenu::separator {{ height: 1px; background: {BORDER}; margin: 4px 10px; }}
 QDialog, QMessageBox, QInputDialog, QProgressDialog {{ background-color: {SURF}; }}
 QDialog QLabel, QMessageBox QLabel, QInputDialog QLabel {{ color: {BRIGHT}; font-size: 13px; }}
@@ -391,7 +396,7 @@ def _painter():
                     p.fillRect(r.adjusted(0, 0, -1, 0), QColor(SURF2 if sel else SURF))
                     if sel:
                         p.fillRect(QRect(r.left(), r.bottom() - 2, r.width() - 1, 3), QColor(ACCENT))
-                    p.setPen(QColor(BRIGHT if sel else DIM) if tb.isTabEnabled(i) else QColor("#3d5a54"))
+                    p.setPen(QColor(BRIGHT if sel else DIM) if tb.isTabEnabled(i) else QColor("#5c636a"))
                     t = p.fontMetrics().elidedText(tb.tabText(i).replace("&", "").upper(),
                                                    Qt.TextElideMode.ElideRight, r.width() - 12)
                     p.drawText(r, af(Qt.AlignmentFlag.AlignCenter), t)
@@ -417,7 +422,7 @@ def _painter():
                 p.fillRect(sb.rect(), QColor(BG))
                 if sb.maximum() > sb.minimum() and not h.isEmpty():
                     hov = sb.underMouse()
-                    c = QColor(ACCENT if hov else "#2f4c47")
+                    c = QColor(ACCENT if hov else "#4a5058")
                     p.setPen(Qt.PenStyle.NoPen)
                     p.setBrush(c)
                     r = QRectF(h).adjusted(2, 2, -2, -2)
@@ -480,7 +485,7 @@ def _painter():
                         hl.setAlpha(45)
                         p.fillRect(g.adjusted(2, 1, -2, -1), hl)
                         p.fillRect(QRect(g.left() + 2, g.top() + 1, 3, g.height() - 2), QColor(ACCENT))
-                    col = QColor(BRIGHT if (a is act and en) else TEXT if en else "#3d5a54")
+                    col = QColor(BRIGHT if (a is act and en) else TEXT if en else "#5c636a")
                     p.setPen(col)
                     tx = g.left() + 14
                     if a.isCheckable():
@@ -512,7 +517,7 @@ def _painter():
                 p.setBrush(QColor(SURF if en else BG))
                 p.setPen(QPen(QColor(ACCENT if cb.hasFocus() else BORDER), 1))
                 p.drawRoundedRect(r, 3, 3)
-                p.setPen(QColor(BRIGHT if en else "#3d5a54"))
+                p.setPen(QColor(BRIGHT if en else "#5c636a"))
                 p.setFont(font("mono", 12))
                 p.drawText(QRect(8, 0, cb.width() - 30, cb.height()),
                            af(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), cb.currentText())
@@ -542,18 +547,18 @@ def _painter():
                 else:
                     tr = QRectF(1, h / 2 - 8, 30, 16)
                     p.setPen(Qt.PenStyle.NoPen)
-                    track = QColor(ACCENT) if on else QColor("#2a3f3b")
+                    track = QColor(ACCENT) if on else QColor("#41474e")
                     if on:
                         track.setAlpha(90)
                     p.setBrush(track)
                     p.drawRoundedRect(tr, 8, 8)
-                    knob = QColor(ACCENT if on else "#7c9a93")
+                    knob = QColor(ACCENT if on else "#9aa3ab")
                     if not en:
                         knob.setAlpha(110)
                     p.setBrush(knob)
                     p.drawEllipse(QRectF(tr.left() + (16 if on else 2), tr.top() + 2, 12, 12))
                     tx = 40
-                col = QColor(TEXT if en else "#3d5a54")
+                col = QColor(TEXT if en else "#5c636a")
                 p.setPen(col)
                 p.setFont(font("ui", 13, 600, 106))
                 p.drawText(QRect(tx, 0, w.width() - tx, h), af(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
@@ -781,7 +786,7 @@ _CAL_QSS = """
 QCalendarWidget QWidget {{ background: {SURF}; color: {BRIGHT}; }}
 QCalendarWidget QAbstractItemView {{ background: {SURF}; color: {BRIGHT}; selection-background-color: {ACCENT};
     selection-color: {BG}; }}
-QCalendarWidget QAbstractItemView:disabled {{ color: #3d5a54; }}
+QCalendarWidget QAbstractItemView:disabled {{ color: #5c636a; }}
 QCalendarWidget QToolButton {{ background: {SURF2}; color: {BRIGHT}; border: none; padding: 4px 8px; }}
 QCalendarWidget QSpinBox {{ background: {SURF2}; color: {BRIGHT}; }}
 """

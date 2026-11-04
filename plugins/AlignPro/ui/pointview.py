@@ -107,7 +107,7 @@ class PointCanvas(QWidget):
     # ----------------------------------------------------------- paint
     def _raster(self, W, H, x0, x1, y0, y1):
         img = np.empty((H, W, 4), np.uint8)
-        r, g, b = _rgb(theme.SURF)
+        r, g, b = _rgb(theme.VIEW_BG)
         img[:] = (b, g, r, 255)          # Format_RGB32 is B, G, R, A in memory
         n = self.point_px
 
@@ -141,8 +141,8 @@ class PointCanvas(QWidget):
             img = QImage(buf.data, W, H, W * 4, QImage.Format.Format_RGB32)
             p.drawImage(QPointF(a.left(), a.top()), img)
         else:
-            p.fillRect(a, QColor(theme.SURF))
-        grid = QColor(29, 51, 48, 200)
+            p.fillRect(a, QColor(theme.VIEW_BG))
+        grid = QColor(theme.GRID)
         p.setFont(theme.font("mono", 10))
         for v in _ticks(x0, x1, max(2, int(a.width() / 75))):
             X = a.left() + (v - x0) / (x1 - x0) * a.width()

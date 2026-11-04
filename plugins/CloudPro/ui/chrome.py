@@ -215,7 +215,7 @@ class IconButton(QtWidgets.QAbstractButton):
             if len(o) > 3 and o[3]:
                 col = QtGui.QColor(o[3])
         if not self.isEnabled():
-            col = QtGui.QColor("#3d5a54")
+            col = QtGui.QColor("#5c636a")
         h = self.height()
         if name:
             paint_rect = QtCore.QRectF(4, 4, h - 8, h - 8)

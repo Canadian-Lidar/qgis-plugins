@@ -66,7 +66,7 @@ class StepButton(QAbstractButton):
         bg = QColor(col)
         bg.setAlpha(34 if level != "off" or self.isChecked() else 0)
         if level == "off" and not self.isChecked():
-            bg = QColor(14, 26, 24, 235)
+            bg = QColor(46, 50, 55, 235)
         if self.underMouse():
             bg.setAlpha(min(255, bg.alpha() + 25))
         bd = QColor(col)

@@ -285,7 +285,7 @@ class PlanView(CloudView2D):
         p.drawLine(QtCore.QPointF(*self.to_screen(*c)), QtCore.QPointF(*self.to_screen(*tip)))
         if self.tool == "pan" and (hl or self._bdrag):
             p.setPen(QtGui.QPen(QtGui.QColor(theme.BRIGHT), 1))
-            p.setBrush(QtGui.QColor(93, 133, 124))
+            p.setBrush(QtGui.QColor(160, 169, 177))
             for q in sc:
                 p.drawEllipse(q, 5, 5)
             p.drawEllipse(QtCore.QPointF(*self.to_screen(*rot)), 6, 6)

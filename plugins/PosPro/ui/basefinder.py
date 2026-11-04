@@ -36,7 +36,7 @@ def _symbol(net, big):
     st = stations.NETWORKS[net]
     size = st["size"] * (1.45 if big else 0.9)
     sym = QgsMarkerSymbol.createSimple({"name": st["shape"], "color": st["colour"], "size": "%.1f" % size,
-                                        "outline_color": "#09100f" if big else st["colour"],
+                                        "outline_color": "#26292d" if big else st["colour"],
                                         "outline_width": "0.4" if big else "0.1"})
     if not big:
         sym.setOpacity(0.55)
@@ -81,7 +81,7 @@ class BaseFinder(QDialog):
         ml = QVBoxLayout(mapw)
         ml.setContentsMargins(0, 0, 0, 0)
         self.canvas = QgsMapCanvas()
-        self.canvas.setCanvasColor(QColor(theme.BG))
+        self.canvas.setCanvasColor(QColor(theme.VIEW_BG))
         self.canvas.setDestinationCrs(WEB)
         self.canvas.enableAntiAliasing(True)
         ml.addWidget(self.canvas, 1)

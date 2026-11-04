@@ -192,7 +192,7 @@ class CloudView2D(QtWidgets.QWidget):
         txt = self.title
         fm = p.fontMetrics()
         w = fm.horizontalAdvance(txt) + 14
-        p.fillRect(QtCore.QRectF(6, 6, w, 20), QtGui.QColor(14, 26, 24, 210))
+        p.fillRect(QtCore.QRectF(6, 6, w, 20), QtGui.QColor(46, 50, 55, 210))
         p.setPen(QtGui.QColor(theme.ACCENT))
         p.drawText(QtCore.QRectF(6, 6, w, 20), Qt.AlignmentFlag.AlignCenter, txt)
 
@@ -202,7 +202,7 @@ class CloudView2D(QtWidgets.QWidget):
         a1, b0 = self.to_view(W, H)
         sa = nice_step(a1 - a0, max(3, W // 110))
         sb = nice_step(b1 - b0, max(3, H // 70))
-        pen = QtGui.QPen(QtGui.QColor(93, 133, 124, 45))
+        pen = QtGui.QPen(QtGui.QColor(160, 169, 177, 45))
         p.setPen(pen)
         p.setFont(theme.mono(10))
         ga = math.ceil((a0 + self.a_offset) / sa) * sa - self.a_offset
@@ -283,7 +283,7 @@ class CloudView2D(QtWidgets.QWidget):
                 txt = self.measure_text(a0, b0, a1, b1)
                 p.setFont(theme.mono(11))
                 r = QtCore.QRectF(pts[1].x() + 8, pts[1].y() + 8, 220, 46)
-                p.fillRect(r, QtGui.QColor(14, 26, 24, 230))
+                p.fillRect(r, QtGui.QColor(46, 50, 55, 230))
                 p.setPen(QtGui.QColor(theme.BRIGHT))
                 p.drawText(r.adjusted(5, 2, 0, 0), Qt.AlignmentFlag.AlignLeft, txt)
             for q in pts[:2]:

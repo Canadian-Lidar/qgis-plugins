@@ -18,8 +18,8 @@ from . import theme
 
 from dcs_core.widgets import align_flags as _af  # noqa: E402
 
-AXIS = QColor("#5d857c")
-GRID = QColor(29, 51, 48, 200)
+AXIS = QColor(theme.DIM)
+GRID = QColor(theme.GRID)
 
 
 def _nice_step(span, target):
@@ -161,6 +161,7 @@ class TimePlot(QWidget):
         fg = QColor(theme.TEXT)
         p.fillRect(self.rect(), QColor(theme.SURF))
         pr = self._plot_rect()
+        p.fillRect(pr, QColor(theme.VIEW_BG))
         f = QFont(self.font())
         if f.pointSizeF() > 0:
             f.setPointSizeF(max(7.0, f.pointSizeF() * 0.9))
@@ -240,7 +241,7 @@ class TimePlot(QWidget):
             p.setPen(fg if s.visible else AXIS)
             p.drawText(QRectF(lx + 15, 0, w, 18), _af(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), s.label)
         # marker and hover
-        for xm, col in ((self.marker_x, QColor("#f5a623")), (self.hover_x, QColor("#5d857c"))):
+        for xm, col in ((self.marker_x, QColor("#f5a623")), (self.hover_x, QColor("#a0a9b1"))):
             if xm is None or xm < self.x0 or xm > self.x1:
                 continue
             xx = self._tx(xm, pr)

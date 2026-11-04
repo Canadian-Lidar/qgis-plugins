@@ -3,7 +3,6 @@ import bisect
 import os
 
 from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsPointXY, QgsProject
-from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QColor, QIcon
 
 try:
@@ -80,19 +79,18 @@ class PosProPlugin:
         self._clear_marker()
         for d in (self.dock, self.plots):
             if d is not None:
-                self.iface.removeDockWidget(d)
-                d.deleteLater()
+                d.release_window()      # remembers the window, removes it safely (also when it is a window)
         self.dock = self.plots = None
 
     def toggle(self, on=True):
         if self.dock is None:
             from .ui.dock import PosProDock
             self.dock = PosProDock(self.iface, self)
-            self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
             self.dock.visibilityChanged.connect(lambda v: self.action.setChecked(v))
-        self.dock.setVisible(bool(on) or not self.dock.isVisible())
-        if self.dock.isVisible():
-            self.dock.raise_()
+        if bool(on) or not self.dock.isVisible():
+            self.dock.show_window()     # where it was left; floating the first time
+        else:
+            self.dock.hide()
 
     def open_project(self, path):
         """Show PosPro on a DCS project (called from another plugin's chain bar)."""
@@ -103,10 +101,8 @@ class PosProPlugin:
         if self.plots is None:
             from .ui.plotsdock import PlotsDock
             self.plots = PlotsDock(self)
-            self.iface.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.plots)
         self.plots.set_data(qc)
-        self.plots.show()
-        self.plots.raise_()
+        self.plots.show_window()
 
     # ------------------------------------------------------------------
     def _clear_marker(self):

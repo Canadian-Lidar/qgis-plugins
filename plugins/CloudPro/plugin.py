@@ -8,7 +8,7 @@ import os
 from .qt import QAction, QtGui, QtWidgets, Qt
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CORE_API = 2
+CORE_API = 3
 
 
 def _core():
@@ -24,6 +24,7 @@ class CloudProPlugin:
     def __init__(self, iface):
         self.iface = iface
         self.win = None
+        self.panel = None
         self.actions = []
         self.maptool = None
         self.core = None
@@ -83,9 +84,10 @@ class CloudProPlugin:
                 self.win.shutdown()
             except Exception:       # noqa: BLE001
                 pass
-            self.win.close()
-            self.win.deleteLater()
             self.win = None
+        if self.panel is not None:
+            self.panel.release_window()     # remembers the window; deletes it and CloudPro's view with it
+            self.panel = None
         if self.maptool is not None:
             try:
                 self.iface.mapCanvas().unsetMapTool(self.maptool)
@@ -105,14 +107,31 @@ class CloudProPlugin:
         if not self._need_core():
             return None
         if self.win is None:
+            from dcs_core import theme as dtheme
+            from dcs_core.window import PluginWindow
             from .ui.mainwindow import MainWindow
-            self.win = MainWindow(self.iface, self.iface.mainWindow())
+            self.panel = PluginWindow(self.iface, "cloudpro", "CloudPro", size=(1680, 1000), dock_size=900,
+                                      object_name="CloudProWindow", min_size=(900, 600))
+            self.win = MainWindow(self.iface, self.panel)
+            self.win.setWindowFlags(Qt.WindowType.Widget)   # CloudPro's view inside the standard window
             self.win.map_pick = self.map_tool
-            self.win.setWindowFlag(Qt.WindowType.Window, True)
+            self.panel.setWidget(self.win)
+            self.panel.setWindowTitle(self.win.windowTitle())
+            self.win.windowTitleChanged.connect(self.panel.setWindowTitle)
+            self.panel.closed.connect(self._closed)
+            self.win.attach_window(self.panel)
+            dtheme.apply_dock(self.panel)
         self.win.show()
-        self.win.raise_()
-        self.win.activateWindow()
+        self.panel.show_window()        # where it was left; floating the first time
         return self.win
+
+    def _closed(self):
+        """Closing the window saves the project and frees the edit lock, as closing CloudPro always did."""
+        if self.win is not None:
+            try:
+                self.win.shutdown()
+            except Exception:       # noqa: BLE001
+                pass
 
     def open_project(self, path):
         """Show CloudPro on a DCS project (called from another plugin's chain bar)."""
@@ -137,7 +156,7 @@ class CloudProPlugin:
             dst = QgsCoordinateReferenceSystem(win.project.crs)
             q = QgsCoordinateTransform(src, dst, QgsProject.instance()).transform(pt)
             win.goto_world(q.x(), q.y())
-            win.raise_()
+            win.window().raise_()
         self.maptool.canvasClicked.connect(clicked)
         canvas.setMapTool(self.maptool)
         self.iface.messageBar().pushInfo("CloudPro", "Click on the map to centre the Inspection Area there")

@@ -1,8 +1,10 @@
 """Bottom dock with the quality plots (Qinertia-style timeline)."""
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QColor
-from qgis.PyQt.QtWidgets import (QCheckBox, QDockWidget, QHBoxLayout, QLabel, QPushButton, QTabWidget,
+from qgis.PyQt.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QPushButton, QTabWidget,
                                  QVBoxLayout, QWidget)
+
+from dcs_core.window import PluginWindow
 
 from ..core import results
 from .plots import TimePlot
@@ -11,10 +13,12 @@ from . import theme
 N, E, D = "#3ab4f2", "#00e5aa", "#f5a623"
 
 
-class PlotsDock(QDockWidget):
+class PlotsDock(PluginWindow):
+    """The quality plots in DCS Core's standard window (floating by default, docked on request)."""
+
     def __init__(self, plugin):
-        super().__init__("PosPro – quality plots")
-        self.setObjectName("PosProPlots")
+        super().__init__(plugin.iface, "pospro_plots", "PosPro \u2013 quality plots", size=(1300, 560),
+                         dock_size=320, object_name="PosProPlots", min_size=(480, 240))
         self.plugin = plugin
         w = QWidget()
         theme.apply(w)

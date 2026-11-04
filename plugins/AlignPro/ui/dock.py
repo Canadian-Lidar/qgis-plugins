@@ -8,7 +8,7 @@ import numpy as np
 from qgis.core import Qgis, QgsCoordinateReferenceSystem
 from qgis.PyQt.QtCore import QSettings, Qt, QTimer, QUrl
 from qgis.PyQt.QtGui import QDesktopServices, QFont, QGuiApplication, QTextDocument
-from qgis.PyQt.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDockWidget,
+from qgis.PyQt.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                  QDoubleSpinBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QMenu, QPlainTextEdit,
                                  QProgressBar, QPushButton, QScrollArea, QStackedWidget, QToolButton, QVBoxLayout,
                                  QWidget)
@@ -22,9 +22,8 @@ from .maptools import DragLineTool, PolygonTool, SliceCursor
 from .pages import AnalyzePage, CalibPage, DataPage, InstallPage, PairsPage, QualityPage, ReportPage, WelcomePage
 from .dataview import DataView
 from .slices import SliceView
-from . import docksafe
 from .widgets import Logo, StepButton, Toast
-from .docktitle import LockedDockTitle
+from dcs_core.window import PluginWindow, alive
 from dcs_core.stepbar import StepBar
 
 
@@ -44,12 +43,12 @@ def _scroll(widget):
     return sa
 
 
-class AlignProDock(QDockWidget):
+class AlignProDock(PluginWindow):
+    """AlignPro's window: DCS Core's standard plugin window (floating by default, docked on request)."""
+
     def __init__(self, iface, parent=None):
-        super().__init__("AlignPro \u2013 Lidar Boresight Calibration", parent)
-        self.setTitleBarWidget(LockedDockTitle(self, "AlignPro \u2013 Lidar Boresight Calibration", iface,
-                                               (1100, 900), (1400, 950)))
-        self.setObjectName("AlignProDock")
+        super().__init__(iface, "alignpro", "AlignPro \u2013 Lidar Boresight Calibration", parent, size=(1400, 950),
+                         dock_size=720, object_name="AlignProDock")
         self.iface = iface
         self.p = None
         self.job = None
@@ -114,19 +113,8 @@ class AlignProDock(QDockWidget):
         self.wbtn = QToolButton()
         self.wbtn.setObjectName("ppWinBtn")
         self.wbtn.setText("\u2922")
-        self.wbtn.setToolTip("Window: maximise, float, or dock to the left or right")
-        self.wbtn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.wbtn.setFixedSize(34, 34)
-        wm = DarkMenu(self.wbtn)
-        self.act_max = wm.addAction("Maximise window", self.toggle_maximised)
-        wm.addAction("Float as a window", self.float_window)
-        wm.addSeparator()
-        wm.addAction("Dock on the right", lambda: self.dock_side(Qt.DockWidgetArea.RightDockWidgetArea))
-        wm.addAction("Dock on the left", lambda: self.dock_side(Qt.DockWidgetArea.LeftDockWidgetArea))
-        wm.addSeparator()
-        wm.addAction("Open the Data View", lambda: self.show_dataview("float"))
-        wm.aboutToShow.connect(self._win_menu_text)
-        self.wbtn.setMenu(wm)
+        self.attach_menu(self.wbtn, [("Open the Data View", lambda: self.show_dataview("open"))])
         self.hbtn = QToolButton()
         self.hbtn.setObjectName("ppWinBtn")
         self.hbtn.setText("?")
@@ -242,10 +230,8 @@ class AlignProDock(QDockWidget):
         self.pg_welcome.refresh()
 
     def _build_dataview(self, parent):
-        self.view_dock = QDockWidget("AlignPro \u2013 Data View & Fine Tuning", parent)
-        self.view_dock.setObjectName("AlignProDataViewDock")
-        self.view_dock.setTitleBarWidget(LockedDockTitle(self.view_dock, "AlignPro \u2013 Data View & Fine Tuning",
-                                                         self.iface, (1500, 850), (1700, 1000)))
+        self.view_dock = PluginWindow(self.iface, "alignpro_dataview", "AlignPro \u2013 Data View & Fine Tuning", parent,
+                                      size=(1700, 1000), dock_size=420, object_name="AlignProDataViewDock")
         self.dv = DataView()
         theme.apply(self.dv)
         theme.apply_dock(self.view_dock)
@@ -253,13 +239,7 @@ class AlignProDock(QDockWidget):
         vb.setObjectName("ppWinBtn")
         vb.setText("\u2922")
         vb.setFixedSize(30, 30)
-        vb.setToolTip("Window: maximise, float, or dock at the bottom")
-        vb.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        vm = DarkMenu(vb)
-        vm.addAction("Maximise window", lambda: self.show_dataview("max"))
-        vm.addAction("Float as a window", lambda: self.show_dataview("float"))
-        vm.addAction("Dock at the bottom", lambda: self.show_dataview("dock"))
-        vb.setMenu(vm)
+        self.view_dock.attach_menu(vb)
         self.dv.bar.addWidget(vb)
         self.view_dock.setWidget(self.dv)
         theme.polish(self.dv)
@@ -272,18 +252,19 @@ class AlignProDock(QDockWidget):
             self.chain.refresh()
             self.pg_cal.refresh_publish()
 
-    def show_dataview(self, how="dock"):
+    def show_dataview(self, how="open"):
+        """open: where it was left (floating the first time); float, max, or dock (at the bottom)."""
         d = self.view_dock
-        if not docksafe.alive(d):
+        if not alive(d):
             return
+        d.show_window()
         if how == "dock":
-            docksafe.dock_to(self.iface, d, Qt.DockWidgetArea.BottomDockWidgetArea)
-            return
-        if how == "max":
-            if not (d.property(docksafe.WINDOWED) and d.isMaximized()):
-                docksafe.toggle_maximised(self.iface, d)
-        else:
-            docksafe.float_window(self.iface, d, (1700, 1000))
+            d.dock_at("bottom")
+        elif how == "max":
+            if d.window_mode() != "max":
+                d.maximise()
+        elif how == "float" and d.window_mode() != "float":
+            d.float_window()
 
     # ============================================================ state
     def set_enabled(self, on):
@@ -367,23 +348,6 @@ class AlignProDock(QDockWidget):
         d.resize(780, 480)
         themed(d)
         d.exec()
-
-    # ============================================================ window
-    def _as_window(self):
-        docksafe.make_window(self)
-
-    def float_window(self):
-        docksafe.float_window(self.iface, self, (1400, 950))
-
-    def toggle_maximised(self):
-        docksafe.toggle_maximised(self.iface, self)
-
-    def dock_side(self, area):
-        docksafe.dock_to(self.iface, self, area)
-
-    def _win_menu_text(self):
-        self.act_max.setText("Restore window size" if (self.isFloating() and self.isMaximized())
-                             else "Maximise window")
 
     # ================================================================ jobs
     def _run(self, title, fn, done):
@@ -939,7 +903,7 @@ class AlignProDock(QDockWidget):
 
     def cleanup(self):
         """Called by the plugin's unload (also when QGIS closes): stop everything AlignPro started and
-        release the Data View panel safely (see docksafe)."""
+        release the Data View window safely (dcs_core.window)."""
         for t in (getattr(self, "_chain_timer", None), getattr(getattr(self, "dv", None), "_timer", None)):
             try:
                 if t is not None:
@@ -966,7 +930,9 @@ class AlignProDock(QDockWidget):
             self.layers.remove_all()
         except RuntimeError:
             pass
-        docksafe.release(self.iface, getattr(self, "view_dock", None))
+        v = getattr(self, "view_dock", None)
+        if alive(v):
+            v.release_window()
         self.view_dock = None
 
 

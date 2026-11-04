@@ -63,7 +63,7 @@ class VehicleView(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         W, H = self.width(), self.height()
         p.fillRect(self.rect(), QColor(theme.SURF))
-        p.setPen(QPen(QColor(29, 51, 48, 110), 1))
+        p.setPen(QPen(QColor(58, 63, 69, 110), 1))
         for x in range(0, W, 24):
             p.drawLine(x, 0, x, H)
         for y in range(0, H, 24):
@@ -137,7 +137,7 @@ class VehicleView(QWidget):
             arrow = None
         self._vehicle(p, body)
         if k in (1, 2):     # wheels and ground
-            p.setPen(QPen(QColor(93, 133, 124, 150), 1))
+            p.setPen(QPen(QColor(160, 169, 177, 150), 1))
             g = m(bx[0], bx[2], bx[5]).y()
             p.drawLine(QPointF(r.left(), g), QPointF(r.right(), g))
             p.setBrush(QColor(theme.BG))
@@ -184,8 +184,8 @@ class VehicleView(QWidget):
         p.drawText(r, _af(Qt.AlignmentFlag.AlignHCenter), text)
 
     def _vehicle(self, p, r):
-        p.setPen(QPen(QColor(93, 133, 124, 150), 1.2))
-        p.setBrush(QColor(19, 35, 32, 200))
+        p.setPen(QPen(QColor(160, 169, 177, 150), 1.2))
+        p.setBrush(QColor(54, 59, 65, 200))
         p.drawRoundedRect(r, 6, 6)
         p.setBrush(Qt.BrushStyle.NoBrush)
 

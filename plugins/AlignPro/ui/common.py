@@ -30,7 +30,7 @@ C_RED = theme.RED
 C_BLUE = theme.BLUE
 BOX_COLORS = {"roll": theme.RED, "pitch": theme.ACCENT, "heading": theme.BLUE, "profile": theme.AMBER}
 AXIS = QColor(theme.DIM)
-GRID = QColor(29, 51, 48, 200)
+GRID = QColor(theme.GRID)
 
 
 
@@ -196,6 +196,7 @@ class PlotWidget(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), QColor(theme.SURF))
         a = self._area()
+        p.fillRect(a, QColor(theme.VIEW_BG))
         x0, x1, y0, y1 = self._range()
         fx = lambda x: a.left() + (x - x0) / (x1 - x0) * a.width()   # noqa: E731
         fy = lambda y: a.bottom() - (y - y0) / (y1 - y0) * a.height()  # noqa: E731

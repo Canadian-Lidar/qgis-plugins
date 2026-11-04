@@ -173,7 +173,7 @@ class CloudView3D(QtWidgets.QWidget):
         p.save()
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QtGui.QColor(10, 20, 18, 150))
+        p.setBrush(QtGui.QColor(38, 41, 45, 150))
         p.drawEllipse(c, self.NAV / 2, self.NAV / 2)
 
         def col(base, key):
@@ -312,7 +312,7 @@ class CloudView3D(QtWidgets.QWidget):
         if txt:
             w = p.fontMetrics().horizontalAdvance(txt) + 14
             x0 = self.NAV + 16
-            p.fillRect(QtCore.QRectF(x0, 6, w, 20), QtGui.QColor(14, 26, 24, 210))
+            p.fillRect(QtCore.QRectF(x0, 6, w, 20), QtGui.QColor(46, 50, 55, 210))
             p.setPen(QtGui.QColor(theme.ACCENT))
             p.drawText(QtCore.QRectF(x0, 6, w, 20), Qt.AlignmentFlag.AlignCenter, txt)
         if getattr(self, "legend", None):
