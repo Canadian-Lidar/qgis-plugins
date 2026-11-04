@@ -10,7 +10,7 @@
 from ..qt import QtCore, QtWidgets, Qt, Signal
 from . import chrome, render, theme
 from .navpanel import dspin
-from .planview import ATTRS, PlanView
+from .planview import ATTRS, DEFAULT_TARGET, PlanView
 from .view2d import CloudView2D
 from .view3d import CloudView3D
 
@@ -101,6 +101,12 @@ class PlanPane(_Pane):
         self.grid = _combo(ATTRS, "Background grid of the whole project under the points", 130)
         self.hl.addWidget(chrome.label("GRID"))
         self.hl.addWidget(self.grid)
+        self.target = dspin(1, 100000, DEFAULT_TARGET, 10, 0, " pts/m²")
+        self.target.setFixedWidth(118)
+        self.target.setToolTip("Coverage: the density the survey needs. Cells at or above it are green, "
+                               "from half of it amber, below half red")
+        self.target.setVisible(False)
+        self.hl.addWidget(self.target)
         self.add_colour()
         self.layout().addWidget(self.view, 1)
 

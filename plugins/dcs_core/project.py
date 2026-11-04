@@ -207,6 +207,26 @@ class DcsProject:
                              for folder, fs in groups.items()]
         self.modify(fn, plugin)
 
+    def survey_clraw_files(self):
+        """The .clraw files of the job's survey lines: those in the captures' folders (and the captures'
+        own .clraw files), else (no captures, or captures that are only mapper 2.10 navigation recordings)
+        the whole job folder. Never anything under the Processing folder, never a navigation recording."""
+        from . import clraw
+
+        def walk(paths):
+            found = clraw.find_clraw([p for p in paths if os.path.exists(p)])
+            proc = os.path.abspath(self.folder) + os.sep
+            return [f for f in found if not os.path.abspath(f).startswith(proc)
+                    and os.sep + "Processing" + os.sep not in os.path.abspath(f)]
+        paths = []
+        for c in self.captures():
+            paths.append(c["path"])
+            paths.extend(f for f in c["files"] if f.lower().endswith(".clraw"))
+        lines = clraw.split_navigation(walk(paths))[0] if paths else []
+        if not lines:
+            lines = clraw.split_navigation(walk([self.job_folder]))[0]
+        return sorted(set(lines), key=lambda x: os.path.basename(x))
+
     def missing_captures(self):
         return [f for f in self.capture_files() if not os.path.exists(f)]
 

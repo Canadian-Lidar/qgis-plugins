@@ -22,9 +22,9 @@ from .maptools import DragLineTool, PolygonTool, SliceCursor
 from .pages import AnalyzePage, CalibPage, DataPage, InstallPage, PairsPage, QualityPage, ReportPage, WelcomePage
 from .dataview import DataView
 from .slices import SliceView
-from .widgets import Logo, StepButton, Toast
+from .widgets import StepButton, Toast
+from dcs_core.header import PluginHeader
 from dcs_core.window import PluginWindow, alive
-from dcs_core.stepbar import StepBar
 
 
 def DarkMenu(parent=None):  # noqa: N802 - a QMenu painted by DCS Core whatever the platform style
@@ -47,7 +47,7 @@ class AlignProDock(PluginWindow):
     """AlignPro's window: DCS Core's standard plugin window (floating by default, docked on request)."""
 
     def __init__(self, iface, parent=None):
-        super().__init__(iface, "alignpro", "AlignPro \u2013 Lidar Boresight Calibration", parent, size=(1400, 950),
+        super().__init__(iface, "alignpro", "AlignPro", parent, size=(1400, 950),
                          dock_size=720, object_name="AlignProDock")
         self.iface = iface
         self.p = None
@@ -71,30 +71,10 @@ class AlignProDock(PluginWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        hw = QWidget()
-        hw.setObjectName("ppHeader")
-        head = QHBoxLayout(hw)
-        head.setContentsMargins(12, 8, 12, 8)
-        head.setSpacing(12)
-        head.addWidget(Logo(42))
-        brand = QVBoxLayout()
-        brand.setSpacing(1)
-        from dcs_core import menu as _dcs_menu
-        t1 = QLabel(_dcs_menu.GROUP)
-        t1.setObjectName("ppBrandTitle")
-        t2 = QLabel("AlignPro \u00b7 Lidar Boresight Calibration")
-        t2.setObjectName("ppBrandSub")
-        for t_ in (t1, t2):
-            theme.caps(t_, 107)
-        brand.addWidget(t1)
-        brand.addWidget(t2)
-        head.addLayout(brand)
-        head.addStretch(1)
-        self.pbox = QToolButton()
-        self.pbox.setObjectName("ppProject")
-        self.pbox.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.pbox.setMinimumWidth(170)
-        mm = DarkMenu(self.pbox)
+        # header (DCS Core, the same in every plugin): logo, name, workflow boxes, project box, window, guide
+        self.header = PluginHeader("alignpro", "AlignPro", window=self, guide=self.open_guide,
+                                   window_extras=[("Open the Data View", lambda: self.show_dataview("open"))])
+        mm = self.header.set_project_menu(DarkMenu(self.header.project_btn))
         mm.addAction("New project\u2026", self.new_project)
         mm.addAction("Open project\u2026", self.open_dialog)
         self.recent_menu = theme.dark_menu(QMenu("Recent projects", mm))
@@ -108,33 +88,12 @@ class AlignProDock(PluginWindow):
         mm.addAction("Show the log", self.show_log)
         mm.addSeparator()
         self.a_guide = mm.addAction("User guide (this version)", self.open_guide)
-        self.pbox.setMenu(mm)
-        head.addWidget(self.pbox)
-        self.wbtn = QToolButton()
-        self.wbtn.setObjectName("ppWinBtn")
-        self.wbtn.setText("\u2922")
-        self.wbtn.setFixedSize(34, 34)
-        self.attach_menu(self.wbtn, [("Open the Data View", lambda: self.show_dataview("open"))])
-        self.hbtn = QToolButton()
-        self.hbtn.setObjectName("ppWinBtn")
-        self.hbtn.setText("?")
-        self.hbtn.setToolTip("AlignPro user guide (PDF for this version)")
-        self.hbtn.setFixedSize(34, 34)
-        self.hbtn.clicked.connect(self.open_guide)
-        head.addWidget(self.hbtn)
-        head.addWidget(self.wbtn)
-        self._set_pname("No project")
-        outer.addWidget(hw)
-        # the chain bar: PosPro -> AlignPro -> CloudPro on this project (DCS Core)
-        cw = QWidget()
-        cw.setObjectName("ppChain")
-        cl = QHBoxLayout(cw)
-        cl.setContentsMargins(12, 4, 12, 6)
-        self.chain = StepBar("alignpro")
-        cl.addWidget(self.chain)
-        outer.addWidget(cw)
-        self.chain_w = cw
-        cw.setVisible(False)
+        self.pbox = self.header.project_btn
+        self.wbtn = self.header.window_btn
+        self.hbtn = self.header.help_btn
+        self.chain = self.header.chain
+        self.chain_w = self.chain               # always shown (AlignPro 1.3)
+        outer.addWidget(self.header)
         self._chain_timer = QTimer(self)
         self._chain_timer.setInterval(5000)
         self._chain_timer.timeout.connect(self._refresh_chain)
@@ -308,15 +267,10 @@ class AlignProDock(PluginWindow):
             sb.set_state(st, sub)
 
     def _set_pname(self, name):
-        self.pbox.setText(name.upper() + "  \u25be")
-        f = self.pbox.font()
-        f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 110)
-        self.pbox.setFont(f)
+        self.header.set_project_name(name)
 
     def _busy(self, on):
-        self.pbox.setProperty("busy", bool(on))
-        self.pbox.style().unpolish(self.pbox)
-        self.pbox.style().polish(self.pbox)
+        self.header.set_busy(on)
 
     def toast(self, text, level="ok"):
         self.toast_w.show_message(text, level)
@@ -412,8 +366,8 @@ class AlignProDock(PluginWindow):
         if dcs is None:
             return
         from ..core import clraw
-        found = [f for f in clraw.find_clraw([dcs.job_folder])
-                 if os.sep + "Processing" + os.sep not in os.path.abspath(f)]
+        found = clraw.split_navigation([f for f in clraw.find_clraw([dcs.job_folder])
+                                        if os.sep + "Processing" + os.sep not in os.path.abspath(f)])[0]
         if found and not dcs.capture_files():
             names = "\n".join(os.path.relpath(f, dcs.job_folder) for f in found[:12])
             more = "\n\u2026 and %d more" % (len(found) - 12) if len(found) > 12 else ""
@@ -452,7 +406,6 @@ class AlignProDock(PluginWindow):
             self.layers.remove_all()
         self.p = p
         self.chain.set_project(p.dcs)
-        self.chain_w.setVisible(p.dcs is not None)
         self.set_enabled(True)
         self._set_pname(p.name)
         self.goto_page(0)
@@ -897,7 +850,9 @@ class AlignProDock(PluginWindow):
                   lambda _: self.toast("alignment.json published for CloudPro"))
 
     def reset_project(self):
-        if not ask(self, "Reset the project to the angles, lever arm and settings recorded in the .clraw files?"):
+        if not ask(self, "Reset the mounting angles and lever arm to the values recorded in the .clraw files and the "
+                         "latency to 0? The calibration results, the patch boxes and the line selection are "
+                         "cleared too; the processing settings are kept."):
             return
         self._run("Reset", lambda prog, canc: self.p.reset(), lambda _: self.refresh_all())
 

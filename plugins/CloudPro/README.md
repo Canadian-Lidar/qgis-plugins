@@ -1,6 +1,6 @@
-# CloudPro 1.2.3 – point cloud processing, stage 03 of the DCS chain
+# CloudPro 1.5.0 – point cloud processing, stage 03 of the DCS chain
 
-**Plugins ▸ Canadian Lidar ▸ Data Collection Systems ▸ CloudPro**
+**Plugins ▸ Canadian Lidar ▸ Data Systems ▸ CloudPro**
 
 ```
 JobFolder/  (mapper captures, never changed)
@@ -54,7 +54,7 @@ Older stand-alone projects (`<name>.cloudpro.json`) still open, without the chai
 ## The window
 
 ```
- logo · MENU · 01 PosPro → 02 AlignPro → 03 CloudPro ....... PROJECT ....... inputs · Update
+ logo CloudPro · 01 PosPro → 02 AlignPro → 03 CloudPro ...... inputs · Update · MENU · PROJECT · ⤢ · ?
  tools: hand · selection shape · above/below line · ruler · i | action · inside/outside · class · line | undo · redo · rejected · zoom
  ┌──────────── PLAN ────────────┬───────────── 3D ──────────────┐
  │ project grid, drive lines,   │ orbit, pan, fly, eye-dome     │
@@ -83,7 +83,7 @@ Older stand-alone projects (`<name>.cloudpro.json`) still open, without the chai
 ## Navigation (precise moves)
 
 - **Inspection Area properties** (right click in the Plan): exact centre, length, width and bearing; steps forward / back / left / right by a set distance or the length minus an overlap %; rotation by set degrees; follow a drive line (the area steps along its chainage and turns with it).
-- **Slice:** PgUp / PgDn or ] / [ step it (Shift = 5 steps).
+- **Slice:** PgUp / PgDn or ] / [ step it; Ctrl+PgUp / Ctrl+PgDn or } / { step 5 at a time.
 - **2-D views:** arrow keys pan by the set step, the wheel zooms at the cursor, Shift+wheel sets vertical exaggeration; the scale bar and grid labels are in project coordinates.
 - **3-D:** W/S/A/D/Q/E fly by the set step; 1 top, 2 along, 3 across, 4 oblique, O orthographic; double click sets a new rotation centre.
 - **Pick on map** (MENU): click the QGIS map to centre the Inspection Area there.

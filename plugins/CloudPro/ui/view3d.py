@@ -122,22 +122,29 @@ class CloudView3D(QtWidgets.QWidget):
         return eye_dir, fwd, right, up
 
     # ------------------------------------------------------------ navigation arrows (top left)
-    NAV = 104                              # size of the control in pixels
+    NAV = 52                               # size of the control in pixels (half the 1.3 size)
+
+    @property
+    def _k(self):
+        return self.NAV / 104.0             # every size below was drawn for 104 px
 
     def _nav_geom(self):
         """Centre and the click spots of the arrow heads: key -> (centre point, radius)."""
         n = self.NAV
-        ox, oy = 8, 8
+        k = self._k
+        ox, oy = 6, 6
         c = QtCore.QPointF(ox + n / 2, oy + n / 2)
         a = n * 0.40
         r = n * 0.33
         return c, a, r, {
-            "up": (QtCore.QPointF(c.x(), c.y() - a), 13), "down": (QtCore.QPointF(c.x(), c.y() + a), 13),
-            "left": (QtCore.QPointF(c.x() - a, c.y()), 13), "right": (QtCore.QPointF(c.x() + a, c.y()), 13),
-            "cw": (QtCore.QPointF(c.x() + (r + 8) * math.cos(math.radians(20)),
-                                  c.y() - (r + 8) * math.sin(math.radians(20))), 14),
-            "ccw": (QtCore.QPointF(c.x() + (r + 8) * math.cos(math.radians(240)),
-                                   c.y() - (r + 8) * math.sin(math.radians(240))), 14)}
+            "up": (QtCore.QPointF(c.x(), c.y() - a), max(8, 13 * k)),
+            "down": (QtCore.QPointF(c.x(), c.y() + a), max(8, 13 * k)),
+            "left": (QtCore.QPointF(c.x() - a, c.y()), max(8, 13 * k)),
+            "right": (QtCore.QPointF(c.x() + a, c.y()), max(8, 13 * k)),
+            "cw": (QtCore.QPointF(c.x() + (r + 8 * k) * math.cos(math.radians(20)),
+                                  c.y() - (r + 8 * k) * math.sin(math.radians(20))), max(8, 14 * k)),
+            "ccw": (QtCore.QPointF(c.x() + (r + 8 * k) * math.cos(math.radians(240)),
+                                   c.y() - (r + 8 * k) * math.sin(math.radians(240))), max(8, 14 * k))}
 
     def _nav_hit(self, pos):
         _, _, _, spots = self._nav_geom()
@@ -170,6 +177,7 @@ class CloudView3D(QtWidgets.QWidget):
 
     def _draw_nav(self, p):
         c, a, r, spots = self._nav_geom()
+        k = self._k
         p.save()
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
         p.setPen(Qt.PenStyle.NoPen)
@@ -181,6 +189,7 @@ class CloudView3D(QtWidgets.QWidget):
             return q.lighter(150) if key == self._nav_hot else q
 
         def head(tip, ux, uy, colour, size=11):
+            size *= k
             px, py = -uy, ux
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(colour)
@@ -192,28 +201,28 @@ class CloudView3D(QtWidgets.QWidget):
         # blue: up / down
         for key, sgn in (("up", -1), ("down", 1)):
             q = col(blue, key)
-            p.setPen(QtGui.QPen(q, 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
-            p.drawLine(QtCore.QPointF(c.x(), c.y() + sgn * 5), QtCore.QPointF(c.x(), c.y() + sgn * (a - 9)))
-            head(QtCore.QPointF(c.x(), c.y() + sgn * (a + 3)), 0, sgn, q)
+            p.setPen(QtGui.QPen(q, 4 * k, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+            p.drawLine(QtCore.QPointF(c.x(), c.y() + sgn * 5 * k), QtCore.QPointF(c.x(), c.y() + sgn * (a - 9 * k)))
+            head(QtCore.QPointF(c.x(), c.y() + sgn * (a + 3 * k)), 0, sgn, q)
         for key, sgn in (("left", -1), ("right", 1)):
             q = col(red, key)
-            p.setPen(QtGui.QPen(q, 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
-            p.drawLine(QtCore.QPointF(c.x() + sgn * 5, c.y()), QtCore.QPointF(c.x() + sgn * (a - 9), c.y()))
-            head(QtCore.QPointF(c.x() + sgn * (a + 3), c.y()), sgn, 0, q)
+            p.setPen(QtGui.QPen(q, 4 * k, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+            p.drawLine(QtCore.QPointF(c.x() + sgn * 5 * k, c.y()), QtCore.QPointF(c.x() + sgn * (a - 9 * k), c.y()))
+            head(QtCore.QPointF(c.x() + sgn * (a + 3 * k), c.y()), sgn, 0, q)
         # green arcs: top right clockwise (12 -> 3 o'clock), bottom left anticlockwise (9 -> 6 o'clock)
-        rect = QtCore.QRectF(c.x() - r - 8, c.y() - r - 8, 2 * r + 16, 2 * r + 16)
+        rect = QtCore.QRectF(c.x() - r - 8 * k, c.y() - r - 8 * k, 2 * r + 16 * k, 2 * r + 16 * k)
         for key, start, span, tip_ang in (("cw", 85, -70, 10), ("ccw", 175, 70, 250)):
             q = col(green, key)
-            p.setPen(QtGui.QPen(q, 3.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+            p.setPen(QtGui.QPen(q, 3.5 * k, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawArc(rect, int(start * 16), int(span * 16))
             t = math.radians(tip_ang)
-            tip = QtCore.QPointF(c.x() + (r + 8) * math.cos(t), c.y() - (r + 8) * math.sin(t))
+            tip = QtCore.QPointF(c.x() + (r + 8 * k) * math.cos(t), c.y() - (r + 8 * k) * math.sin(t))
             ux, uy = (math.sin(t), math.cos(t)) if key == "cw" else (-math.sin(t), -math.cos(t))
             head(tip, ux, uy, q, 10)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QtGui.QColor(theme.SURF))
-        p.drawEllipse(c, 4, 4)
+        p.drawEllipse(c, 4 * k, 4 * k)
         p.restore()
 
     def project(self, P):
@@ -445,6 +454,16 @@ class CloudView3D(QtWidgets.QWidget):
             self.center = self.P[j].copy()
             self.pointPicked.emit(j)
             self._changed()
+
+    FLY_KEYS = (Qt.Key.Key_W, Qt.Key.Key_S, Qt.Key.Key_A, Qt.Key.Key_D, Qt.Key.Key_Q, Qt.Key.Key_E)
+
+    def event(self, e):
+        # with the focus here, the fly keys go to keyPressEvent, not to the window's one-letter shortcuts
+        if e.type() == QtCore.QEvent.Type.ShortcutOverride and e.key() in self.FLY_KEYS and \
+                not (e.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)):
+            e.accept()
+            return True
+        return super().event(e)
 
     def keyPressEvent(self, e):
         K = Qt.Key

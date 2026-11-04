@@ -1,11 +1,11 @@
 # AlignPro – Lidar boresight calibration (DCS stage 02)
 
 AlignPro calibrates the Lidar mounting angles of the Canadian Lidar mobile mapper from its `.clraw`
-captures. It is stage 02 of the Data Collection Systems chain:
+captures. It is stage 02 of the Data Collection Systems (DCS) chain:
 
     01 PosPro (trajectory.json)  ->  02 AlignPro (alignment.json)  ->  03 CloudPro (cloud.json + LAS)
 
-Menu: **Plugins ▸ Canadian Lidar ▸ Data Collection Systems ▸ AlignPro**, plus a toolbar button.
+Menu: **Plugins ▸ Canadian Lidar ▸ Data Systems ▸ AlignPro**, plus a toolbar button.
 
 ## Install
 
@@ -19,12 +19,13 @@ QGIS 3.34 or later (QGIS 4 / Qt6 supported). No extra Python packages.
 right of the panel, the project box menu (**User guide (this version)**) and **Help ▸ Plugins ▸ AlignPro
 user guide**. The guide matching the installed version opens; if it is missing, the newest one in `docs/`.
 
-## Panels and docking
+## Window and docking
 
-The AlignPro panel and the Data View dock only when you ask: **right-click the panel's title bar** and
-choose Dock right, Dock left, Dock bottom or Dock top (or Float, Float as a window, Maximise, Close).
-Dragging a panel just moves it; it never snaps into a dock area. Double-click the title of a docked panel
-to float it.
+AlignPro and its Data View open in DCS Core's standard window: floating the first time, docked only when you
+choose Dock right, left, bottom or top from the Window menu (the ⤢ button in the header, or a right-click on
+the title bar). Dragging never docks it. Each window comes back as you left it, also after QGIS restarts;
+Reset window returns to the default. The header is the same as in PosPro and CloudPro: the workflow boxes,
+the project box, the Window button and the user guide.
 
 ## The shared project
 

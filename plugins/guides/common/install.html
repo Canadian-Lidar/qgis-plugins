@@ -1,0 +1,29 @@
+<h1><span class="num">{N}</span>Installing and opening {NAME}</h1>
+<p>{NAME} is one of three QGIS plugins that process a Canadian Lidar mobile mapper job one after the other. All three need the <b>DCS Core</b> plugin, which holds what they share: the job's processing project, the files each stage hands to the next, the look, the header and the window.</p>
+<table>
+<tr><th>Stage</th><th>Plugin</th><th>Reads</th><th>Publishes</th></tr>
+<tr><td>01</td><td><b>PosPro</b></td><td>The mapper captures (<code>.clraw</code> or <code>.anpp</code>), base station data</td><td>The trajectory: <code>trajectory.json</code> with SBET and SMRMSG</td></tr>
+<tr><td>02</td><td><b>AlignPro</b></td><td>The captures and PosPro's trajectory</td><td>The Lidar mounting: <code>alignment.json</code></td></tr>
+<tr><td>03</td><td><b>CloudPro</b></td><td>The captures, the trajectory and the mounting</td><td>The point cloud: <code>cloud.json</code>, LAS 1.4, ground grid, report</td></tr>
+</table>
+
+<h2>Requirements</h2>
+<ul>
+<li>QGIS 3.34 or later, including QGIS 4.</li>
+<li>DCS Core {CORE_VERSION} or later. {NAME} {VERSION} will not start with an older DCS Core: a message bar asks you to update it.</li>
+</ul>
+
+<h2>Install from the Canadian Lidar repository</h2>
+<ol class="steps">
+<li>In QGIS open <span class="ui">Plugins › Manage and Install Plugins › Settings</span>, press <b>Add…</b> and enter the repository URL <code>https://canadian-lidar.github.io/qgis-plugins/plugins.xml</code>.</li>
+<li>Press <b>Reload all Repositories</b>, then install <b>DCS Core</b> first and <b>{NAME}</b> after it.</li>
+<li>Restart QGIS. Later versions appear under <span class="ui">Upgradeable</span> in the same window; update DCS Core together with the plugins.</li>
+</ol>
+<p>Without internet access, use <span class="ui">Install from ZIP</span> in the same window with <code>dcs_core-{CORE_VERSION}.zip</code> first, then the {NAME} zip.</p>
+
+<h2>Opening {NAME}</h2>
+<ul>
+<li><span class="ui">Plugins › Canadian Lidar › Data Systems › {NAME}</span>, or the {NAME} button on the Plugins toolbar.</li>
+<li>From another DCS plugin: click the <b>{NAME}</b> box in its header to open {NAME} on the same project.</li>
+<li>This guide: the <span class="ui">?</span> button in the header, <span class="ui">User guide (this version)</span> in the project box, or <span class="ui">Help › Plugins › {NAME} user guide</span>. The guide that opens always matches the installed version.</li>
+</ul>

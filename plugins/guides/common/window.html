@@ -1,0 +1,25 @@
+<h1><span class="num">{N}</span>The {NAME} window</h1>
+<p>PosPro, AlignPro and CloudPro share the same header and the same kind of window, so what you learn here applies to all three.</p>
+<figure><img src="fig/header.png"><figcaption><b>Figure {N}.1</b> The header. Left: the logo and the plugin name, then the workflow boxes. Right: the project box, the Window button and the user guide button.</figcaption></figure>
+
+<h2>The header</h2>
+<table>
+<tr><th>Part</th><th>What it does</th></tr>
+<tr><td>Workflow boxes<br><span class="mono">01 POSPRO → 02 ALIGNPRO → 03 CLOUDPRO</span></td><td>The state of each stage on the open project: <b>✓</b> published and current, <b>⚠ stale</b> (out of date: an earlier stage was re-run, the raw data or a shared setting changed), <b>running</b>, <b>failed</b>, or <b>–</b> not run yet. Hover a box for the reasons. Click another stage's box to open that plugin on the same project. The boxes refresh every few seconds.</td></tr>
+{EXTRAS_ROW}
+<tr><td>Project box</td><td>The open project's name; click it for the project menu (<a href="#projects">Projects</a>). It turns red while {NAME} is working.</td></tr>
+<tr><td><span class="ui">⤢</span> Window</td><td>The Window menu: Floating window, Maximise, Dock right / left / bottom / top, Reset window, Close{WINDOW_EXTRA}.</td></tr>
+<tr><td><span class="ui">?</span></td><td>Opens this guide.</td></tr>
+</table>
+<p>When the window is narrower than about 1,080 pixels (usually when it is docked) the workflow boxes move to a second row under the header.</p>
+
+<h2>Floating or docked</h2>
+<p>{NAME} opens as a <b>floating window</b> the first time, centred on the QGIS screen, with its own minimise, maximise and close buttons. It docks into the QGIS window only when you choose to:</p>
+<figure class="small"><img src="fig/window_menu.png"><figcaption><b>Figure {N}.2</b> The Window menu, from the <span class="ui">⤢</span> button or a right-click on the title bar.</figcaption></figure>
+<ul>
+<li><b>Dock right, left, bottom or top</b> puts it on that side of the QGIS window. Dragging the window never docks it, so it cannot snap into a corner by accident.</li>
+<li><b>Floating window</b> takes a docked window out again; double-clicking the title bar of a docked window does the same.</li>
+<li><b>Maximise</b> fills the screen; choose it again (it reads <i>Restore window size</i>) to go back.</li>
+<li><b>Reset window</b> returns to the default floating window, centred, at its default size.</li>
+</ul>
+<p>{NAME} remembers how you left it (floating with its place and size, maximised, or docked with its width or height) and opens the same way next time, also after QGIS restarts.</p>

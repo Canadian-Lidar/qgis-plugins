@@ -1,0 +1,613 @@
+<!--#vars {
+"EXTRAS_ROW": "<tr><td>Inputs line</td><td>What the points were georeferenced with, for example <i>PosPro trajectory · AlignPro calibration</i> in green. It turns amber when the inputs are not the best ones (<i>Real-time trajectory</i>, <i>no calibration</i>, <i>entered values</i>), when the points are out of date (<i>Out of date:</i> and the reasons) or before the first georeferencing (<i>No points yet: Menu &gt; Georeference</i>). Hover it to read a long line in full.</td></tr><tr><td><span class='ui'>Update</span></td><td>Shown only while the points are out of date. It opens the Georeference dialog to rebuild the points with the current inputs and carry every manual and filter edit over (<a href='#georef'>Georeferencing</a>).</td></tr><tr><td><span class='ui'>MENU</span></td><td>CloudPro's own menu: Project properties, Georeference, Publish, Export, Save, the QGIS map tools, other captures, the memory limit, Remove all points, Keys and mouse, the user guide (<a href='#window'>Layout, MENU and tool bar</a>).</td></tr>",
+"WINDOW_EXTRA": "",
+"PROJECT_MENU_TABLE": "<table><tr><th>Item</th><th>What it does</th></tr><tr><td><span class='ui'>New job project…</span></td><td>DCS Core's New DCS project dialog (below). The new project opens in CloudPro at once.</td></tr><tr><td><span class='ui'>Open project…</span></td><td>Opens a <code>.dcsproj</code>. An older stand-alone CloudPro project (<code>*.cloudpro.json</code>) can be chosen in the same dialog.</td></tr><tr><td><span class='ui'>Recent</span></td><td>The last ten projects opened in CloudPro.</td></tr><tr><td><span class='ui'>Project properties…</span></td><td>The Project Properties window (also <kbd>Ctrl+R</kbd>; <a href='#props'>Project Properties</a>).</td></tr><tr><td><span class='ui'>Open the project folder</span></td><td>Opens <code>Processing/&lt;Name&gt;/</code> in the file manager.</td></tr><tr><td><span class='ui'>Raw data moved? Relocate the job folder…</span></td><td>Asks for the job folder's new location and finds the captures there again.</td></tr><tr><td><span class='ui'>Save the QGIS project in the project folder</span></td><td>Writes the current QGIS project as <code>&lt;Name&gt;.qgz</code> beside the <code>.dcsproj</code>.</td></tr><tr><td><span class='ui'>User guide (this version)</span></td><td>Opens this guide.</td></tr></table>",
+"AFTER_CREATE": "When the job folder holds survey lines (<code>.clraw</code>; mapper 2.10 navigation recordings are not survey lines), CloudPro opens the Georeference dialog straight away (<a href='#georef'>Georeferencing</a>)."
+}-->
+<style>figure.h56 img{max-height:56mm;max-width:100%}figure.h45 img{max-height:45mm;max-width:100%}figure.h90 img{max-height:90mm;max-width:100%}figure.h55 img{max-height:55mm;max-width:100%}figure.fr{float:right;width:46%;margin:0 0 2mm 5mm}figure.fr img{max-width:100%}figure.h64 img{max-height:64mm;max-width:100%}figure.h100 img{max-height:100mm;max-width:100%}figure.h92 img{max-height:92mm;max-width:100%}figure.h80 img{max-height:80mm;max-width:100%}figure.h50 img{max-height:50mm;max-width:100%}figure.h66 img{max-height:66mm;max-width:100%}figure.h22 img{max-height:22mm;max-width:100%}figure.h30 img{max-height:30mm;max-width:100%}figure.h40 img{max-height:40mm;max-width:100%}figure.h42 img{max-height:42mm;max-width:100%}figure.h52 img{max-height:52mm;max-width:100%}figure.h58 img{max-height:58mm;max-width:100%}figure.h60 img{max-height:60mm;max-width:100%}figure.h62 img{max-height:62mm;max-width:100%}figure.h68 img{max-height:68mm;max-width:100%}figure.h70 img{max-height:70mm;max-width:100%}figure.h72 img{max-height:72mm;max-width:100%}figure.h75 img{max-height:75mm;max-width:100%}figure.h78 img{max-height:78mm;max-width:100%}figure.h82 img{max-height:82mm;max-width:100%}figure.h85 img{max-height:85mm;max-width:100%}figure.h88 img{max-height:88mm;max-width:100%}figure.h95 img{max-height:95mm;max-width:100%}figure.h105 img{max-height:105mm;max-width:100%}figure.h118 img{max-height:118mm;max-width:100%}.pair{display:flex;gap:6mm;align-items:flex-start;justify-content:center;break-inside:avoid}.pair figure{margin:3mm 0}</style>
+<!--#contents-->
+
+<h1><span class="num">{N}</span>Introduction</h1>
+<p>CloudPro is stage 03 of the Canadian Lidar Data Collection Systems (DCS) chain. It turns the Lidar returns recorded by the mobile mapper in <code>.clraw</code> captures into a clean, classified and georeferenced point cloud, and delivers it for the job.</p>
+<ul>
+<li><b>Georeferencing.</b> Every Lidar return is placed at its own firing time, with the trajectory PosPro published and the Lidar mounting, lever arm and latency AlignPro published. Without AlignPro the mounting recorded in the capture is used, and every result says <i>no calibration</i>.</li>
+<li><b>Viewing.</b> A Plan view with the project grid and a rotatable Inspection Area, a Slice view for cross-sections and profiles, and an interactive 3D view, all showing the points of the Inspection Area.</li>
+<li><b>Manual editing.</b> Reject, accept, select or classify points with a rectangle, polygon, lasso or brush, above or below a drawn line, inside or outside the shape.</li>
+<li><b>Automatic filters.</b> 36 filters in groups, with a live preview before anything changes: cell statistics, clips, outliers, snow and rain, ground, height above ground, walls and reflections, moving objects, and the extraction of road markings, curbs, poles, traffic signs, power lines, manhole covers and guardrails.</li>
+<li><b>Keeping up with the chain.</b> When PosPro or AlignPro publish again, <span class="ui">Update</span> rebuilds the points and carries every edit over.</li>
+<li><b>Delivery.</b> Publish writes a LAS 1.4 cloud, an optional ground grid, a report and <code>cloud.json</code> for the job. Export writes LAS, XYZ or grids anywhere.</li>
+</ul>
+<p>The mapper's captures are never changed. Everything CloudPro makes is in the job's processing project, in <code>03_CloudPro/</code>.</p>
+
+<h2>A job in five steps</h2>
+<ol class="steps">
+<li><b>Open the job's project</b> from the project box, or click <span class="ui">03 CloudPro</span> in PosPro's or AlignPro's header. PosPro, and ideally AlignPro, should have published first.</li>
+<li><b>Georeference:</b> <span class="ui">MENU › Georeference / update the points…</span> (<kbd>Ctrl+I</kbd>). Check the trajectory and mounting the dialog shows, then press <span class="ui">Georeference</span>.</li>
+<li><b>Look around:</b> move the Inspection Area in the Plan view; the Slice and 3D views follow it.</li>
+<li><b>Clean and classify:</b> in <span class="ui">Automatic filters</span> choose a group, press <span class="ui">Live preview</span>, check the result, then <span class="ui">Accept</span> or <span class="ui">Run</span> it on the whole project. Correct the rest by hand.</li>
+<li><b>Publish:</b> <span class="ui">MENU › Publish for the job…</span> (<kbd>Ctrl+P</kbd>).</li>
+</ol>
+
+<div style="break-inside:avoid"><h2>What is new</h2>
+<table>
+<tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>1.5.2</b></td><td>Field check before PPK: the Plan grid shows <i>Density</i> (pts/m²) and <i>Coverage</i> against a target density you set (green on target, amber from half, red below), with the share on target, the area covered and the median density; <code>cloudpro info</code> prints the same. Works on the Certus real-time track, before PosPro and AlignPro.</td></tr>
+<tr><td><b>1.5.1</b></td><td>Mapper 2.10 projects: the survey lines are recognised from what the files record, so a line split over several files is one line and older captures grouped into <code>lines/</code> read too, in recording order; navigation recordings are left out. Needs DCS Core 1.4.0.</td></tr>
+<tr><td><b>1.5.0</b></td><td>The same header as the other DCS plugins: logo, plugin name, workflow boxes beside it, then CloudPro's inputs line, <span class="ui">Update</span> and <span class="ui">MENU</span>, the project box, the Window button and the user guide button. The window title is just <i>CloudPro</i>. This rewritten guide, with pictures of this version. The 3D navigation arrows are half the size. Needs DCS Core 1.3.0.</td></tr>
+<tr><td>1.4.0</td><td>DCS Core's standard window: floating the first time, docked only from the Window menu, never by dragging; it comes back as you left it, also after QGIS restarts; <span class="ui">Reset window</span>. Neutral graphite look with lighter view backgrounds. Needs DCS Core 1.2.0.</td></tr>
+<tr><td>1.3.0</td><td><code>.clraw</code> reading, Lidar and INS decoding, SBET and LAS come from DCS Core (shared with AlignPro), as does the Zstandard decoder. A missing Zstandard decoder is reported instead of every chunk counting as damaged. Needs DCS Core 1.1.0.</td></tr>
+<tr><td>1.2.x</td><td>The user guide inside the plugin (1.2.3). The 3D navigation arrows (1.2.2). Cell size of the Plan grid on the tool bar, corner arrow on cycling tool buttons, colour scale bar in every view, linked view colours, tuning of the filters to the sensor precision, point budgets, memory check, autosave (1.2.1). The four-quarter window, Project Properties, the icon tool bar, colour by file and the seven feature extraction filters with classes 67–71 (1.2.0).</td></tr>
+<tr><td>1.1.x</td><td>Part of the DCS chain: the shared project, PosPro's trajectory and AlignPro's mounting, <span class="ui">Update</span> keeping edits, publishing with <code>cloud.json</code>, relocation of a moved job folder, one log per run, editing lock per job.</td></tr>
+</table></div>
+
+<!--#include install-->
+<!--#include window-->
+<!--#include projects-->
+
+<h1 id="georef"><span class="num">{N}</span>Georeferencing</h1>
+<p>CloudPro reads only what PosPro and AlignPro published for the job, and records which results it used. Georeferencing builds CloudPro's point store from the captures; it is needed once per project and again whenever its inputs change.</p>
+
+<h2>The inputs</h2>
+<table>
+<tr><th>Input</th><th>Used</th><th>When it is missing</th></tr>
+<tr><td>Trajectory</td><td>PosPro's <code>01_PosPro/out/trajectory.json</code>: the SBET with its SMRMSG, frame, epoch and GPS week.</td><td>The Certus real-time track recorded in the capture is used, with the warning that it can drift by metres without RTK. Run PosPro, then update.</td></tr>
+<tr><td>Mounting, Lidar lever arm, latency</td><td>AlignPro's <code>02_AlignPro/out/alignment.json</code>, when it uses the mapper's mounting convention.</td><td>The Lidar mounting shared in the project, else the one recorded in each capture; the lever arm recorded in the capture; no latency. Every result says <i>no calibration</i>.</td></tr>
+<tr><td>Captures</td><td>The <code>.clraw</code> files in the project's capture folders (never anything under <code>Processing/</code>).</td><td>A message says no <code>.clraw</code> files were found; use <span class="ui">MENU › Add other .clraw files to the job…</span></td></tr>
+<tr><td>Coordinate system</td><td>The job's shared horizontal CRS, else the one recorded in the capture, else EPSG:2953. Heights are ellipsoidal unless a geoid grid is given.</td><td>Change it in Project Properties › Geodetics.</td></tr>
+</table>
+<p>CloudPro also warns when PosPro's or AlignPro's results are themselves out of date, and when the AlignPro calibration was solved on an earlier PosPro trajectory.</p>
+
+<h2>The Georeference dialog</h2>
+<p>Open it with <span class="ui">MENU › Georeference / update the points…</span> (<kbd>Ctrl+I</kbd>), the <span class="ui">Update</span> button, or by creating a new project on a job folder with captures.</p>
+<figure class="h78"><img src="fig/georef_dialog.png"><figcaption><b>Figure {N}.1</b> The Georeference dialog with PosPro's trajectory and AlignPro's calibration (green). On a project that already has points the button reads <span class="ui">Update georeferencing</span>.</figcaption></figure>
+<table>
+<tr><th>Part</th><th>What it shows or sets</th></tr>
+<tr><td><b>Inputs</b></td><td>Trajectory and its id, Mounting (roll, pitch, heading), Lidar lever arm (forward, starboard, down) and where it came from, Latency, Calibration error (AlignPro's average error, and that of the recorded mounting), the number of captures and lines, the coordinate system. Green is the chain's best input; amber is a fallback. Warnings follow in amber, each starting with <b>!</b>.</td></tr>
+<tr><td><span class="ui">Returns</span></td><td><i>both</i>, <i>last</i> or <i>strongest</i>. <span class="ui">Drop the second return when it repeats the first</span> (on by default).</td></tr>
+<tr><td><span class="ui">Range gate</span></td><td>Returns nearer than the first value or further than the second are not imported (default 1 to 120 m).</td></tr>
+<tr><td><span class="ui">Keep every Nth packet</span></td><td>1 keeps all points; N thins the import by keeping every Nth Lidar packet.</td></tr>
+<tr><td><span class="ui">Geoid</span></td><td>An optional geoid grid (<code>.tif</code>, <code>.gtx</code>) for orthometric heights; empty gives ellipsoidal heights.</td></tr>
+<tr><td><span class="ui">Carry the manual and filter edits over to the new points</span></td><td>Only on a project with points (on by default). Edits are matched by firing time, laser and return, so they follow the points to their new positions.</td></tr>
+</table>
+<p>The point options of the previous georeferencing are filled in again. Press <span class="ui">Georeference</span> (or <span class="ui">Update georeferencing</span>). The work runs in the background; the status strip at the bottom of the window shows the progress and a <span class="ui">Cancel</span> button.</p>
+<figure><img src="fig/progress.png"><figcaption><b>Figure {N}.2</b> The status strip while georeferencing: the current step on the left, the loaded point counts, the progress bar and Cancel on the right.</figcaption></figure>
+<figure class="h42"><img src="fig/georef_done.png"><figcaption><b>Figure {N}.3</b> The result: lines and points, the trajectory and mounting used, and how many edited points were carried over.</figcaption></figure>
+<div class="note"><b>Heights</b> The dialog's <span class="ui">Coordinate system</span> row follows the geoid field: <i>heights ellipsoidal</i> without a grid, <i>heights orthometric (geoid …)</i> with one. Project Properties › Project information and the report show the same afterwards.</div>
+<p>Each run writes a log in <code>03_CloudPro/log/</code> and a line in the History tab.</p>
+
+<h2 id="update">Out of date: Update georeferencing</h2>
+<p>CloudPro compares the PosPro and AlignPro results its points were built with against what those stages have published now, every few seconds. When they differ, or when the georeferencing values in Project Properties were changed, the inputs line turns amber with the reason and the <span class="ui">Update</span> button appears:</p>
+<figure class="h22"><img src="fig/stale.png"><figcaption><b>Figure {N}.4</b> The header when the points are out of date (here after the mounting source was changed in Project Properties).</figcaption></figure>
+<p>The reasons read, for example, <i>PosPro has published a new trajectory since the points were georeferenced</i>, <i>AlignPro has published a calibration (the points use the recorded mounting)</i> or <i>the georeferencing values in Project properties changed</i>. Press <span class="ui">Update</span>, keep <span class="ui">Carry the manual and filter edits over…</span> ticked, and press <span class="ui">Update georeferencing</span>. Then publish again: publishing without updating still leaves CloudPro out of date in the workflow boxes, because <code>cloud.json</code> names the results the points were really built from.</p>
+
+<h2>Fallbacks and your own values</h2>
+<p>When AlignPro has not published, or Project Properties › Survey configuration is set to <span class="ui">Recorded in the capture (no calibration)</span>, the dialog shows the recorded mounting in amber:</p>
+<figure class="h64"><img src="fig/georef_recorded.png"><figcaption><b>Figure {N}.5</b> Georeferencing with the mounting recorded in the capture: <i>no calibration</i>.</figcaption></figure>
+<p>With <span class="ui">Entered here</span> in the same tab, the mounting, lever arm and latency you type are used and the results say <i>entered values</i>. These values are kept in CloudPro's project; the captures are not changed. See <a href="#props">Project Properties</a>.</p>
+
+<h2 id="fieldcheck">Field check: coverage before PPK</h2>
+<p>To see the extent, coverage and density of what was collected (does the area need more lines?) you do not need a post-processed trajectory, a base station or a calibration:</p>
+<ol class="steps">
+<li>Create the project on the job folder (or the mapper project's folder) in CloudPro. Do not run PosPro or AlignPro.</li>
+<li>Georeference. CloudPro uses the Certus real-time track recorded in each capture and the mounting recorded by the mapper, and says so (<i>no calibration</i>, real-time track). With RTK in the field the real-time track is usually good to a few centimetres; without it, expect metres.</li>
+<li>In the Plan, set <span class="ui">Grid</span> to <i>Coverage</i> and enter the density the survey needs in the field beside it (pts/m², remembered). Set the cell size on the tool bar (1 m is a good start). Cells at or above the target are green, from half of it amber, below half red; empty cells show no grid. The corner gives the share of the covered area on target, the area covered and the median density. <i>Density</i> shows the same values on a colour scale.</li>
+</ol>
+<figure class="h56"><img src="fig/coverage.png"><figcaption><b>Figure {N}.6</b> Coverage at 1 m cells with a target of 100 pts/m²: green on target, amber from 50, red below 50. The two crossing passes give the dense centre; density falls with range towards the edges. The points of the Inspection Area are drawn on top.</figcaption></figure>
+<p>Density counts the points kept in the project: rejected points are left out, and a decimation or range limit set when georeferencing lowers it. From the command line, <code>cloudpro info</code> prints the same summary (<code>--target</code>, <code>--cell</code>).</p>
+<p>When PosPro and AlignPro publish later, the points turn out of date; <span class="ui">Update</span> re-georeferences them and keeps your edits (<a href="#update">Out of date</a>).</p>
+
+<h2>Other captures, removing points</h2>
+<ul>
+<li><span class="ui">MENU › Add other .clraw files to the job…</span> picks <code>.clraw</code> files, asks <i>Add N file(s) to the job's captures? The captures are shared by PosPro, AlignPro and CloudPro.</i>, adds them to the shared project and opens the Georeference dialog.</li>
+<li><span class="ui">MENU › Remove all points (keep settings)…</span> deletes the point store and the edits after a confirmation. The captures are not touched; Georeference rebuilds the points. Filter groups, the coordinate system and your entered values are kept.</li>
+</ul>
+
+<h2>Older stand-alone projects</h2>
+<p>A project from CloudPro 1.0 (<code>&lt;name&gt;.cloudpro.json</code>) still opens, without the chain. For it, Georeference and Add other .clraw files open the import dialog, where you choose the inputs yourself; publishing is not available (use Export).</p>
+<figure class="h80"><img src="fig/import_dialog.png"><figcaption><b>Figure {N}.7</b> The import dialog of an older stand-alone project, with two captures added.</figcaption></figure>
+<table>
+<tr><th>Group</th><th>Settings</th></tr>
+<tr><td>1 Recordings</td><td><span class="ui">Add files…</span>, <span class="ui">Add folder…</span> (all <code>.clraw</code> below it), <span class="ui">Remove</span>. One row per recording: line, files, duration, recorded mounting and lever arm.</td></tr>
+<tr><td>2 Trajectory</td><td><span class="ui">PosPro SBET (post-processed, recommended)</span> with the file (an SBET beside the captures is filled in; the SMRMSG next to it is read too) and <span class="ui">Date override</span> for SBET names without a date; or <span class="ui">Certus real-time (packet 20 in the .clraw)</span>. Optional trajectory datum.</td></tr>
+<tr><td>3 Sensor geometry</td><td><span class="ui">Override the mounting and lever arm stored in each .clraw</span>, mounting R / P / H, lever F / S / D, boresight dR / dP / dH; <span class="ui">Load AlignPro / mapper result…</span> reads them from a JSON file.</td></tr>
+<tr><td>4 Points</td><td>Returns, duplicate second returns, range gate, every Nth packet, geoid, as in the Georeference dialog.</td></tr>
+</table>
+
+<h2>CloudPro's folder</h2>
+<table>
+<tr><th>Path in <code>03_CloudPro/</code></th><th>Holds</th></tr>
+<tr><td><code>cloudpro.json</code></td><td>CloudPro's settings: lines, inputs used, view, history, filter runs, entered values.</td></tr>
+<tr><td><code>filters/groups.json</code></td><td>The filter groups of this project.</td></tr>
+<tr><td><code>work/store/</code></td><td>The point store in 50 m tiles and the project grids. A cache of the raw data: it can be deleted, Georeference rebuilds it (the edits are lost then).</td></tr>
+<tr><td><code>work/lines/</code></td><td>The sensor track of each line.</td></tr>
+<tr><td><code>out/</code></td><td>What Publish delivers (<a href="#publish">Publishing</a>).</td></tr>
+<tr><td><code>log/</code></td><td>One log per run (georeference, filter, tune, publish).</td></tr>
+</table>
+<p>While a job's cloud is open in CloudPro it is locked for editing: a second QGIS that opens the same project is told <i>This job's point cloud is open elsewhere</i> and does not open it. Georeferencing, project-wide filter runs and publishing also hold the stage lock, which shows CloudPro as <b>running</b> in the workflow boxes.</p>
+
+<h1 id="window"><span class="num">{N}</span>Layout, MENU and tool bar</h1>
+<figure><img src="fig/main_window.png"><figcaption><b>Figure {N}.1</b> CloudPro on a job: the header, the tool bar, the four quarters (Plan, 3D, Slice, the tabs) and the status strip.</figcaption></figure>
+<table>
+<tr><th>Part</th><th>What it holds</th></tr>
+<tr><td>Header</td><td>Workflow boxes, inputs line, <span class="ui">Update</span>, <span class="ui">MENU</span>, project box, Window and user guide buttons (chapter 3).</td></tr>
+<tr><td>Tool bar</td><td>Tools, edit action, undo, display settings (below). Drag its grip (the dots on the left) to move it to another side or float it.</td></tr>
+<tr><td>Plan (top left)</td><td>The whole project as a grid, the drive lines, the Inspection Area and its points from above.</td></tr>
+<tr><td>Slice (bottom left)</td><td>A thin slab of the Inspection Area from the side: a cross-section or a profile.</td></tr>
+<tr><td>3D (top right)</td><td>The Inspection Area, or only the slice, in 3D.</td></tr>
+<tr><td>Tabs (bottom right)</td><td><span class="ui">Automatic filters</span>, <span class="ui">Lines · Classes · Info</span>, <span class="ui">History</span>.</td></tr>
+<tr><td>Status strip</td><td>Messages on the left; the cursor position (E and N in the Plan; chainage or offset and Z in the Slice); the points loaded, rejected and selected; the progress bar and <span class="ui">Cancel</span> while a task runs.</td></tr>
+</table>
+<p>Drag the lines between the quarters to resize them. All three views show only the points inside the <b>Inspection Area</b>, the box you work in; the Plan's background grid is the only thing drawn from the whole project.</p>
+
+<h2>MENU</h2>
+<figure class="h60"><img src="fig/main_menu.png"><figcaption><b>Figure {N}.2</b> MENU.</figcaption></figure>
+<table>
+<tr><th>Item</th><th>Key</th><th>Does</th></tr>
+<tr><td>Project properties (information, geodetics, survey configuration, files)…</td><td><kbd>Ctrl+R</kbd></td><td><a href="#props">Project Properties</a></td></tr>
+<tr><td>Georeference / update the points…</td><td><kbd>Ctrl+I</kbd></td><td><a href="#georef">Georeferencing</a></td></tr>
+<tr><td>Publish for the job (LAS, ground grid, cloud.json)…</td><td><kbd>Ctrl+P</kbd></td><td><a href="#publish">Publishing</a></td></tr>
+<tr><td>Export (LAS, XYZ, grid) anywhere…</td><td><kbd>Ctrl+E</kbd></td><td><a href="#export">Export</a></td></tr>
+<tr><td>Save</td><td><kbd>Ctrl+S</kbd></td><td>Saves the project, the view and the filter groups. Edits are written to disk as you make them, and CloudPro saves quietly every 2 minutes.</td></tr>
+<tr><td>Pick the Inspection Area on the QGIS map</td><td></td><td rowspan="2"><a href="#qgis">QGIS layers</a></td></tr>
+<tr><td>Add the drive lines and Inspection Area to QGIS</td><td></td></tr>
+<tr><td>Add other .clraw files to the job…</td><td></td><td><a href="#georef">Georeferencing</a></td></tr>
+<tr><td>Memory limit (points loaded at once)…</td><td></td><td><a href="#large">Large areas</a></td></tr>
+<tr><td>Remove all points (keep settings)…</td><td></td><td><a href="#georef">Georeferencing</a></td></tr>
+<tr><td>Keys and mouse</td><td><kbd>F1</kbd></td><td>A summary of the keys and mouse actions (<a href="#keys">Reference</a>).</td></tr>
+<tr><td>User guide (this version)</td><td><kbd>Shift+F1</kbd></td><td>This guide.</td></tr>
+</table>
+
+<h2>The tool bar</h2>
+<figure><img src="fig/toolbar.png"><figcaption><b>Figure {N}.3</b> The tool bar: tools, action, inside / outside, line list, undo / redo, rejected points, zoom, and the display settings.</figcaption></figure>
+<table>
+<tr><th>Button</th><th>Options (key)</th></tr>
+<tr><td>Hand</td><td>Pan (<kbd>Space</kbd>): drag to move the view; in the Plan, move, resize and rotate the Inspection Area.</td></tr>
+<tr><td>Selection shape</td><td>Rectangle (<kbd>G</kbd>), Polygon (<kbd>P</kbd>), Lasso (<kbd>L</kbd>), Brush (<kbd>B</kbd>).</td></tr>
+<tr><td>Line</td><td>Above a line (<kbd>U</kbd>), Below a line (<kbd>J</kbd>).</td></tr>
+<tr><td>Ruler</td><td>Measure (<kbd>M</kbd>): distance, bearing, height difference, slope.</td></tr>
+<tr><td>i</td><td>Point information (<kbd>I</kbd>): click a point.</td></tr>
+<tr><td>Action</td><td>Reject (<kbd>X</kbd>, red), Accept (<kbd>V</kbd>), Select (<kbd>S</kbd>), Classify (<kbd>K</kbd>, with the class list next to it), Filter (<kbd>F</kbd>: runs the current filter group on the shape).</td></tr>
+<tr><td>Inside / outside</td><td>Edit the points inside the shape, or the visible points outside it.</td></tr>
+<tr><td>Class list</td><td>Shown with Classify: the class it sets (1–7, 9, 11, 14, 18, 64–71).</td></tr>
+<tr><td>Line list</td><td><i>All lines</i>, or <i>Only L1</i>, <i>Only L2</i>…: edits and line-limited filter runs leave the other lines alone.</td></tr>
+<tr><td>Undo, Redo</td><td><kbd>Ctrl+Z</kbd>, <kbd>Ctrl+Y</kbd>. The Undo tooltip names the step it would undo.</td></tr>
+<tr><td>Eye</td><td>Rejected points shown in red, or hidden (<kbd>H</kbd>).</td></tr>
+<tr><td>Magnifier</td><td>Zoom all views to the Inspection Area (<kbd>Ctrl+Home</kbd>).</td></tr>
+<tr><td><span class="ui">Cell</span></td><td>Cell of the project grid under the Plan: 0.5, 1, 2, 2.5, 5, 10, 12.5 or 25 m (the stored 0.5 m grid summed into larger cells).</td></tr>
+<tr><td><span class="ui">Point</span></td><td>Point size in pixels (1–6).</td></tr>
+<tr><td><span class="ui">Brush</span></td><td>Brush radius in pixels (2–200).</td></tr>
+<tr><td><span class="ui">Colours</span></td><td>Colour ramp for height, intensity and range: Rainbow, Viridis, Terrain, Mint, Grey.</td></tr>
+</table>
+<p>Buttons with a small triangle in the corner hold several options. The first click on an inactive one makes it active; each further click switches to its next option. Click the corner triangle, or right-click the button, for the list:</p>
+<figure class="h30"><img src="fig/tool_options.png"><figcaption><b>Figure {N}.4</b> The option lists of the selection shape, line, action and inside / outside buttons.</figcaption></figure>
+<p>Choosing an action while the hand, ruler or i is active switches to the last selection shape, ready to draw. Hover any button for its name and key.</p>
+
+<h1 id="views"><span class="num">{N}</span>Views and navigation</h1>
+
+<h2>Plan</h2>
+<figure class="h66"><img src="fig/plan.png"><figcaption><b>Figure {N}.1</b> The Plan: the project grid (mean height, hill shaded, its scale on the right), the two drive lines L1 and L2, the Inspection Area with its handles under the mouse, the two lines of the slice, and the colour scale bar of the points (left).</figcaption></figure>
+<p>The Plan header has <span class="ui">Grid</span> (the background of the whole project: <i>Mean height</i>, <i>Max height</i>, <i>Min height</i>, <i>Span</i>, <i>Hit count</i>, <i>Density</i> (pts/m²), <i>Coverage</i> against a target density (see <a href="#fieldcheck">Field check</a>), <i>Reject count</i>, <i>Intensity</i> or <i>None</i>), and the colour controls every view has (<a href="#colours">Colours</a>). The grid is dimmed so the points of the Inspection Area stand out on top; heights are hill shaded. Edits update the grid within a few seconds.</p>
+<p>Each drive line is drawn in its line colour, labelled at its start (L1, L2…) with an arrow at its end. The slice is shown as two thin lines across or along the Inspection Area.</p>
+
+<h3>The Inspection Area</h3>
+<p>With the Pan tool:</p>
+<ul>
+<li>Drag the dashed <b>edge</b> to move the area, a <b>corner</b> to resize it, the <b>round handle</b> beyond its front to rotate it. The handles appear when the mouse is over the area; while you drag, its centre, size and bearing are shown. The points are loaded when you release.</li>
+<li><kbd>Shift</kbd> + drag anywhere draws a new area along the drag, keeping the width.</li>
+<li>Drag elsewhere to pan the view; the wheel zooms at the cursor.</li>
+</ul>
+<div class="pair"><figure class="h70" style="width:44%"><img src="fig/plan_menu.png"><figcaption><b>Figure {N}.2</b> Right-click in the Plan.</figcaption></figure><figure class="h70" style="width:44%"><img src="fig/area_props.png"><figcaption><b>Figure {N}.3</b> The Inspection Area by numbers, here following line L1.</figcaption></figure></div>
+<p>Right-click in the Plan for <span class="ui">Place the Inspection Area here</span>, <span class="ui">Inspection Area properties…</span>, <span class="ui">Place the slice here</span>, <span class="ui">Align the Inspection Area with the nearest line</span> (centred on the nearest drive line and turned along it), <span class="ui">Zoom to the Inspection Area</span>, <span class="ui">Zoom to the whole project</span>, the <span class="ui">Tool</span> list and <span class="ui">Zoom to the points</span>. With a selection, a <span class="ui">Selection</span> submenu comes first (<a href="#editing">Manual editing</a>).</p>
+
+<h3>Inspection Area properties</h3>
+<p>This window stays open beside the views. Every change applies at once.</p>
+<table>
+<tr><th>Group</th><th>Settings</th></tr>
+<tr><td>Position and size</td><td>Centre E and N, length and width, bearing of the long axis (degrees clockwise from grid north).</td></tr>
+<tr><td>Stepping (<kbd>Shift</kbd> + arrows in the views)</td><td><span class="ui">Step</span> in metres, or <span class="ui">Step = length</span>: forward and back by the length, left and right by the width, less the <span class="ui">Overlap</span> %. <span class="ui">Rotate step</span> in degrees. Buttons <span class="ui">Forward</span>, <span class="ui">Back</span>, <span class="ui">Right</span>, <span class="ui">Left</span>, <span class="ui">Rotate +</span>, <span class="ui">Rotate -</span>.</td></tr>
+<tr><td><span class="ui">Follow</span></td><td><i>Free (straight steps)</i> or a drive line: the area moves onto the line, steps along its chainage and turns with it. The chainage is shown below (<i>L1 chainage 51.62 m of 123.6</i>).</td></tr>
+<tr><td>Go to / views</td><td><span class="ui">Centre on</span> E and N, then <span class="ui">Go</span>. <span class="ui">Arrow / fly step</span>: the distance the arrow keys pan the 2-D views and W / A / D / Q / E move the 3D view.</td></tr>
+</table>
+<p>In the Lines list, right-click a line and choose <span class="ui">Inspection Area follows this line</span> for the same.</p>
+
+<h2>Slice</h2>
+<figure class="h55"><img src="fig/slice.png"><figcaption><b>Figure {N}.4</b> A 1 m cross-section through a pole. The dot marked L1 / L2 is where the drive lines cross the slice, at sensor height.</figcaption></figure>
+<p>The Slice view shows a slab of the Inspection Area from the side: a <b>cross-section</b> across the area, looking along it, or a <b>profile</b> along the area, seen from the side. The bar above the view:</p>
+<table>
+<tr><th>Control</th><th>Does</th></tr>
+<tr><td>Direction button</td><td>Cross-section or profile (click to switch).</td></tr>
+<tr><td>Rotate</td><td>Rotate the slice 90 degrees (cross-section ↔ profile).</td></tr>
+<tr><td>Whole area</td><td>The profile covers the full width of the area.</td></tr>
+<tr><td><span class="ui">Thick</span></td><td>Slice thickness.</td></tr>
+<tr><td><span class="ui">Step</span>, Step = thickness</td><td>The step of previous / next. With <i>Step = thickness</i> on, the step follows the thickness, so slices follow each other without gaps.</td></tr>
+<tr><td>‹  slider  ›</td><td>Previous slice, the position in the area, next slice. The position is shown on the right as chainage (cross-section) or offset from the axis (profile).</td></tr>
+</table>
+<p>Step with <kbd>PgUp</kbd> / <kbd>PgDn</kbd>, <kbd>]</kbd> / <kbd>[</kbd> or <kbd>.</kbd> / <kbd>,</kbd>; five steps at a time with <kbd>Ctrl+PgUp</kbd> / <kbd>Ctrl+PgDn</kbd> or <kbd>}</kbd> / <kbd>{</kbd>. When a cross-section walks past the end of the area, the area moves on by half its length (along the line it follows, if any), so a corridor can be walked one slice at a time. Right-click in the Slice for <span class="ui">Rotate the slice 90 degrees</span>, <span class="ui">Previous slice</span> and <span class="ui">Next slice</span>; <span class="ui">Place the slice here</span> in the Plan puts it under the mouse. <kbd>Shift</kbd> + wheel sets the vertical exaggeration (shown next to the scale bar).</p>
+<figure class="h50"><img src="fig/slice_profile.png"><figcaption><b>Figure {N}.5</b> A profile along the area through two poles. In a profile the drive lines are drawn at sensor height.</figcaption></figure>
+
+<h2>3D</h2>
+<figure class="h58"><img src="fig/view3d.png"><figcaption><b>Figure {N}.6</b> The 3D view, oblique: the navigation arrows top left, the colour scale bar, the Inspection Area outline, the drive lines and the axes (E, N, U) bottom left.</figcaption></figure>
+<p>The header has what to show (<i>Inspection Area</i> or <i>Slice</i>), four view presets (top <kbd>1</kbd>, look across to see the side <kbd>2</kbd>, look along the area <kbd>3</kbd>, oblique <kbd>4</kbd>), eye-dome lighting (depth shading, on by default) and the colour controls.</p>
+<figure class="small" style="float:right;width:28%;margin:0 0 2mm 4mm"><img src="fig/nav_arrows.png" style="max-width:100%"><figcaption><b>Figure {N}.7</b> The navigation arrows.</figcaption></figure>
+<p><b>Navigation arrows.</b> Click an arrow head to turn the cloud that way: <b>blue</b> tips it up or down (into the page), <b>red</b> turns it left or right, <b>green</b> turns the picture clockwise or anticlockwise on the screen. Each click turns 10°; hold the button to keep turning. The presets undo any on-screen turn.</p>
+<p><b>Mouse.</b> Left drag orbits; <kbd>Shift</kbd> + left drag or middle drag pans; the wheel zooms; <kbd>Ctrl</kbd> + wheel scales Z (shown as <i>Z x2.0</i>); double-click a point to make it the centre (its information appears in the Info tab); right drag draws a lasso, or a rectangle when the Rectangle tool is active, and applies the current action.</p>
+<p><b>Keys</b> (click the view first): <kbd>W</kbd> / <kbd>A</kbd> / <kbd>D</kbd> fly forward, left and right and <kbd>Q</kbd> / <kbd>E</kbd> down and up, by the arrow / fly step; <kbd>O</kbd> switches orthographic projection; <kbd>0</kbd> or <kbd>Home</kbd> fits the points; <kbd>+</kbd> / <kbd>-</kbd> zoom; <kbd>Esc</kbd> cancels a selection.</p>
+<div class="note"><b>Flying</b> <kbd>W</kbd> <kbd>S</kbd> <kbd>A</kbd> <kbd>D</kbd> <kbd>Q</kbd> <kbd>E</kbd> fly while the 3D view has the keyboard: click in it first. Elsewhere <kbd>S</kbd> is the key for the Select action.</div>
+<p>The 3D view is drawn without graphics drivers, so it works on any computer. While you move, it draws fewer points to stay fluid; a still frame that would take more than about 0.3 s also draws a part only and says <i>showing N %</i> beside the title (<a href="#large">Large areas</a>).</p>
+
+<h2 id="colours">Colours, scale bars and linking</h2>
+<p>Each view has its own <span class="ui">Colour</span>, a scale bar button and <span class="ui">Link</span>:</p>
+<table>
+<tr><th>Colour</th><th>Points coloured by</th></tr>
+<tr><td>Height</td><td>Height, with the ramp chosen in <span class="ui">Colours</span>.</td></tr>
+<tr><td>Intensity, Intensity (range normalised)</td><td>Intensity (grey when the ramp is Rainbow), or intensity × (range / 10 m)².</td></tr>
+<tr><td>Classification</td><td>The class colour (<a href="#classes">classes table</a>).</td></tr>
+<tr><td>Line, File</td><td>The line's colour, or one colour per <code>.clraw</code> file.</td></tr>
+<tr><td>Return</td><td>Green last or single return, amber strongest.</td></tr>
+<tr><td>Channel</td><td>The laser (1–32).</td></tr>
+<tr><td>Time, Range</td><td>Firing time (UTC), distance from the Lidar.</td></tr>
+</table>
+<p>On top of any scheme: rejected points are red; in a filter preview, orange points will be rejected and green ones re-accepted; selected points are white.</p>
+<figure class="h80"><img src="fig/colours.png"><figcaption><b>Figure {N}.8</b> Plan coloured by classification, with the Slice linked to it (<span class="ui">Link: = Plan</span>; its own Colour list is greyed out). Each scale bar lists the classes in the Inspection Area with their point counts.</figcaption></figure>
+<ul>
+<li><b>Scale bar</b> (the bar icon): a ramp with values (absolute heights in metres, intensity, UTC time, range or laser), or the classes, lines or files present with their counts, followed by rows for rejected, preview and selected points.</li>
+<li><b>Link</b>: <i>Own</i>, or <i>= Plan</i>, <i>= Slice</i>, <i>= 3D</i>: the view follows that view's scheme and scale. A view cannot follow one that follows it. Scales are computed over the whole Inspection Area, so linked views agree.</li>
+</ul>
+<figure class="h42"><img src="fig/view3d_intensity.png"><figcaption><b>Figure {N}.9</b> The 3D view coloured by intensity.</figcaption></figure>
+
+<h2>What is shown</h2>
+<ul>
+<li><b>Lines</b>: untick a line in <span class="ui">Lines · Classes · Info</span> to hide its points in every view.</li>
+<li><b>Classes</b>: untick a class there to hide it.</li>
+<li><b>Files</b>: Project Properties › Project files hides a file's points (<span class="ui">Points</span>) or its drive line (<span class="ui">Track</span>).</li>
+<li><b>Rejected points</b>: the eye button or <kbd>H</kbd>.</li>
+</ul>
+<p>Hidden points are not edited, by hand or by a filter run from a shape.</p>
+
+<h2>2-D view controls</h2>
+<p>In the Plan and the Slice: the wheel zooms at the cursor; middle drag pans with any tool; double-click centres there; <kbd>Home</kbd> zooms to the points; <kbd>+</kbd> / <kbd>-</kbd> zoom; the arrow keys pan by the arrow / fly step; <kbd>Shift</kbd> + arrow keys step the Inspection Area (forward, back, left, right) and <kbd>Shift+PgUp</kbd> / <kbd>Shift+PgDn</kbd> step it forward and back. Grid labels and the scale bar are in project coordinates.</p>
+
+<h2 id="large">Large areas</h2>
+<ul>
+<li><b>Memory check.</b> Before an Inspection Area is loaded, its number of points is estimated from the project grids. Above the limit (15 million points by default; <span class="ui">MENU › Memory limit (points loaded at once)…</span>, 1 to 500 million) CloudPro asks first. If you decline, the status strip says <i>Not loaded: make the Inspection Area smaller</i>.</li>
+<li><b>Point budgets.</b> While you pan, zoom or orbit, each view draws only as many points as keep it near 30 frames per second, measured from its own drawing times. The points are loaded in random order, so the part drawn is an even sample. Selecting and editing always use every point.</li>
+<li><b>Tiles.</b> The point store is made of 50 m tiles; only the tiles that touch the Inspection Area are read.</li>
+</ul>
+
+<h1 id="editing"><span class="num">{N}</span>Manual editing</h1>
+<ol class="steps">
+<li>Choose what the shape does with the action button: Reject (<kbd>X</kbd>), Accept (<kbd>V</kbd>), Select (<kbd>S</kbd>), Classify (<kbd>K</kbd>, then the class in the list next to it) or Filter (<kbd>F</kbd>).</li>
+<li>Choose <i>inside</i> or <i>outside</i>, and in the line list <i>All lines</i> or one line.</li>
+<li>Choose a shape and draw it in the Plan or the Slice, or right-drag in 3D.</li>
+</ol>
+<table>
+<tr><th>Shape</th><th>How to draw it</th></tr>
+<tr><td>Rectangle</td><td>Drag a box.</td></tr>
+<tr><td>Polygon</td><td>Click the corners; right-click, <kbd>Enter</kbd> or double-click to finish. <kbd>Backspace</kbd> removes the last corner.</td></tr>
+<tr><td>Lasso</td><td>Draw freehand while holding the button.</td></tr>
+<tr><td>Brush</td><td>Paint over the points; the circle shows the brush radius (<span class="ui">Brush</span> on the tool bar).</td></tr>
+<tr><td>Above / below a line</td><td>In the Slice, click the points of a line; right-click, <kbd>Enter</kbd> or double-click to finish. Everything above (or below) the line, between its two ends, is edited. The side that will be edited is shaded while you draw.</td></tr>
+</table>
+<p><kbd>Esc</kbd> cancels a shape. The points edited are the visible points inside the shape, or with <i>outside</i> the visible points outside it.</p>
+<figure class="h52"><img src="fig/line_tool.png"><figcaption><b>Figure {N}.1</b> Drawing a line with <i>Below a line</i> in the Slice: the shaded side below the dashed line will be edited when the line is finished.</figcaption></figure>
+
+<h2>Selecting</h2>
+<p>With Select, the points in the shape turn white and the status strip gives their number; hold <kbd>Shift</kbd> to add to the selection. Then right-click a view:</p>
+<figure class="fr"><img src="fig/selection_menu.png"><figcaption><b>Figure {N}.2</b> Right-click in the Slice with a selection: the Selection submenu, then the Slice's own items, the Tool list and Zoom to the points.</figcaption></figure>
+<p><span class="ui">Reject the selection</span>, <span class="ui">Accept the selection</span>, <span class="ui">Classify the selection as</span> (a class), <span class="ui">Run the filter group on the selection</span>, <span class="ui">Clear the selection</span>. <kbd>Delete</kbd> rejects the selection; <kbd>Ctrl+D</kbd> clears it.</p>
+<figure class="h50"><img src="fig/select.png"><figcaption><b>Figure {N}.3</b> A pole selected in the Slice (white).</figcaption></figure>
+
+<h2>Filter on a shape</h2>
+<p>With the Filter action, the current filter group of the Automatic filters tab runs on the points in the shape only (all loaded points still count as neighbours), and its result is applied at once. This is a quick way to clean one spot with, for example, an outlier filter.</p>
+
+<h2>Measure and point information</h2>
+<p>With the ruler (<kbd>M</kbd>), click two points. In the Plan it gives the distance and the bearing; in the Slice the horizontal and vertical differences, the slope in % and the distance. The result also appears in the status strip; <kbd>Esc</kbd> clears it.</p>
+<figure class="h50"><img src="fig/measure.png"><figcaption><b>Figure {N}.4</b> Measuring the height of a pole in the Slice.</figcaption></figure>
+<p>With the i tool (<kbd>I</kbd>), click a point: its coordinates, time, line, file, laser, return, range, azimuth, intensity, class and status appear in the Info tab (<a href="#tabs">Lines · Classes · Info</a>). A crosshair marks the point under the mouse.</p>
+
+<h2>Undo, rejected points</h2>
+<ul>
+<li>Every edit is written to the point store at once and listed in the History tab. Undo (<kbd>Ctrl+Z</kbd>) and redo (<kbd>Ctrl+Y</kbd>) have no fixed number of steps; up to 60 million changed points are kept, after which the oldest steps are dropped.</li>
+<li>Rejected points are never deleted. Each keeps the reason it was rejected: <i>manual</i>, <i>automatic</i> (a filter) or <i>original</i>. The filter <i>Reset modifications</i> re-accepts by reason, so it can, for example, take back only the automatic rejections.</li>
+<li>Making an edit while a filter preview is shown ends the preview without accepting it.</li>
+</ul>
+
+<h1 id="filters"><span class="num">{N}</span>Automatic filters</h1>
+<p>Filters are kept in <b>groups</b>. A group runs its filters in order, each on the result of the one before. Nothing changes until you accept the preview or run the group.</p>
+<figure class="h66"><img src="fig/filters.png"><figcaption><b>Figure {N}.1</b> The Automatic filters tab with the group <i>Feature extraction</i> and its sixth filter, <i>Poles (voxel layers)</i>.</figcaption></figure>
+<table>
+<tr><th>Row</th><th>Controls</th></tr>
+<tr><td><span class="ui">Group</span></td><td>The group list; <span class="ui">?</span> explains the group and lists its filters; the menu button ☰ (below).</td></tr>
+<tr><td><span class="ui">Filter</span></td><td>The switch turns the filter on or off (off filters are skipped and marked <i>(off)</i>); the list of the group's filters, numbered in running order; <span class="ui">?</span> gives what the filter does, every setting and the source paper; <span class="ui">+</span> adds a filter after this one, <span class="ui">−</span> removes it, the copy button duplicates it, the arrows run it earlier or later.</td></tr>
+<tr><td>Settings</td><td>The selected filter's settings fill the space below. Hover a setting for its help. Every filter ends with <span class="ui">Only classes</span> and <span class="ui">Only lines</span> (comma lists such as <code>1,2</code> or <code>1,3-4</code>; empty = all).</td></tr>
+<tr><td>Bottom</td><td><span class="ui">Live preview</span>, <span class="ui">Pause</span>, <span class="ui">Accept</span>, <span class="ui">Scope</span>, <span class="ui">Run</span>, and the result of the last preview or run.</td></tr>
+</table>
+
+<h2>Preview, accept, run</h2>
+<ol class="steps">
+<li>Choose a group, and the <span class="ui">Scope</span>: <i>Inspection Area</i>, <i>Slice</i>, <i>Selected lines (whole project)</i> or <i>Entire project</i>.</li>
+<li>Press <span class="ui">Live preview</span>. The group runs in the background on the loaded points (on the slice only with the scope <i>Slice</i>) and the views show the result: orange points will be rejected, green ones re-accepted, and the Classes list and Classification colours show the previewed classes. The result line gives the counts, the time of each filter and their messages.</li>
+<li>Change settings: the preview updates by itself shortly after each change. Press <span class="ui">Pause</span> while you change several, and again to update.</li>
+<li>Press <span class="ui">Accept</span> to commit the previewed changes to the loaded points (one undo step), or <span class="ui">Live preview</span> again to drop the preview.</li>
+<li>Or press <span class="ui">Run</span> to apply the group to the scope directly.</li>
+</ol>
+<figure><img src="fig/preview_features.png"><figcaption><b>Figure {N}.2</b> Live preview of the group <i>Feature extraction</i>: Plan, Slice and 3D coloured by classification show the poles (65) and road markings (68) found; the result line lists the time of each filter and what it found.</figcaption></figure>
+<figure class="h70"><img src="fig/preview_reject.png"><figcaption><b>Figure {N}.3</b> Preview of the group <i>Snow and rain</i>: orange points would be rejected; green ones, rejected by an earlier run, would be re-accepted by its first filter, <i>Reset modifications</i>.</figcaption></figure>
+<table>
+<tr><th>Scope</th><th>Run</th></tr>
+<tr><td>Inspection Area, Slice</td><td>Runs in the background on the loaded points; one undo step.</td></tr>
+<tr><td>Selected lines (whole project)</td><td rowspan="2">Asks first, then edits the stored points tile by tile (50 m tiles with a 10 m buffer, so neighbourhood filters see across tile edges). <i>Selected lines</i> are the line chosen in the tool bar's line list, else the lines ticked in the Lines list. The run is one undo step when it changes up to 20 million points; above that it cannot be undone (on projects of 20 million points or more the question says so): <i>Reset modifications</i> then re-accepts automatic rejections.</td></tr>
+<tr><td>Entire project</td></tr>
+</table>
+<p>Every accepted preview and run is recorded with its group, settings, scope and number of points changed; Publish writes these into the report and <code>cloud.json</code>.</p>
+
+<h2>Groups</h2>
+<div class="pair"><figure class="h62" style="width:52%"><img src="fig/group_menu.png"><figcaption><b>Figure {N}.4</b> The group menu (☰) with the ready-made groups.</figcaption></figure><figure class="h62" style="width:40%"><img src="fig/add_menu.png"><figcaption><b>Figure {N}.5</b> <span class="ui">+</span> lists the filters by kind; hover one for what it does.</figcaption></figure></div>
+<table>
+<tr><th>Item</th><th>Does</th></tr>
+<tr><td>Tune the filters to the sensor precision and this data…</td><td>See <a href="#tune">Tuning</a>.</td></tr>
+<tr><td>New empty group, Duplicate this group</td><td>Adds a group (the copy is named <i>(copy)</i>).</td></tr>
+<tr><td>Add a ready-made group</td><td>Adds a fresh copy of one of the groups below.</td></tr>
+<tr><td>Rename…</td><td>Renames the group.</td></tr>
+<tr><td>Mode</td><td><i>Combined</i>: all lines filtered together (lines that fit well). <i>Individually</i>: each line filtered on its own (lines that do not fit in height). <i>Reset modifications</i> and <i>Edit classification</i> always run combined.</td></tr>
+<tr><td>Import group (JSON)…, Export group (JSON)…</td><td>Share groups between projects.</td></tr>
+<tr><td>Save groups with the project</td><td>Writes <code>filters/groups.json</code> (Save and the 2-minute autosave do the same).</td></tr>
+<tr><td>Delete this group…</td><td>After a confirmation; the last group cannot be deleted.</td></tr>
+</table>
+<p>Ready-made groups added in a later version are added to older projects' lists automatically.</p>
+<table>
+<tr><th>Ready-made group</th><th>Filters, in order</th></tr>
+<tr><td>Mobile mapping - standard clean</td><td>Reset modifications · Vehicle self-hits · Isolated cluster (0.5 m, fewer than 8 points) · Statistical outlier (k 12, SD multiplier 3) · Snow / rain / dust (DIOR) · SMRF · Height above ground (reject more than 0.25 m below ground)</td></tr>
+<tr><td>Snow and rain</td><td>Reset modifications · Snow / rain / dust (DIOR, intensity threshold 20) · Isolated cluster (0.4 m, fewer than 5 points) · Low hit count (0.4 m, fewer than 3)</td></tr>
+<tr><td>Ground and vegetation classes</td><td>Inverted cloth (0.5 m, clip 0.2 m) · Height above ground (classify vegetation) · Vertical plane (classify walls, nothing behind)</td></tr>
+<tr><td>Moving objects (multi-pass)</td><td>Moving objects / ghosts · Isolated cluster (fewer than 20 points)</td></tr>
+<tr><td>Feature extraction (road and street furniture)</td><td>SMRF · Road markings · Manhole covers · Curbs · Traffic signs · Poles · Power lines · Guardrails</td></tr>
+<tr><td>Road surface QA</td><td>Surface fit (class 2, gate 0.05 m) · 95% confidence level (class 2, limit 0.04 m)</td></tr>
+</table>
+
+<h2>Adding filters and their help</h2>
+<figure class="h70"><img src="fig/filter_help.png"><figcaption><b>Figure {N}.6</b> The <span class="ui">?</span> of a filter: what it does, its source and every setting.</figcaption></figure>
+<p>Filters that need a reference raster (<i>Clip reference surface</i>) show a <span class="ui">Reference raster</span> list above their settings: the raster layers of the QGIS project, or <span class="ui">Choose a raster file…</span>.</p>
+
+<h2 id="tune">Tuning to the sensor precision</h2>
+<p>☰ › <span class="ui">Tune the filters to the sensor precision and this data…</span> measures the noise of the loaded Inspection Area and combines it with the error budget of the hardware: the Hesai XT32 (range precision 0.5 cm, 1 sigma) and the Certus Evo, or, when PosPro published one, the standard deviations of the trajectory actually used (SMRMSG). Load an Inspection Area on a road seen by two or more passes first; with fewer than 1,000 points loaded CloudPro asks you to.</p>
+<figure class="h64"><img src="fig/tune.png"><figcaption><b>Figure {N}.7</b> Tuning: the precision of this data, and every setting that would change, old → new, with the reason.</figcaption></figure>
+<p>The noise within a pass is measured on the ground of each line, and between passes on the ground seen by two lines; the larger of measurement and specification is used. Height and distance tolerances follow the noise. Feature settings that describe the objects (paint contrast, curb height, rail shape) are only ever raised above the noise, never lowered. Choose <span class="ui">Apply to this group</span>, <span class="ui">Apply to all groups</span> or <span class="ui">Close</span>. The tuning is written to a log and the measured precision is kept in the project.</p>
+
+<h2 id="filterref">The 36 filters</h2>
+<p>Default values are in brackets. The action of the feature, eigenvalue and moving-object filters is <i>Reject</i>, <i>Classify</i> or <i>Reject + classify</i>, with <span class="ui">Class to set</span>. The source of each published method is given by its <span class="ui">?</span> and in <code>docs/REFERENCES.md</code> in the plugin folder.</p>
+<h3>Edit</h3>
+<table>
+<tr><th style="width:24%">Filter</th><th>What it does</th><th style="width:33%">Main settings</th></tr>
+<tr><td>Reset modifications</td><td>Re-accepts rejected points by reason, removes height shifts and/or resets the classification.</td><td>Re-accept automatic (on), manual (off), original (off) rejections; Remove height shifts; Reset classification to 1.</td></tr>
+<tr><td>Edit classification</td><td>Sets the class and/or status of the points that meet a condition. Put it last with <i>Rejected by this group</i> to mark which group rejected a point.</td><td>Only when point: Any, Is accepted, Is rejected, Rejected - automatic / manual / original, Rejected by this group, Modified by this group; Set class (−1 = keep); Set status: Keep, Accept, Reject.</td></tr>
+</table>
+<h3>Clip</h3>
+<table>
+<tr><th style="width:24%">Filter</th><th>What it does</th><th style="width:33%">Main settings</th></tr>
+<tr><td>Clip absolute height</td><td>Rejects points outside a height range.</td><td>Minimum (−100 m), Maximum (1000 m); Clip outside / Clip inside.</td></tr>
+<tr><td>Clip intensity</td><td>Absolute: rejects outside a range. Relative: rejects outside the cell mean ± k·SD of the cell and its neighbour rings (high, low or both).</td><td>Mode; Minimum (0), Maximum (255); Cell size (1 m); Neighbour rings (1); SD multiplier (3); Range-normalise.</td></tr>
+<tr><td>Clip range / sensor geometry</td><td>Rejects returns by range, height above or below the sensor, side of the vehicle, azimuth window.</td><td>Min. (0) / max. range (200 m); Max. height above (100 m) / depth below sensor (100 m); Side: Both, Port only, Starboard only; Azimuth window (0–360°).</td></tr>
+<tr><td>Clip laser channel / return</td><td>Rejects by laser id and/or return type.</td><td>Reject laser ids (e.g. <code>1,2,30-32</code>); Reject return: None, Last (1st block), Strongest (2nd block).</td></tr>
+<tr><td>Clip time</td><td><i>Newest per cell</i> keeps, per cell, only points newer than the newest minus the maximum age (the latest pass over a changed area); <i>Window</i> rejects outside a UTC time of day.</td><td>Mode; Max. age (60 s); Cell size (1 m); Window from / to (s of day UTC).</td></tr>
+<tr><td>Vehicle self-hits</td><td>Rejects returns in a box around the Lidar in the vehicle frame (roof rack, mast, the vehicle, people around a parked vehicle).</td><td>Forward (2.5 m), Backward (3 m), Half width (1.2 m), Above (0.5 m), Below sensor (1.6 m; keep it above the road).</td></tr>
+<tr><td>Clip reference surface</td><td>Rejects points outside a gate around a reference raster (DEM, earlier survey, design). Cells without reference are ignored.</td><td>Reference raster; Max. above (0.3 m) / below reference (0.3 m).</td></tr>
+</table>
+<h3>Cell statistics</h3>
+<table>
+<tr><th style="width:24%">Filter</th><th>What it does</th><th style="width:33%">Main settings</th></tr>
+<tr><td>95% confidence level</td><td>Per cell, rejects the point furthest from the median until 1.96·SD is below the limit or the minimum count is reached. For surfaces (use Only classes = 2 after ground classification).</td><td>Cell size (0.5 m); Max. 95% confidence (0.05 m); Min. points in cell (5); Max. iterations (50).</td></tr>
+<tr><td>Low hit count</td><td>Rejects all points of a cell or voxel holding fewer accepted points than the minimum.</td><td>Cell size (0.5 m); Min. points (3); 2-D cells / 3-D voxels.</td></tr>
+<tr><td>Clip mean height</td><td>Rejects points further than the gate from the mean of the cell and its neighbour rings; <i>Point centred</i> uses a cell around each point, without it.</td><td>Cell size (1 m); Reject outside mean ± (0.3 m); Neighbour rings (1); Point centred.</td></tr>
+<tr><td>Lonely cells</td><td>Rejects points in cells not connected by a side to the main survey cells.</td><td>Cell size (0.5 m); Keep groups of at least (cells; 0 = only the largest).</td></tr>
+</table>
+<h3>Reduce</h3>
+<table>
+<tr><th style="width:24%">Filter</th><th>What it does</th><th style="width:33%">Main settings</th></tr>
+<tr><td>Reducer (voxel)</td><td>Keeps the point closest to each voxel centre and rejects the others; with a few mm it removes duplicate points.</td><td>Horizontal (0.05 m) and vertical voxel size (0.05 m).</td></tr>
+<tr><td>Reducer (scan based)</td><td>Keeps every Nth rotation of the scanner and/or every Nth laser channel.</td><td>Keep every Nth rotation (1); Keep every Nth channel (1).</td></tr>
+</table>
+<h3>Outliers</h3>
+<table>
+<tr><th style="width:24%">Filter</th><th>What it does</th><th style="width:33%">Main settings</th></tr>
+<tr><td>Statistical outlier (SOR)</td><td>Rejects points whose mean distance to their k nearest neighbours is above the mean + α·SD of all points; <i>Range adaptive</i> scales the distances by range first. Run it early (Rusu et al. 2008).</td><td>Neighbours k (12); SD multiplier (2.5); Range adaptive (on).</td></tr>
+<tr><td>Radius outlier (ROR)</td><td>Rejects points with fewer than N neighbours within radius R.</td><td>Radius (0.3 m); Min. neighbours (3).</td></tr>
+<tr><td>Snow / rain / dust (DROR, LIOR, DIOR)</td><td>DROR: radius outlier removal with a radius growing with range. LIOR / DIOR first keep every bright return and test only the dim ones, which protects signs, markings and thin structures (Charron et al. 2018; Park et al. 2020; Roriz et al. 2022).</td><td>Method (DIOR); Beta (3); Azimuth step α (0.18°: the XT-32 at 600 rpm; × N when keeping every Nth packet); Min. search radius (0.04 m); Min. neighbours (3); ROR radius (0.2 m); Intensity threshold (18); Only within range (40 m).</td></tr>
+<tr><td>Isolated cluster</td><td>Groups points within the point interval of each other and rejects small clusters, or all but the largest. Z scale &lt; 1 makes it less sensitive vertically.</td><td>Point interval (0.5 m); Reject clusters smaller than (10 points); Mode; Z scale (1).</td></tr>
+<tr><td>Slope / spike filter</td><td>Rejects points steeper than the limit to their neighbours that stand out above or below all of them. For surfaces (Vosselman 2000).</td><td>Neighbours (8); Max. mean slope (1); Direction: Both, Spikes up, Spikes down; Min. height difference (0.05 m).</td></tr>
+<tr><td>Surface fit (robust local quadric)</td><td>Fits a robust plane or quadric through each point's neighbours (without the point) and rejects it when further than the gate. Run it after the large spikes are gone.</td><td>Neighbours (16); Reject gate (0.08 m); Surface: Plane, Quadric.</td></tr>
+</table>
+<h3>Structure</h3>
+<table>
+<tr><th style="width:24%">Filter</th><th>What it does</th><th style="width:33%">Main settings</th></tr>
+<tr><td>Vertical plane (walls)</td><td>Finds vertical planes (facades, walls) by RANSAC. Points in the plane can be classified (6 building); points behind it, seen from the Lidar, are usually reflections through glass or interior returns and can be rejected.</td><td>Thickness (0.1 m); Max. tilt (5°); Min. points per plane (2000); Min. wall height (1 m); Max. planes (6); Inside: Nothing / Classify / Reject, class (6); Behind: Nothing / Reject / Classify, class (7), further than (0.3 m).</td></tr>
+<tr><td>Geometric features (eigenvalues)</td><td>From the local covariance: scattered (noise, vegetation), linear (wires, poles, edges), planar vertical (walls), planar horizontal (ground, roofs) (Demantké et al. 2011; Weinmann et al. 2015).</td><td>Select (Scattered); Neighbours k (16); Feature threshold (0.5); Verticality threshold (0.85); Action (Classify), class (1).</td></tr>
+</table>
+<h3>Ground</h3>
+<table>
+<tr><th style="width:24%">Filter</th><th>What it does</th><th style="width:33%">Main settings</th></tr>
+<tr><td>Inverted cloth (CSF ground)</td><td>Turns the cloud upside down and drops a simulated cloth on it; points near the settled cloth are ground (Zhang W. et al. 2016).</td><td>Cloth resolution (0.5 m); Scene: 1 Steep slope, 2 Relief, 3 Flat, 4 Super flat; Max. iterations (500); Clip distance (0.25 m); Slope smoothing; Class for non-ground (1; −1 = keep); Reject non-ground.</td></tr>
+<tr><td>Simple morphological filter (SMRF)</td><td>Progressive opening of a minimum surface, then an elevation threshold growing with the slope. Few settings, robust in towns (Pingel et al. 2013).</td><td>Cell size (0.5 m); Slope (0.15); Max. window (18 m); Elevation threshold (0.3 m); Elevation scalar (1.25); Class for non-ground; Reject non-ground.</td></tr>
+<tr><td>Progressive morphological filter (PMF)</td><td>Openings of a minimum grid with a growing window and a slope-dependent height threshold (Zhang K. et al. 2003).</td><td>Cell size (0.5 m); Slope s (1); Max. window (20 m); Initial (0.15 m) and max. height threshold (2.5 m); Window growth; Final ground tolerance (0.25 m); Class for non-ground; Reject non-ground.</td></tr>
+<tr><td>Height above ground</td><td>Builds a DEM from the ground class (2) and rejects points below the ground (multipath, low noise) or high above it, or classifies vegetation 3 / 4 / 5 or a height band among the unclassified points. Needs a ground filter first.</td><td>DEM cell (0.5 m); Mode: Reject below ground, Reject above, Classify vegetation, Classify band; Below by more than (0.25 m); Above by more than (40 m); Low (0.5 m) / medium vegetation up to (2 m); Band from / to, class.</td></tr>
+</table>
+<h3>Multi-pass and height</h3>
+<table>
+<tr><th style="width:24%">Filter</th><th>What it does</th><th style="width:33%">Main settings</th></tr>
+<tr><td>Moving objects / ghosts (multi-pass)</td><td>Follows the laser rays of each pass through a voxel grid. A point is a moving object (car, pedestrian, cyclist) when another pass saw through its voxel. Needs two or more lines over the same place (Schauer &amp; Nüchter 2018).</td><td>Voxel size (0.25 m); Min. free-space rays (2); Ray sampling (1 in 3); Max. ray length (40 m); Stop before the return (0.6 m); Protect voxels next to a pass's own returns (1); Action (Reject), class (64).</td></tr>
+<tr><td>Shift height</td><td>Shifts the points up (+) or down (−), added to any existing shift.</td><td>Shift (0 m).</td></tr>
+</table>
+<h3>Features</h3>
+<p>The feature filters need ground first: the ready-made group starts with SMRF. Their intensity thresholds were set on XT-32 data; check them on your first job, or run Tuning.</p>
+<table>
+<tr><th style="width:24%">Filter (class)</th><th>What it does</th><th style="width:33%">Main settings</th></tr>
+<tr><td>Road markings (intensity) (68)</td><td>Road points near the drive line are split into bands by distance, each with its own Otsu threshold; bright points are gridded, gaps closed, small patches dropped (Guan et al. 2014).</td><td>Image cell (0.1 m); Band width (2.5 m); Minimum contrast (40); Road up to (0.15 m) above ground; Only ground-class points; Minimum area (0.05 m²); Distance from the drive line (0–15 m).</td></tr>
+<tr><td>Curbs (height jump) (69)</td><td>Cells whose neighbourhood rises by a curb's height over a short distance with a steep face, in runs of a minimum length (Yang et al. 2013).</td><td>Grid cell (0.1 m); Window (0.3 m); Height jump 0.08–0.3 m; Steeper than (40°); Minimum length (2 m); Distance from the drive line (1–20 m).</td></tr>
+<tr><td>Poles (voxel layers) (65)</td><td>Small isolated sections stacked over the minimum height, starting near the ground. With <i>Not under a canopy</i> tree trunks are left alone (Cabo et al. 2014).</td><td>Voxel size (0.2 m); Section at most (0.6 m); Minimum height (1.5 m); Starts within (2 m) of the ground; Points to occupy a voxel (3); Not under a canopy (on).</td></tr>
+<tr><td>Traffic signs (retro-reflective) (67)</td><td>Bright clusters at sign height that are planar, upright and of sign size; the whole plate is then classified (Riveiro et al. 2016).</td><td>Intensity at least (180); Height above ground 1.2–7 m; Cluster distance (0.3 m); Minimum points (15); Planarity (0.7); Area 0.1–4 m²; Include the plate within (0.06 m).</td></tr>
+<tr><td>Power lines (catenary) (14)</td><td>High points with free space above and below, clustered along their length, kept when long, straight in plan and fitting a catenary (Guan et al. 2016).</td><td>Higher than (4 m); Voxel size (0.25 m); Free space (1 m); Points per voxel (3); Cluster distance (1.5 m); Minimum length (5 m); Fit RMS (0.15 m); Straight within (0.5 m).</td></tr>
+<tr><td>Manhole covers (intensity blobs) (70)</td><td>Round blobs of the road's intensity image that differ from the background, of a cover's size (Guan et al. 2014).</td><td>Image cell (0.08 m); Contrast (20); Covers appear: Brighter, Darker, Either; Diameter 0.4–1.2 m; Roundness (0.55); Road up to (0.1 m); Distance from the drive line (0–10 m).</td></tr>
+<tr><td>Guardrails (straight band) (71)</td><td>A long, straight band of points at rail height beside the road, parallel to the drive line, with nothing above it (Gao et al. 2022).</td><td>Height above ground 0.4–1.2 m; Cluster distance (0.5 m); Minimum length (4 m); Line fit RMS (0.1 m); Occupied slices (60%); Parallel within (20°); Points above at most (15%); Distance (0.5–15 m).</td></tr>
+</table>
+
+<h1 id="tabs"><span class="num">{N}</span>Lines · Classes · Info and History</h1>
+<figure class="h58"><img src="fig/info_tab.png"><figcaption><b>Figure {N}.1</b> The Lines · Classes · Info tab after clicking a pole point with the i tool (the right-hand quarters widened by dragging the splitter).</figcaption></figure>
+<table>
+<tr><th>Column</th><th>Shows and does</th></tr>
+<tr><td><span class="ui">Lines</span></td><td>One line per mapper recording, with its colour and point count. Untick to hide its points (hidden points are not edited). Right-click a line: <span class="ui">Show only this line</span>, <span class="ui">Show all lines</span>, <span class="ui">Edit only this line</span> (sets the tool bar's line list), <span class="ui">Inspection Area follows this line</span>.</td></tr>
+<tr><td><span class="ui">Classes</span></td><td>The classes in the loaded Inspection Area with their colour and count (during a preview, the previewed classes). Untick to hide a class.</td></tr>
+<tr><td><span class="ui">Info</span></td><td>The point clicked with the i tool or double-clicked in 3D: E, N, Z, time (UTC, to the microsecond), line, file, laser and return, range and azimuth, intensity, class, status (accepted, or rejected and why) and any height shift. Below, the Inspection Area: points and rejections, the selection, and the points and rejections per line.</td></tr>
+</table>
+<p>The <span class="ui">?</span> of each column explains it.</p>
+<figure class="h42"><img src="fig/history.png"><figcaption><b>Figure {N}.2</b> The History tab: imports, georeferencing, publishing, filter runs and edits with their UTC time.</figcaption></figure>
+<p>History lists the last 400 entries of the project's history: imports and georeferencing, filter runs and accepted previews, manual edits with their number of points, undo and redo, and publishing.</p>
+
+<h1 id="props"><span class="num">{N}</span>Project Properties</h1>
+<p><span class="ui">MENU › Project properties…</span> or <kbd>Ctrl+R</kbd> (also in the project box) opens a window that can stay open, or be minimised, while you work. Nothing in it changes the raw captures.</p>
+<figure class="h62"><img src="fig/props_info.png"><figcaption><b>Figure {N}.1</b> Project information.</figcaption></figure>
+<p><b>Project information</b> lists the project (name, project file, job folder, CloudPro folder, created, last saved), the survey (start, end, time recording, lines, survey length of the drive lines, points, extent, location of the centre in latitude and longitude), the georeferencing (trajectory, calibration, when, coordinate system, heights), the chain with the state of each stage, and the last publication.</p>
+<figure class="h42"><img src="fig/props_geo.png"><figcaption><b>Figure {N}.2</b> Geodetics.</figcaption></figure>
+<p><b>Geodetics</b> sets the coordinate system and heights CloudPro georeferences into: <span class="ui">Horizontal CRS</span> (type an EPSG code or <span class="ui">Select…</span>), the trajectory frame and epoch (read only), <span class="ui">Heights</span> ellipsoidal or orthometric with a <span class="ui">Geoid grid</span>, and <span class="ui">Also set this CRS as the job's shared coordinate system</span> (PosPro and AlignPro then show out of date). <span class="ui">Apply and re-georeference</span> opens the Georeference dialog, keeping every edit. For orthometric heights a geoid grid is required.</p>
+<figure class="h64"><img src="fig/props_cfg.png"><figcaption><b>Figure {N}.3</b> Survey configuration.</figcaption></figure>
+<p><b>Survey configuration</b> shows the hardware recorded in the captures (Lidar and Certus models, GNSS antennas, Lidar lever arm and mounting, Certus alignment, coordinate system, vehicle, connections), PosPro's trajectory (frame, mode, fixed %, maximum sigmas, base station, levers, id) and AlignPro's calibration (mounting, lever arm, latency, boresight, average error, id). Below it, <b>Values CloudPro georeferences with</b>:</p>
+<table>
+<tr><th>Source</th><th>Uses</th><th>Results say</th></tr>
+<tr><td>Chain default (AlignPro if published, else as recorded)</td><td>AlignPro's calibration, else the recorded mounting</td><td><i>applied</i> or <i>no calibration</i></td></tr>
+<tr><td>Recorded in the capture (no calibration)</td><td>The mounting recorded in the capture, even when AlignPro published</td><td><i>no calibration</i></td></tr>
+<tr><td>Entered here</td><td>The mounting roll / pitch / heading, Lidar lever forward / starboard / down and latency typed here</td><td><i>entered values</i></td></tr>
+</table>
+<p>The mounting is in the mapper's convention, the lever arm from the Certus reference point. <span class="ui">Apply and re-georeference</span> keeps the values in the project and opens the Georeference dialog; if you cancel it, the points are shown as out of date until you update.</p>
+<figure class="h40"><img src="fig/props_files.png"><figcaption><b>Figure {N}.4</b> Project files.</figcaption></figure>
+<p><b>Project files</b> has one row per <code>.clraw</code> file: <span class="ui">Points</span> shows or hides its points in the views, <span class="ui">Track</span> its drive line in the Plan; line, file, start (UTC), duration and size. Click a row to select that file's points in the Inspection Area and draw its drive line thicker (move the area onto the drive line if no points are selected). <span class="ui">Show all</span>, <span class="ui">Hide all</span>, <span class="ui">Clear selection</span>.</p>
+
+<h1 id="publish"><span class="num">{N}</span>Publishing, exporting and QGIS layers</h1>
+<p><b>Publish</b> is the job's delivery, in <code>03_CloudPro/out/</code>, recorded in the chain. <b>Export</b> writes a copy anywhere, for any purpose.</p>
+
+<h2>Publish</h2>
+<p><span class="ui">MENU › Publish for the job (LAS, ground grid, cloud.json)…</span> (<kbd>Ctrl+P</kbd>). The project must be a job project of the chain and georeferenced.</p>
+<figure class="h50"><img src="fig/publish_dialog.png"><figcaption><b>Figure {N}.1</b> The Publish dialog with the ground grid ticked. Out-of-date reasons and <i>no calibration</i> would be listed in amber above the options.</figcaption></figure>
+<table>
+<tr><th>Option</th><th>Effect</th></tr>
+<tr><td><span class="ui">LAS 1.4 point cloud (&lt;Name&gt;.las)</span></td><td>The whole cloud, all lines.</td></tr>
+<tr><td><span class="ui">Classes</span></td><td>Empty for all classes, or a list (e.g. <code>2,6</code>).</td></tr>
+<tr><td><span class="ui">Include rejected points (LAS withheld flag)</span></td><td>Off: rejected points are left out. On: they are written with the withheld flag.</td></tr>
+<tr><td><span class="ui">Ground grid (mean of class 2, GeoTIFF)</span>, <span class="ui">Grid cell</span></td><td>A grid of the mean height of the accepted ground points (gaps of up to 2 cells filled), at the chosen cell (0.5 m).</td></tr>
+<tr><td><span class="ui">Add the results to the QGIS map</span></td><td>Adds the LAS and the grid to the CloudPro group of the QGIS project.</td></tr>
+</table>
+<p>At least one of the LAS and the ground grid must be ticked. Publishing runs in the background and is all or nothing: the files are written under temporary names and renamed at the end.</p>
+<figure class="h40"><img src="fig/publish_done.png"><figcaption><b>Figure {N}.2</b> The result: the calibration state, the files and the folder.</figcaption></figure>
+<table>
+<tr><th>File in <code>out/</code></th><th>Content</th></tr>
+<tr><td><code>&lt;Name&gt;.las</code></td><td>LAS 1.4, point data record format 6, with the CRS as WKT. User data holds the laser channel (0–31, the laser id minus one), point source id the line number, GPS time in adjusted standard time; the scan angle is 0.</td></tr>
+<tr><td><code>&lt;Name&gt;_ground.tif</code></td><td>The ground grid (an ESRI ASCII <code>.asc</code> grid when GDAL is not available).</td></tr>
+<tr><td><code>cloud_report.txt</code></td><td>Readable report: inputs (trajectory, calibration, mounting, lever arm, latency, CRS, heights), lines, point and class counts, filters applied with their settings, outputs, warnings.</td></tr>
+<tr><td><code>cloud.json</code></td><td>Written last, through DCS Core: the calibration state, the trajectory and alignment results the points were really georeferenced with, the georeferencing values, CRS (frame, epoch, heights, geoid), lines and files, point and class counts (accepted, rejected manual and automatic), every filter run with its settings, the outputs and the warnings.</td></tr>
+</table>
+<p>Because <code>cloud.json</code> names the PosPro and AlignPro results used, CloudPro shows <b>⚠ stale</b> when they publish again, until you update the georeferencing and publish again.</p>
+
+<h2 id="export">Export</h2>
+<figure class="h56"><img src="fig/export_dialog.png"><figcaption><b>Figure {N}.3</b> The Export dialog.</figcaption></figure>
+<table>
+<tr><th>Setting</th><th>Choices</th></tr>
+<tr><td><span class="ui">Format</span></td><td><i>LAS 1.4 point cloud</i> (as published), <i>XYZ text (CSV)</i> with the columns E, N, Z, I (intensity), C (class), L (line), T (UTC time), or <i>Grid surface (GeoTIFF)</i>.</td></tr>
+<tr><td><span class="ui">File</span></td><td>Defaults to <code>03_CloudPro/&lt;Name&gt;.las</code>; the extension follows the format.</td></tr>
+<tr><td><span class="ui">Area</span></td><td><i>Entire project</i> or <i>Inspection Area</i>.</td></tr>
+<tr><td><span class="ui">Lines</span>, <span class="ui">Classes</span></td><td>Ticked lines; empty for all classes, or a list.</td></tr>
+<tr><td><span class="ui">Include rejected points</span>, <span class="ui">One file per line</span></td><td>LAS only. One file per line adds <code>_L001</code>, <code>_L002</code>… to the name.</td></tr>
+<tr><td><span class="ui">Grid cell</span>, <span class="ui">Grid statistic</span>, <span class="ui">Fill gaps up to</span></td><td>Grid only: cell (0.25 m); mean, min, max, count or intensity; empty cells filled from the nearest value up to N cells away. Grids use accepted points only.</td></tr>
+<tr><td><span class="ui">Add the result to the QGIS map</span></td><td>Adds the file to the CloudPro group of the QGIS project.</td></tr>
+</table>
+
+<h2 id="qgis">QGIS layers</h2>
+<ul>
+<li><span class="ui">MENU › Pick the Inspection Area on the QGIS map</span>: the QGIS message bar says <i>Click on the map to centre the Inspection Area there</i>; the click is converted to the project's coordinate system and the area moves there.</li>
+<li><span class="ui">MENU › Add the drive lines and Inspection Area to QGIS</span>: adds two temporary layers in a <b>CloudPro</b> group: <i>&lt;Name&gt; - drive lines</i> (with line number, name and points) and <i>&lt;Name&gt; - inspection area</i>, and zooms the map to them.</li>
+<li>Publish and Export add their LAS (as a point cloud layer) and grids to the same group when <i>Add … to the QGIS map</i> is ticked.</li>
+<li>Raster layers of the QGIS project are offered as reference surfaces in <i>Clip reference surface</i>.</li>
+<li><span class="ui">Save the QGIS project in the project folder</span> (project box) writes <code>&lt;Name&gt;.qgz</code> beside the <code>.dcsproj</code>.</li>
+</ul>
+
+<h1 id="cli"><span class="num">{N}</span>The command-line tool</h1>
+<p>The same steps run without the window, with the same project, inputs, entered values and filter groups. Run them with the QGIS Python (the OSGeo4W shell on Windows) from the folder that holds the <code>cloudpro</code> and <code>dcs_core</code> plugin folders, e.g. <code>%APPDATA%/QGIS/QGIS3/profiles/default/python/plugins</code>.</p>
+<pre class="mono" style="background:#f3f5f6;padding:2.5mm;white-space:pre-wrap">python -m cloudpro.cli import  D:/Job/Processing/Street/Street.dcsproj
+python -m cloudpro.cli update  D:/Job/Processing/Street/Street.dcsproj
+python -m cloudpro.cli filter  D:/Job/Processing/Street/Street.dcsproj --group "Mobile mapping - standard clean"
+python -m cloudpro.cli publish D:/Job/Processing/Street/Street.dcsproj --dem 0.5
+python -m cloudpro.cli info    D:/Job/Processing/Street/Street.dcsproj</pre>
+<table>
+<tr><th>Command</th><th>Does</th><th>Options</th></tr>
+<tr><td><code>import</code></td><td>Georeferences the job's captures with PosPro's trajectory and AlignPro's mounting (or the fallbacks), carrying edits over. Prints the inputs and warnings.</td><td><code>--clraw</code> files or folders instead of the job's captures; <code>--returns both|last|strongest</code>; <code>--rmin</code>, <code>--rmax</code> (1, 120 m); <code>--mount R P H</code> and <code>--lever F S D</code> override the mounting (then <i>no calibration</i>).</td></tr>
+<tr><td><code>update</code></td><td>Re-georeferences with the current inputs, keeping every edit.</td><td>–</td></tr>
+<tr><td><code>filter</code></td><td>Runs a group on the whole project, tile by tile, and records it.</td><td><code>--group</code> name (the project's groups, then the ready-made ones); <code>--lines</code> e.g. <code>1,3-4</code>.</td></tr>
+<tr><td><code>publish</code></td><td>Publishes LAS, optional ground grid, report and <code>cloud.json</code>.</td><td><code>--dem</code> cell (0 = no grid); <code>--classes</code>; <code>--include-rejected</code>.</td></tr>
+<tr><td><code>info</code></td><td>Name, CRS, lines and points, coverage (area with points, median density, share at or above the target), the state of each stage and what is out of date.</td><td><code>--target 100</code> (pts/m²), <code>--cell 1</code> (m)</td></tr>
+<tr><td><code>export</code></td><td>Writes LAS, XYZ or a grid.</td><td><code>--las</code>, <code>--xyz</code>, <code>--grid</code> file; <code>--cell</code> (0.5 m), <code>--stat mean|min|max|count|intensity</code>, <code>--classes</code>, <code>--lines</code>, <code>--per-line</code>, <code>--include-rejected</code>.</td></tr>
+<tr><td><code>create</code></td><td>Creates an older-style stand-alone project (no chain).</td><td><code>folder name --crs EPSG:2953 --tile 50</code>; for its <code>import</code>: <code>--sbet</code> (omit for the real-time track), <code>--bore dR dP dH</code>.</td></tr>
+</table>
+<p>A run in a job project holds the stage lock and writes a log in <code>03_CloudPro/log/</code>.</p>
+
+<h1 id="trouble"><span class="num">{N}</span>Troubleshooting</h1>
+<table>
+<tr><th style="width:38%">Message or symptom</th><th>What to do</th></tr>
+<tr><td><i>CloudPro needs the DCS Core plugin…</i> (QGIS message bar)</td><td>Install DCS Core (chapter 2), then restart QGIS.</td></tr>
+<tr><td><i>No .clraw files were found in the job's captures</i></td><td>Check the job folder, use <span class="ui">MENU › Add other .clraw files to the job…</span>, or relocate a moved job folder.</td></tr>
+<tr><td><i>Raw data not found</i> when opening</td><td>Answer Yes and point to the job folder's new location, or later use <span class="ui">Raw data moved? Relocate the job folder…</span>.</td></tr>
+<tr><td><i>This job's point cloud is open elsewhere</i></td><td>Another QGIS has the job's cloud open for editing. Close it there first.</td></tr>
+<tr><td><i>PosPro has not published a trajectory for this project: the Certus real-time track is used</i></td><td>Run PosPro, then <span class="ui">Update</span>.</td></tr>
+<tr><td>Inputs line amber, <i>no calibration</i></td><td>AlignPro has not published (or the source is set to the recorded mounting). Run AlignPro, then <span class="ui">Update</span>.</td></tr>
+<tr><td><i>AlignPro used the … convention, CloudPro expects navaq_hesai: calibration not used</i></td><td>Publish the calibration again with a current AlignPro.</td></tr>
+<tr><td><i>The AlignPro calibration was solved on an earlier PosPro trajectory</i></td><td>Run AlignPro again on PosPro's current trajectory.</td></tr>
+<tr><td><i>Out of date: …</i> and <span class="ui">Update</span></td><td>Press Update, then publish again (<a href="#update">Update georeferencing</a>).</td></tr>
+<tr><td><i>the trajectory (…) does not cover line …</i></td><td>The trajectory does not span that capture; process the whole recording in PosPro.</td></tr>
+<tr><td><i>No Zstandard decoder is available to read .clraw files</i></td><td>In the OSGeo4W shell: <code>python -m pip install zstandard</code>, then restart QGIS.</td></tr>
+<tr><td><i>.clraw format_version … is newer than this version of DCS Core understands</i></td><td>Update DCS Core and the plugins.</td></tr>
+<tr><td><i>Choose a geoid grid for orthometric heights.</i></td><td>Browse for a geoid grid in Geodetics, or choose ellipsoidal heights.</td></tr>
+<tr><td><i>This Inspection Area holds about N million points…</i></td><td>Load it anyway, make the area smaller (Inspection Area properties) or raise <span class="ui">MENU › Memory limit</span>.</td></tr>
+<tr><td>3D shows <i>showing N %</i></td><td>Normal on large areas; selecting and editing still use every point.</td></tr>
+<tr><td><i>Another task is still running.</i></td><td>Wait for the progress bar to finish, or press <span class="ui">Cancel</span>.</td></tr>
+<tr><td><i>Load an Inspection Area with points…</i> (Tuning)</td><td>Load an area with at least 1,000 points, ideally a road seen by two passes.</td></tr>
+<tr><td>Filter messages: <i>no ground class yet - run a ground filter first</i>, <i>Moving objects: needs two or more lines in the area</i>, <i>Clip reference surface: no reference raster selected</i>, <i>Vehicle self-hits: no sensor track for these lines</i></td><td>Add a ground filter (SMRF) before; place the area where two passes overlap; choose a reference raster; georeference the line again.</td></tr>
+<tr><td>Features missed or found too often</td><td>Run Tuning, then adjust the intensity settings of the filter (its <span class="ui">?</span> explains each one).</td></tr>
+<tr><td><i>Publishing is for job projects of the DCS chain…</i></td><td>An older stand-alone project: use Export.</td></tr>
+<tr><td><i>The user guide is not in this installation</i></td><td>Reinstall CloudPro from its zip.</td></tr>
+</table>
+<p>Each georeferencing, project-wide filter run, tuning and publication writes a log in <code>03_CloudPro/log/</code>; a failed task shows its error in a message and leaves the earlier results in place.</p>
+
+
+
+<h1 id="keys"><span class="num">{N}</span>Reference</h1>
+<h2>Keys and mouse</h2>
+<table>
+<tr><th style="width:36%">Key / mouse</th><th>Does</th></tr>
+<tr><td><kbd>Space</kbd>, <kbd>G</kbd>, <kbd>P</kbd>, <kbd>L</kbd>, <kbd>B</kbd></td><td>Pan, rectangle, polygon, lasso, brush</td></tr>
+<tr><td><kbd>U</kbd>, <kbd>J</kbd>, <kbd>M</kbd>, <kbd>I</kbd></td><td>Above a line, below a line, measure, point information</td></tr>
+<tr><td><kbd>X</kbd>, <kbd>V</kbd>, <kbd>S</kbd>, <kbd>K</kbd>, <kbd>F</kbd></td><td>Reject, accept, select, classify, filter</td></tr>
+<tr><td><kbd>H</kbd></td><td>Show / hide rejected points</td></tr>
+<tr><td><kbd>Delete</kbd>, <kbd>Ctrl+D</kbd></td><td>Reject the selection, clear the selection</td></tr>
+<tr><td><kbd>Ctrl+Z</kbd>, <kbd>Ctrl+Y</kbd></td><td>Undo, redo</td></tr>
+<tr><td><kbd>PgUp</kbd> / <kbd>PgDn</kbd>, <kbd>]</kbd> / <kbd>[</kbd>, <kbd>.</kbd> / <kbd>,</kbd></td><td>Next / previous slice</td></tr><tr><td><kbd>Ctrl+PgUp</kbd> / <kbd>Ctrl+PgDn</kbd>, <kbd>}</kbd> / <kbd>{</kbd></td><td>Five slices on / back</td></tr>
+<tr><td><kbd>Shift</kbd> + arrows, <kbd>Shift+PgUp</kbd> / <kbd>Shift+PgDn</kbd></td><td>Step the Inspection Area</td></tr>
+<tr><td>Arrows, <kbd>+</kbd> / <kbd>-</kbd>, <kbd>Home</kbd></td><td>2-D views: pan by the step, zoom, zoom to the points</td></tr>
+<tr><td><kbd>Ctrl+Home</kbd></td><td>Zoom all views to the Inspection Area</td></tr>
+<tr><td>Wheel, <kbd>Shift</kbd> + wheel</td><td>Zoom at the cursor; vertical exaggeration in the Slice</td></tr>
+<tr><td>Middle drag, double-click</td><td>2-D views: pan with any tool, centre here</td></tr>
+<tr><td><kbd>Enter</kbd>, <kbd>Backspace</kbd>, <kbd>Esc</kbd></td><td>Finish a polygon or line, remove its last point, cancel</td></tr>
+<tr><td>3D: left drag, <kbd>Shift</kbd> + left or middle drag, right drag</td><td>Orbit, pan, lasso or rectangle edit</td></tr>
+<tr><td>3D: wheel, <kbd>Ctrl</kbd> + wheel, double-click</td><td>Zoom, Z scale, new centre and point information</td></tr>
+<tr><td>3D (click in it first): <kbd>W</kbd> <kbd>S</kbd> <kbd>A</kbd> <kbd>D</kbd> <kbd>Q</kbd> <kbd>E</kbd>, <kbd>1</kbd>–<kbd>4</kbd>, <kbd>O</kbd>, <kbd>0</kbd></td><td>Fly, top / along / across / oblique, orthographic, fit</td></tr>
+<tr><td><kbd>Ctrl+R</kbd>, <kbd>Ctrl+I</kbd>, <kbd>Ctrl+P</kbd>, <kbd>Ctrl+E</kbd>, <kbd>Ctrl+S</kbd></td><td>Properties, georeference, publish, export, save</td></tr>
+<tr><td><kbd>F1</kbd>, <kbd>Shift+F1</kbd></td><td>Keys and mouse, this guide</td></tr>
+</table>
+
+<h2 id="classes">Classes</h2>
+<p>Classes follow ASPRS LAS 1.4, with CloudPro's classes 64–71.</p>
+<table>
+<tr><th>Class</th><th>Name</th><th>Class</th><th>Name</th><th>Class</th><th>Name</th></tr>
+<tr><td>0</td><td>Created, never classified</td><td>9</td><td>Water</td><td>64</td><td>Vehicle (dynamic)</td></tr>
+<tr><td>1</td><td>Unclassified</td><td>10, 11</td><td>Rail, road surface</td><td>65</td><td>Pole</td></tr>
+<tr><td>2</td><td>Ground</td><td>13, 14</td><td>Wire - guard, wire - conductor</td><td>66</td><td>Snow / rain</td></tr>
+<tr><td>3, 4, 5</td><td>Low, medium, high vegetation</td><td>15, 17</td><td>Transmission tower, bridge deck</td><td>67, 68</td><td>Traffic sign, road marking</td></tr>
+<tr><td>6</td><td>Building</td><td>18, 19</td><td>High noise, overhead structure</td><td>69, 70</td><td>Curb, manhole cover</td></tr>
+<tr><td>7</td><td>Low point (noise)</td><td>20</td><td>Ignored ground</td><td>71</td><td>Guardrail</td></tr>
+</table>
+

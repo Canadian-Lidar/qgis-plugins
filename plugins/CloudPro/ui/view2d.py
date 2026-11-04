@@ -460,8 +460,12 @@ class CloudView2D(QtWidgets.QWidget):
         else:
             name = {K.Key_PageUp: "next", K.Key_PageDown: "prev", K.Key_BracketRight: "next",
                     K.Key_BracketLeft: "prev", K.Key_Period: "next", K.Key_Comma: "prev"}.get(k)
-            if name:
-                self.keyNav.emit(name + ("_big" if sh else ""))
+            big = {K.Key_BraceRight: "next", K.Key_BraceLeft: "prev", K.Key_Greater: "next", K.Key_Less: "prev"}.get(k)
+            ctrl = bool(e.modifiers() & Qt.KeyboardModifier.ControlModifier)
+            if big:
+                self.keyNav.emit(big + "_big")
+            elif name:
+                self.keyNav.emit(name + ("_big" if (sh or ctrl) else ""))
             elif sh and k in (K.Key_Left, K.Key_Right, K.Key_Up, K.Key_Down):
                 self.keyNav.emit({K.Key_Left: "box_left", K.Key_Right: "box_right", K.Key_Up: "box_fwd",
                                   K.Key_Down: "box_back"}[k])

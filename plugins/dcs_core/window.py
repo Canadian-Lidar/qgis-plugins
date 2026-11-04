@@ -16,12 +16,12 @@ The functions below the class are the same operations for any QDockWidget. They 
 AlignPro's docksafe.py, which found that on Qt 6 (QGIS 4) a panel given window buttons must
 never go through QMainWindow.removeDockWidget (QGIS crashes): release() handles unloading.
 """
-from qgis.PyQt.QtCore import QPoint, QRect, QSettings, Qt, QTimer, pyqtSignal
-from qgis.PyQt.QtGui import QGuiApplication
+from qgis.PyQt.QtCore import QPoint, QRect, QRectF, QSettings, Qt, QTimer, pyqtSignal
+from qgis.PyQt.QtGui import QColor, QGuiApplication, QPainter, QPen
 from qgis.PyQt.QtWidgets import QDockWidget, QMenu
 
 from . import theme
-from .widgets import DockTitle
+from .widgets import DockTitle, align_flags
 
 WINDOWED = "apWindowed"
 NO_AREAS = Qt.DockWidgetArea.NoDockWidgetArea
@@ -311,8 +311,19 @@ class WindowTitle(DockTitle):
                         "bottom, reset. Dragging moves the window; it docks only when you choose.")
 
     def paintEvent(self, ev):              # noqa: N802
-        self.title = self.dock.windowTitle()
-        super().paintEvent(ev)
+        # the title as written (PosPro, AlignPro, CloudPro), like the header; other panels stay upper case
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.fillRect(self.rect(), QColor(theme.BG))
+        p.setPen(QPen(QColor(theme.BORDER), 1))
+        p.drawLine(0, self.height() - 1, self.width(), self.height() - 1)
+        p.setPen(QColor(theme.TEXT))
+        p.setFont(theme.font("ui", 13, 700, 104))
+        p.drawText(QRectF(10, 0, self.width() - 70, self.height()),
+                   align_flags(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), self.dock.windowTitle())
+        p.end()
+        self.title = ""
+        self._paint_buttons()
 
     def _menu(self):
         d = self.dock

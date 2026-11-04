@@ -83,10 +83,12 @@ def anpp20(t, lat=0.8, lon=-1.15, h=20.0):
 CAL = "Laser id,Elevation,Azimuth\n" + "\n".join("%d,%.3f,%.3f" % (i + 1, 15 - i, 0.5) for i in range(32))
 
 
-def make_clraw(path, channels_in_chunk=False, fmt="1"):
+def make_clraw(path, channels_in_chunk=False, fmt="1", meta=None, t_shift=0.0):
     chans = b"".join(_channel(c, t) for t, c in clraw.TOPICS.items())
     out = mcap.MAGIC + _rec(0x01, _s("clraw") + _s("mapper"))
-    out += _rec(0x0C, _s("clraw") + _map({"format_version": fmt, "line": "7", "file_number": "1", "capture": "C1"}))
+    md = {"format_version": fmt, "line": "7", "file_number": "1", "capture": "C1"}
+    md.update(meta or {})
+    out += _rec(0x0C, _s("clraw") + _map({k: str(v) for k, v in md.items()}))
     out += _attachment("hardware.json", json.dumps({"ins_to_lidar_m": [0.1, 0.2, -0.3]}).encode())
     if not channels_in_chunk:
         out += chans
@@ -216,3 +218,76 @@ def test_las_round_trip(tmp_path):
     assert np.allclose(r["x"], E, atol=1e-3) and int((r["raw"]["flags"] == 4).sum()) == 50
     las.write_las(str(tmp_path / "y.las"), E, N, Z, np.zeros(n), np.zeros(n), np.zeros(n), epsg=2953)
     assert os.path.getsize(str(tmp_path / "y.las")) == 227 + 54 + 32 + 28 * n     # header, GeoKey VLR, points
+
+
+# ----------------------------------------------------------------------------- mapper 2.10 layout
+def make_210(root):
+    """<root>/Deck_Test: project.json; lines/<id>/clraw/<id>_0001.._0002; an old capture grouped into lines/;
+    nav/Deck_Test_NAV_..._0001.clraw (kind navigation)."""
+    import os
+    pj = os.path.join(root, "Deck_Test")
+    lid = "Deck_Test_L001_20261104_124512"
+    d1 = os.path.join(pj, "lines", lid, "clraw")
+    d2 = os.path.join(pj, "lines", "20261020_150055_PatchTest", "clraw")
+    dn = os.path.join(pj, "nav")
+    for d in (d1, d2, dn):
+        os.makedirs(d)
+    with open(os.path.join(pj, "project.json"), "w") as f:
+        json.dump({"name": "Deck Test", "id": "Deck_Test"}, f)
+    files = [make_clraw(os.path.join(d1, "%s_%04d.clraw" % (lid, k)),
+                        meta={"line": 1, "capture": lid, "project_id": "Deck_Test", "file_number": k}) for k in (1, 2)]
+    old = make_clraw(os.path.join(d2, "002_20261020_150055_0001.clraw"),
+                     meta={"line": "002", "capture": "20261020_150055_PatchTest"})
+    nav = make_clraw(os.path.join(dn, "Deck_Test_NAV_20261104_120000_0001.clraw"),
+                     meta={"kind": "navigation", "line": 0, "capture": "Deck_Test_NAV_20261104_120000",
+                           "project_id": "Deck_Test"})
+    return pj, files, old, nav
+
+
+def test_210_lines_grouped_from_metadata_and_navigation_left_out(tmp_path):
+    pj, files, old, nav = make_210(str(tmp_path))
+    found = clraw.find_clraw([pj])
+    assert len(found) == 4
+    assert clraw.is_navigation(nav) and not clraw.is_navigation(files[0]) and not clraw.is_navigation(old)
+    assert clraw.split_navigation(found) == (sorted(files + [old], key=found.index), [nav])
+    g = clraw.group_recordings(found)
+    assert sorted(len(v) for v in g.values()) == [1, 2]            # line 1 (two files) and the old line 2
+    assert sorted(k[1] for k in g) == ["001", "002"]
+    assert any(len(v) == 3 for v in clraw.group_recordings(found, navigation=True).values()) is False
+    assert len(clraw.group_recordings(found, navigation=True)) == 3
+    lines = clraw.group_lines(found)
+    assert len(lines) == 2 and sorted(len(v) for v in lines.values()) == [1, 2]
+    assert len(clraw.group_lines(found, navigation=True)) == 3
+    assert clraw.ClrawFile(files[0]).line == 1 and clraw.ClrawFile(old).line == 2
+    assert clraw._line_from_name("Deck_Test_L014_20261104_124512_0003.clraw") == 14
+    assert clraw._line_from_name("007_20261020_150000_0001.clraw") == 7
+    info = clraw.file_info(files[1])
+    assert info["capture"] == "Deck_Test_L001_20261104_124512" and info["start"] == pytest.approx(T0, abs=1e-3)
+
+
+def test_210_survey_files_of_a_project_whose_captures_are_navigation(tmp_path):
+    import os
+    from dcs_core.project import DcsProject
+    pj, files, old, nav = make_210(str(tmp_path))
+    dcs = DcsProject.create(pj, "Deck_Test", None, plugin="test")
+    assert sorted(dcs.survey_clraw_files()) == sorted(files + [old])          # no captures yet: the job folder
+    dcs.set_capture_files([nav], "PosPro")                                   # PosPro used the navigation
+    assert sorted(dcs.survey_clraw_files()) == sorted(files + [old])
+    dcs.set_capture_files(files, "PosPro")                                   # PosPro used line 1 only
+    assert sorted(dcs.survey_clraw_files()) == sorted(files)
+    out = os.path.join(dcs.folder, "02_AlignPro", "out")
+    os.makedirs(out, exist_ok=True)
+    make_clraw(os.path.join(out, "x_0001.clraw"))                             # never the Processing folder
+    assert sorted(dcs.survey_clraw_files()) == sorted(files)
+
+
+def test_210_job_folder_is_the_mapper_project(tmp_path):
+    import os
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import test_window  # noqa: F401 - the stand-in for qgis.PyQt outside QGIS
+    from dcs_core import dialogs
+    pj, files, old, nav = make_210(str(tmp_path))
+    for inside in (pj, os.path.join(pj, "lines"), os.path.dirname(os.path.dirname(files[0])), os.path.join(pj, "nav")):
+        assert dialogs.mapper_project(inside) == (os.path.abspath(pj), "Deck_Test")
+    assert dialogs.mapper_project(str(tmp_path)) == (os.path.abspath(str(tmp_path)), None)

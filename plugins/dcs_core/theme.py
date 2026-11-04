@@ -163,6 +163,8 @@ QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDateTimeEdit, QPlainTextEdit, Q
     font-family: '{MONO}'; font-size: 12px; color: {BRIGHT}; background: {FIELD}; border: 1px solid {BORDER};
     border-radius: 2px; selection-background-color: rgba(0,229,170,70); selection-color: #ffffff; }}
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDateTimeEdit {{ padding: 4px 6px; min-height: 18px; }}
+QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled, QDateTimeEdit:disabled {{
+    color: {DISABLED}; background: {SURF}; border-color: {SURF2}; }}
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QDateTimeEdit:focus,
 QPlainTextEdit:focus {{ border-color: {ACCENT}; }}
 QComboBox::drop-down {{ border: none; width: 18px; }}
@@ -219,7 +221,7 @@ QLabel#ppToast[level="warn"] {{ border-left-color: {AMBER}; }}
 QLabel#ppToast[level="bad"] {{ border-left-color: {RED}; }}
 QLabel#ppStatus {{ color: {DIM}; font-size: 12px; }}
 """.format(BODY=BODY, UI=UI, MONO=MONO, BG=BG, SURF=SURF, SURF2=SURF2, BORDER=BORDER, ACCENT=ACCENT, GREEN=GREEN,
-           RED=RED, AMBER=AMBER, TEXT=TEXT, BRIGHT=BRIGHT, DIM=DIM, FIELD=FIELD, tog_on=tog_on, tog_off=tog_off,
+           RED=RED, AMBER=AMBER, TEXT=TEXT, BRIGHT=BRIGHT, DIM=DIM, FIELD=FIELD, DISABLED=DISABLED, tog_on=tog_on, tog_off=tog_off,
            rad_on=rad_on, rad_off=rad_off, caret=caret)
 
 
@@ -906,6 +908,26 @@ def msg_question(parent, title, text, buttons=None, default=None):
     if buttons is None:
         buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
     return _box(QMessageBox.Icon.Question, parent, title, text, buttons, default)
+
+
+def msg_choice(parent, title, text, choices, default=0):
+    """A question with buttons of its own: choices = [label, ...]; returns the index chosen, or None when
+    the box is closed (Esc). The last choice is the cancel/no choice."""
+    from qgis.PyQt.QtWidgets import QMessageBox
+    mb = QMessageBox(QMessageBox.Icon.Question, title, text, QMessageBox.StandardButton.NoButton, parent)
+    btns = []
+    for i, label in enumerate(choices):
+        role = QMessageBox.ButtonRole.RejectRole if i == len(choices) - 1 else QMessageBox.ButtonRole.AcceptRole
+        b = mb.addButton(label, role)
+        b.setMinimumWidth(b.fontMetrics().horizontalAdvance(label.upper()) + 48)   # labels are shown upper case
+        btns.append(b)
+    if btns:
+        mb.setDefaultButton(btns[max(0, min(default, len(btns) - 1))])
+        mb.setEscapeButton(btns[-1])
+    _dark(mb)
+    mb.exec()
+    c = mb.clickedButton()
+    return btns.index(c) if c in btns else None
 
 
 def get_text(parent, title, label, echo=None, text=""):

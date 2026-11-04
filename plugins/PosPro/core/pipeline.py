@@ -10,7 +10,7 @@ import shutil
 import time
 
 from . import engine, geo, products, rinex
-from .project import IMU_PRESETS, VEHICLE_PROFILES
+from .project import IMU_PRESETS
 
 
 class Ctx:
@@ -83,7 +83,7 @@ def extract(project, ctx, force=False):
         except OSError:
             pass
     ctx.log("info", "reading %d rover file(s)" % len(files))
-    res = _check(engine.run(["extract", "--out", out] + sorted(files, key=_natural),
+    res = _check(engine.run(["extract", "--out", out] + sorted(files, key=_in_time_order),
                             ctx.progress, ctx.log, ctx.cancelled), "Reading the rover files")
     project.cfg["rover"]["extract"] = res.results
     project.cfg["rover"]["extract_files"] = sig
@@ -94,15 +94,56 @@ def extract(project, ctx, force=False):
                 project.cfg["rover"]["hardware"] = json.load(fh)
         except (OSError, ValueError):
             pass
-    for w in res.warnings:
-        ctx.log("warning", w)
+    _complete_hardware(project, files)
     project.dirty = True
     return res.results
+
+
+LINE_ONLY_KEYS = ("vehicle", "ins_to_rear_axle_m", "coordinate_system")
+
+
+def _complete_hardware(project, files):
+    """Mapper 2.10 navigation recordings carry a shorter hardware.json (no vehicle, rear axle or coordinate
+    system). When the rover files are navigation recordings, take those from a survey line of the same job."""
+    try:
+        from dcs_core import clraw
+        if not any(f.lower().endswith(".clraw") and clraw.is_navigation(f) for f in files):
+            return
+        hw = project.cfg["rover"].get("hardware") or {}
+        if all(k in hw for k in LINE_ONLY_KEYS):
+            return
+        lines = []
+        if project.dcs is not None:
+            lines = project.dcs.survey_clraw_files()
+        for f in lines[:5]:
+            lhw = clraw.ClrawFile(f).hardware
+            if lhw:
+                for k in LINE_ONLY_KEYS:
+                    if k not in hw and k in lhw:
+                        hw[k] = lhw[k]
+                hw.setdefault("_completed_from", os.path.basename(f))
+                project.cfg["rover"]["hardware"] = hw
+                return
+    except Exception:           # noqa: BLE001 - optional: the offsets PosPro needs are in the navigation file
+        return
 
 
 def _natural(p):
     import re
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", os.path.basename(p))]
+
+
+def _in_time_order(p):
+    """Rover files in recording order: .clraw by the time of their first data (names alone no longer sort in
+    time since mapper 2.10, where old NNN_date_time and new <Project>_L001_... names can mix), then by name."""
+    t = None
+    if p.lower().endswith(".clraw"):
+        try:
+            from dcs_core import clraw
+            t = clraw.file_info(p).get("start")
+        except Exception:       # noqa: BLE001 - unreadable header: name order
+            t = None
+    return (t if t is not None else float("inf"), _natural(p))
 
 
 def hardware_levers(hw):
@@ -577,7 +618,7 @@ def antenna2_obs(project):
 def ins_conf(project, direction, navs, bobs=None, bxyz=None, base=None, atx=None, solve_levers=False):
     p = project.cfg["processing"]
     inst = project.cfg["installation"]
-    veh = VEHICLE_PROFILES.get(project.cfg["vehicle"].get("profile", "car"), VEHICLE_PROFILES["car"])
+    veh = project.vehicle_profile()
     imu = project.imu_params()
     ex = os.path.join(project.work_dir, "extract")
     gdir = os.path.join(project.work_dir, "gnss")
@@ -634,7 +675,7 @@ def ins_conf(project, direction, navs, bobs=None, bxyz=None, base=None, atx=None
         if solve_levers:
             w("lever.estimate = on")
     w("nhc.enable = %d" % (1 if (p.get("nhc", True) and veh["nhc"]) else 0))
-    w("nhc.sigma_m_s = %g" % float(p.get("nhc_sigma", veh["nhc_sigma"])))
+    w("nhc.sigma_m_s = %g" % float(p.get("nhc_sigma") or veh["nhc_sigma"]))
     w("zupt.enable = %d" % (1 if (p.get("zupt", True) and veh["zupt"]) else 0))
     w("gnss.systems = %s" % p.get("systems", "GREJ"))
     w("gnss.frequencies = %d" % int(p.get("frequencies", 2)))
@@ -862,6 +903,23 @@ def run_all(project, ctx):
     return summary
 
 
+def _sbet_rate(path):
+    """Sample rate (Hz) of an SBET from the median interval of its first records, or None."""
+    import statistics
+    import struct
+    try:
+        with open(path, "rb") as fh:
+            b = fh.read(136 * 400)
+        t = [struct.unpack_from("<d", b, i * 136)[0] for i in range(len(b) // 136)]
+        d = [y - x for x, y in zip(t, t[1:]) if y > x]
+        if not d:
+            return None
+        r = 1.0 / statistics.median(d)
+        return round(r) if abs(r - round(r)) < 0.05 else round(r, 2)
+    except (OSError, struct.error, statistics.StatisticsError, ZeroDivisionError):
+        return None
+
+
 def export(project, ctx, out_dir, rate_hz=0, lever=None, sbet=True, ascii_cols=None, ascii_sep=",",
            proj=None, ts=None, te=None):
     traj = os.path.join(project.work_dir, "results", "trajectory.bin")
@@ -957,11 +1015,18 @@ def publish_handover(project, ctx):
         except (TypeError, ValueError):
             return None
     src = inst.get("source") or "entered"
+    rt_mode = c["processing"].get("mode") == "rt"
+    if rt_mode:      # the Certus's own solution: the frame of its RTK corrections, not the project frame
+        frame = {"name": "Certus real-time solution (frame of the RTK corrections)", "epoch": "",
+                 "heights": "ellipsoidal"}
+    else:
+        frame = {"name": (c.get("frame") or {}).get("name"), "epoch": (c.get("frame") or {}).get("epoch"),
+                 "heights": "ellipsoidal"}
+    rate = _sbet_rate(sbet) or (c["processing"].get("output_rate_hz") or 200)
     fields = {
         "time": {"system": "GPS", "week": week, "leap_seconds": leap, "start_gps": span[0], "end_gps": span[1],
                  "sbet_time": "GPS seconds of week"},
-        "frame": {"name": (c.get("frame") or {}).get("name"), "epoch": (c.get("frame") or {}).get("epoch"),
-                  "heights": "ellipsoidal"},
+        "frame": frame,
         "reference_point": {"name": "Certus reference point (IMU centre)", "offset_from_imu_m": [0.0, 0.0, 0.0]},
         "body_frame": "Certus aligned vehicle frame: X forward, Y starboard, Z down; roll + starboard down, "
                       "pitch + bow up, heading + clockwise",
@@ -970,7 +1035,7 @@ def publish_handover(project, ctx):
                                "used": bool(inst.get("use_antenna2"))},
                      "lidar": {"value": hw.get("ins_to_lidar_m"), "source": "capture (hardware.json)"}
                      if hw.get("ins_to_lidar_m") else None},
-        "rate_hz": 200 if not c["processing"].get("output_rate_hz") else c["processing"]["output_rate_hz"],
+        "rate_hz": rate,
         "quality": {"mode": c["processing"].get("mode"), "positioning": c["processing"].get("positioning"),
                     "fixed_pct": num("fixed_pct"), "imu_only_pct": num("ins_only_pct"),
                     "sep_h_p95_m": num("sep_h_p95_m"), "max_sd_h_m": num("max_sd_h_m"),

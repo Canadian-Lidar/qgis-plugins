@@ -479,6 +479,8 @@ class AreaProperties(_ToolWindow):
         self.step = dspin(0.01, 5000, 20, 1, 2, " m")
         self.step_len = QtWidgets.QCheckBox("Step = length")
         self.step_len.setChecked(True)
+        self.step.setEnabled(False)                 # the length (less the overlap) is the step
+        self.step_len.toggled.connect(lambda on: self.step.setEnabled(not on))
         self.overlap = QtWidgets.QSpinBox()
         self.overlap.setRange(0, 90)
         self.overlap.setValue(10)

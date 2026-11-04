@@ -121,6 +121,25 @@ def status_shares(qc):
 RT_FMT = struct.Struct("<dddd3f3f3f3fHH")
 
 
+def rt_span(path):
+    """(first, last) GPS time of the real-time solution file rt.bin, or None."""
+    try:
+        with open(path, "rb") as fh:
+            if fh.read(64)[:8] != b"PPRT0001":
+                return None
+            first = fh.read(RT_FMT.size)
+            if len(first) < RT_FMT.size:
+                return None
+            size = os.path.getsize(path)
+            n = (size - 64) // RT_FMT.size
+            fh.seek(64 + (n - 1) * RT_FMT.size)
+            last = fh.read(RT_FMT.size)
+        t0, t1 = RT_FMT.unpack(first)[0], RT_FMT.unpack(last)[0]
+        return (t0, t1) if t1 > t0 > 0 else None
+    except (OSError, struct.error):
+        return None
+
+
 def load_rt(path, step_s=1.0):
     """Real-time (packet 20) positions, decimated: list of (t, lat, lon, h, fix)."""
     out = []

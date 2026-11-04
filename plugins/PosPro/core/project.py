@@ -46,13 +46,16 @@ IMU_PRESETS = {
     },
 }
 
+# The mapper's vehicles (Settings > Hardware > Vehicle: session.VEHICLE_PRESETS), with the wheeled-vehicle
+# constraint each one gets: how fast (m/s) the rear axle may slide sideways or lift. The constraint and the
+# zero-velocity updates can be switched off on the Processing page for a platform without wheels.
 VEHICLE_PROFILES = {
-    "car": {"label": "Car / van", "nhc": True, "nhc_sigma": 0.1, "zupt": True},
+    "van": {"label": "Van", "nhc": True, "nhc_sigma": 0.1, "zupt": True},
     "truck": {"label": "Truck", "nhc": True, "nhc_sigma": 0.15, "zupt": True},
-    "rail": {"label": "Rail", "nhc": True, "nhc_sigma": 0.05, "zupt": True},
-    "boat": {"label": "Boat (no wheel constraints)", "nhc": False, "nhc_sigma": 0.5, "zupt": False},
-    "other": {"label": "Other (no wheel constraints)", "nhc": False, "nhc_sigma": 0.5, "zupt": True},
+    "car": {"label": "Car", "nhc": True, "nhc_sigma": 0.1, "zupt": True},
 }
+# motion profiles of PosPro 1.4 and earlier (a list of its own), read when an older project opens
+_OLD_PROFILES = {"car": 0.1, "truck": 0.15, "rail": 0.05, "boat": None, "other": None}
 
 FRAMES = {
     "NAD83(CSRS)": {"crs": "EPSG:4617", "label": "NAD83(CSRS)"},
@@ -90,7 +93,7 @@ DEFAULTS = {
         "source": "",
     },
     "imu": {"preset": "certus_evo", "custom": {}},
-    "vehicle": {"profile": "car", "length": 5.2, "width": 2.0, "type": "van", "outline": {}},
+    "vehicle": {"length": 5.2, "width": 2.0, "type": "van", "outline": {}},
     "processing": {
         "mode": "tc",             # tc | lc | gnss
         "positioning": "ppk",     # ppk | ppp
@@ -103,7 +106,7 @@ DEFAULTS = {
         "glonass_ar": False,
         "nhc": True,
         "zupt": True,
-        "nhc_sigma": 0.1,
+        "nhc_sigma": None,        # None = the vehicle's (VEHICLE_PROFILES)
         "align_mode": 0,          # 0 auto, 1 real-time attitude, 2 GNSS course
         "align_speed": 4.0,
         "output_rate_hz": 0,      # 0 = every IMU sample
@@ -221,7 +224,7 @@ class Project:
             "antennas": {"gnss1_m": inst.get("lever_antenna"), "gnss2_m": inst.get("lever_antenna2"),
                          "use_gnss2": inst.get("use_antenna2"), "source": inst.get("source", "")},
             "vehicle": {"type": c["vehicle"].get("type"), "outline": c["vehicle"].get("outline"),
-                        "rear_axle_m": inst.get("lever_nhc"), "constraints": c["vehicle"].get("profile")},
+                        "rear_axle_m": inst.get("lever_nhc"), "constraints": c["vehicle"].get("type")},
         }
         hw = c["rover"].get("hardware")
         if hw:
@@ -259,8 +262,32 @@ class Project:
         if not isinstance(data, dict) or "rover" not in data:
             raise ValueError("%s is not a PosPro project" % path)
         p.cfg = _merge(copy.deepcopy(DEFAULTS), data)
+        p._upgrade_vehicle()
         os.makedirs(p.work_dir, exist_ok=True)
         return p
+
+    def _upgrade_vehicle(self):
+        """PosPro 1.4 and earlier had a motion-constraint list of its own beside the mapper's vehicle. Now the
+        vehicle sets the constraints; an older project keeps what it processed with: no wheel constraint for
+        boat / other (and no zero-velocity updates for boat), 0.05 m/s for rail."""
+        veh = self.cfg["vehicle"]
+        if veh.get("type") not in VEHICLE_PROFILES:
+            veh["type"] = "van"
+        old = veh.pop("profile", None)
+        proc = self.cfg["processing"]
+        if old is None:
+            return
+        if old in ("boat", "other"):
+            proc["nhc"] = False
+            if old == "boat":
+                proc["zupt"] = False
+        if old == "rail":
+            proc["nhc_sigma"] = 0.05
+        elif proc.get("nhc_sigma") == 0.1:
+            proc["nhc_sigma"] = None            # the old fixed default: the vehicle's value from now on
+
+    def vehicle_profile(self):
+        return VEHICLE_PROFILES.get(self.cfg["vehicle"].get("type"), VEHICLE_PROFILES["van"])
 
     def save(self):
         if not self.path:
@@ -338,12 +365,35 @@ class Project:
         p.pop("label", None)
         return p
 
-    def rover_span(self):
+    def capture_span(self):
+        """(t0, t1) GPS seconds of the rover data: the raw IMU's span, else (captures without raw IMU,
+        processed in the real-time mode) the span of the Certus real-time solution. None before reading."""
         ex = self.cfg["rover"].get("extract") or {}
         try:
             t0, t1 = float(ex.get("imu_t0")), float(ex.get("imu_t1"))
+            if t1 > t0 > 0:
+                return t0, t1
         except (TypeError, ValueError):
+            pass
+        if not ex:
             return None
+        from . import results
+        return results.rt_span(os.path.join(self.work_dir, "extract", "rt.bin"))
+
+    def capture_span_source(self):
+        ex = self.cfg["rover"].get("extract") or {}
+        try:
+            if float(ex.get("imu_t1")) > float(ex.get("imu_t0")) > 0:
+                return "imu"
+        except (TypeError, ValueError):
+            pass
+        return "rt" if self.capture_span() else None
+
+    def rover_span(self):
+        span = self.capture_span()
+        if span is None:
+            return None
+        t0, t1 = span
         s = self.cfg["rover"].get("time_start") or t0
         e = self.cfg["rover"].get("time_end") or t1
         return max(s, t0), min(e, t1)

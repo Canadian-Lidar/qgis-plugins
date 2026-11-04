@@ -1,0 +1,456 @@
+<!--#vars {
+"EXTRAS_ROW": "",
+"WINDOW_EXTRA": "",
+"PROJECT_MENU_TABLE": "<table><tr><th>Item</th><th>What it does</th></tr><tr><td><span class=\"ui\">New project…</span></td><td>Opens the New DCS project dialog (below). PosPro then offers the captures it finds in the job folder as rover files.</td></tr><tr><td><span class=\"ui\">Open project…</span></td><td>Opens a processing project (<code>.dcsproj</code>), or an older stand-alone PosPro project (<code>.pospro.json</code>). The last project you had open reopens by itself when PosPro starts.</td></tr><tr><td><span class=\"ui\">Open the project folder</span></td><td>Shows the project folder (<code>Processing/&lt;Name&gt;</code>) in the file manager.</td></tr><tr><td><span class=\"ui\">Raw data moved? Relocate the job folder…</span></td><td>Asks for the job folder's new location and finds the captures there again; PosPro's rover file list follows. Not available for older stand-alone projects.</td></tr><tr><td><span class=\"ui\">Save the QGIS project in the project folder</span></td><td>Saves the open QGIS project as <code>&lt;Name&gt;.qgz</code> in the project folder (asks first when the QGIS project already has another file name).</td></tr><tr><td><span class=\"ui\">Show the log</span></td><td>The PosPro log of this session: every message, warning and error with its time.</td></tr><tr><td><span class=\"ui\">Engine version</span></td><td>The version of the processing engine and of RTKLIB inside it, and where the engine is installed.</td></tr><tr><td><span class=\"ui\">User guide (this version)</span></td><td>Opens this guide.</td></tr></table>",
+"AFTER_CREATE": "PosPro then looks through the job folder (five folder levels deep, skipping the Processing folder and the mapper's processed folders) for mapper captures: the survey lines' <code>.clraw</code> files and the mapper 2.10 navigation recordings, or the Certus logs (<code>.anpp</code>) when there is no <code>.clraw</code>, and asks whether to use them as the rover files (Figure {N}.3). When a mapper 2.10 project holds both navigation recordings and survey lines, it asks which (Figure {N}.4)."
+}-->
+<style>
+/* figure sizes for this guide (the screenshots are 2x) */
+figure img[src="fig/project_menu.png"]{max-width:34%}
+figure img[src="fig/window_menu.png"]{max-width:24%}
+figure img[src="fig/new_project.png"]{max-width:62%}
+figure img[src="fig/found_captures.png"],figure img[src="fig/choose_rover.png"],figure img[src="fig/calib_needs_tc.png"]{max-width:46%}
+figure img[src="fig/review_log.png"]{max-width:72%}
+figure img[src="fig/installation.png"]{max-height:112mm}
+figure img[src="fig/processing.png"]{max-height:105mm}
+figure img[src="fig/base.png"],figure img[src="fig/window.png"]{max-height:95mm}
+figure img[src="fig/review_found.png"],figure img[src="fig/review.png"],figure img[src="fig/quality.png"],
+figure img[src="fig/export.png"]{max-height:88mm}
+figure img[src="fig/calibration.png"]{max-height:62mm}
+.side{display:flex;gap:6mm;align-items:flex-start}
+.side>div{flex:1}
+.side figure{flex:0 0 42mm;margin:0}
+.side figure img{max-width:100%}
+</style>
+<!--#contents-->
+
+<h1><span class="num">{N}</span>Introduction</h1>
+<p>PosPro computes the trajectory of a Canadian Lidar mobile mapper: where the Certus GNSS/INS was, and how it was oriented, at every moment of a drive. It reads the mapper's captures (<code>.clraw</code>) or the Certus logs (<code>.anpp</code>) directly, combines the raw IMU and the raw satellite observations of both Certus antennas with base station data, and runs the inertial filter forward and backward over the drive. The two passes are combined into one smoothed trajectory, which you check on the map and in plots, clean up in Trajectory Review and export as SBET/SMRMSG, text, GeoPackage or GPX.</p>
+<p>PosPro is <b>stage 01</b> of the DCS chain. Every time you process, PosPro also publishes the trajectory for the next stages: <b>AlignPro</b> uses it to solve the Lidar mounting (boresight), and <b>CloudPro</b> uses it to georeference the point cloud. You do not export anything by hand for them.</p>
+
+<figure><img src="fig/window.png"><figcaption><b>Figure {N}.1</b> The PosPro window: the header with the workflow boxes and the project box, the eight steps on the left, the open step on the right, and the status line at the bottom.</figcaption></figure>
+
+<h2>What PosPro reads and makes</h2>
+<table>
+<tr><th></th><th>Details</th></tr>
+<tr><td>Rover data</td><td>Mapper captures (<code>.clraw</code>, also unfinished <code>.clraw.partial</code> files) and Certus logs (<code>.anpp</code>). PosPro uses the Certus packets 20 (real-time solution and attitude), 28 (raw IMU), 60 (raw satellite observations), 61 (GPS ephemeris), 185 (installation) and 196 (dual-antenna set-up), and the mapper's <code>hardware.json</code> inside the capture.</td></tr>
+<tr><td>Base stations</td><td>RINEX observation files (also Hatanaka-compressed and gzipped), or downloads from the base-station finder. Base positions from the RINEX header, typed in, built-in PPP or NRCan CSRS-PPP.</td></tr>
+<tr><td>Processing</td><td>Tightly coupled GNSS/INS (both antennas), loosely coupled, GNSS only, or the Certus real-time solution. Differential (PPK) or precise point positioning (PPP). Forward and backward passes, combined.</td></tr>
+<tr><td>Checks</td><td>Quality summary and findings, map layers coloured by solution type, accuracy or separation, quality plots, Trajectory Review, antenna lever-arm solver.</td></tr>
+<tr><td>Output</td><td>SBET + SMRMSG, text files with the columns you choose, GeoPackage layer, GPX track, export note; the published trajectory for AlignPro and CloudPro.</td></tr>
+</table>
+<p>Processing runs in a separate engine program (with RTKLIB inside), so a fault in processing never closes QGIS. The forward and backward passes run at the same time.</p>
+
+<h2>The workflow</h2>
+<div class="side"><div><p>Work down the eight steps on the left of the window. Each step shows its state in colour with a short note under its name:</p>
+<ul>
+<li><b>Green</b>: done (for example <i>100.0% fixed</i>, <i>3 reviewed</i>).</li>
+<li><b>Amber</b>: needs a look (a base position from the RINEX header, an antenna offset of zero, review windows still open, fewer than 95&nbsp;% fixed).</li>
+<li><b>Red</b>: a problem (for example <i>no raw GNSS</i> when the captures hold no raw satellite observations and a method that needs them is chosen).</li>
+<li><b>Grey</b>: not done yet; the note says what is missing.</li>
+</ul>
+<ol class="steps">
+<li><b>Data</b>: the rover files, the time range and the ephemeris.</li>
+<li><b>Base</b>: the base station and its position.</li>
+<li><b>Installation</b>: vehicle, motion sensor and the offsets of the antennas, the Lidar and the rear axle.</li>
+<li><b>Processing</b>: method and settings; <span class="ui">Process</span>.</li>
+<li><b>Quality</b>: the summary, the findings, the map colours and the quality plots.</li>
+<li><b>Review</b>: find the parts that miss your limits and decide what to do with each.</li>
+<li><b>Calibration</b>: solve the antenna lever arms from the drive.</li>
+<li><b>Export</b>: SBET/SMRMSG, text, GeoPackage, GPX.</li>
+</ol>
+</div><figure><img src="fig/steps.png"><figcaption><b>Figure {N}.2</b> The steps and their states.</figcaption></figure></div>
+<p>Steps 1 to 3 hold settings; they are saved as you change them. Step 4 runs the processing; steps 5 to 8 work on its result.</p>
+
+<h2>What's new</h2>
+<table>
+<tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>1.5.1</b></td><td>Mapper 2.10 projects: a new project offers the navigation recordings (recommended) or the survey lines; rover files are read in recording order; a navigation recording's hardware record is completed from a survey line. Needs DCS Core 1.4.0.</td></tr>
+<tr><td><b>1.5.0</b></td><td>The same header as AlignPro and CloudPro: logo, the plugin name, the workflow boxes beside it, the project box on the right, then the Window button and the user guide button. The window title is just <i>PosPro</i>. The vehicles are the mapper's (Van, Truck, Car) and set the wheel constraints; the separate motion-constraints list is gone (older projects keep what they processed with). Captures without raw IMU take their time span from the real-time solution, and a real-time trajectory is published with the frame of the Certus RTK corrections and its own rate. This guide, rewritten with screenshots of this version. Needs DCS Core 1.3.0.</td></tr>
+<tr><td>1.4.0</td><td>Named just PosPro. Opens in DCS Core's standard window: floating the first time, docked only when you choose it from the Window menu; dragging never docks it. It comes back as you left it, also after QGIS restarts; <span class="ui">Reset window</span> returns to the default. The quality plots open in the same kind of window. Neutral graphite look with lighter view backgrounds.</td></tr>
+<tr><td>1.3.x</td><td>Trajectory Review (step 6). The real-time mode (the Certus solution, no base station). GPX export. The user guide is installed with the plugin.</td></tr>
+<tr><td>1.2.x</td><td>Part of the DCS chain (needs DCS Core): projects in the job folder, the trajectory published for AlignPro and CloudPro, workflow boxes with out-of-date results, relocating a moved job folder, saving the QGIS project in the project folder. Older <code>.pospro.json</code> projects still open.</td></tr>
+<tr><td>1.1.x</td><td>Tight coupling with both antennas, atmosphere estimation, signal-strength weighting, lever-arm solver, base-station finder, Installation filled from the capture, data coverage bars, <span class="ui">Measure GPS2 from the data</span>.</td></tr>
+</table>
+
+<!--#include install-->
+<!--#include window-->
+<p>Below the steps, the bottom of the window holds the <b>status line</b> (the last message, or the stage of the job that is running), a progress bar and a red <span class="ui">STOP</span> button while a job runs, and short <b>messages</b> (green, amber or red edge) that disappear after a few seconds. Warnings and errors also go to the QGIS message bar and to <span class="ui">Show the log</span>. Only one job runs at a time; starting another while one runs gives <i>Wait for the current job to finish (or cancel it).</i></p>
+<p>The default window is 1400 × 950 pixels; docked left or right it is 720 pixels wide.</p>
+
+<!--#include projects-->
+<figure class="half"><img src="fig/found_captures.png"><figcaption><b>Figure {N}.3</b> After a new project is created, PosPro offers the captures it found in the job folder as rover files.</figcaption></figure>
+<figure class="half"><img src="fig/choose_rover.png"><figcaption><b>Figure {N}.4</b> A mapper 2.10 project with a navigation recording and survey lines: choose <span class="ui">Navigation</span> (recommended), <span class="ui">Survey lines</span> or <span class="ui">Neither</span>.</figcaption></figure>
+<p><b>Navigation or survey lines?</b> A mapper 2.10 navigation recording holds everything the Certus sent while the mapper project was open: the static periods before and after the drive and the time between the lines as well as the lines themselves. Processed once, it gives one trajectory that covers every line, which suits PPK and tight coupling best. The survey lines hold only each line and a few seconds around it. Files are read in recording order, whatever their names. The navigation recording's hardware record has no vehicle, rear axle or coordinate system; PosPro takes those from a survey line of the same job.</p>
+<p>PosPro keeps its own settings in <code>01_PosPro/pospro.json</code> and its work in <code>01_PosPro/work/</code> (extracted data, intermediate files, results). Shared facts that the other stages need (coordinate frame, base station, antenna offsets, vehicle, the capture's hardware record, the list of captures) are written into the shared project whenever you change them in PosPro.</p>
+
+<h1><span class="num">{N}</span>Step 1 – Data</h1>
+<p>The Data page holds the rover files, what they contain, the time range to process and the satellite ephemeris.</p>
+<figure><img src="fig/data_files.png"><figcaption><b>Figure {N}.1</b> The rover files of the project: the two captures found in the job folder.</figcaption></figure>
+
+<h2>Rover data</h2>
+<ul>
+<li><span class="ui">Add files…</span> adds Certus logs (<code>.anpp</code>) or mapper captures (<code>.clraw</code>, <code>.clraw.partial</code>). Split files of one capture can be added together; they are read in name order. Adding files clears the time range and reads the files at once.</li>
+<li><span class="ui">Remove</span> takes the selected files off the list (the files themselves are not touched).</li>
+<li><span class="ui">Read files</span> reads all files again. Reading extracts the raw IMU, the raw observations of both antennas, the real-time solution, the ephemeris and the capture's hardware record into the project's work folder. PosPro reads again by itself before processing whenever a file has changed.</li>
+</ul>
+<p>A file that is no longer where it was shows in red (<i>File not found</i> on hover). After reading, PosPro fills the Installation offsets from the capture if they are still empty, with the message <i>Installation offsets filled from the capture (…)</i>.</p>
+
+<h2>What the files contain</h2>
+<p>After reading, this box lists what PosPro found. Lines in amber point at something to check.</p>
+<table>
+<tr><th>Line</th><th>Shows</th></tr>
+<tr><td>Recording</td><td>Start and end (UTC) and duration of the IMU data; for captures without raw IMU, of the Certus real-time solution (the line says so).</td></tr>
+<tr><td>IMU (packet 28)</td><td>Number of samples, rate and gaps (amber when there are gaps). Notes when samples before GNSS time was valid were skipped, or when IMU time stamps were shifted to match packet 20.</td></tr>
+<tr><td>GNSS (packet 60)</td><td>Epochs, interval and the mean number of satellites, then the signals recorded. Amber notes: epochs not on whole seconds (base data are then interpolated; set the Certus to 125&nbsp;ms for whole-second epochs), or GLONASS off on the Certus. <i>none – raw observations were not recorded</i> when the captures hold no raw observations; the Data step then turns red (<i>no raw GNSS</i>) and only the real-time mode can run.</td></tr>
+<tr><td>Ephemeris (packet 61)</td><td>The number of GPS ephemerides the Certus recorded.</td></tr>
+<tr><td>Checksum errors</td><td>Shown only when packets failed their checksum.</td></tr>
+<tr><td>Mapper hardware</td><td><i>hardware.json found in the capture</i>: the mapper's offsets can be used on the Installation page.</td></tr>
+</table>
+
+<h2>Time range to process (UTC)</h2>
+<p><span class="ui">Start</span> and <span class="ui">End</span> limit the processing to part of the capture, for example to leave out a long wait at the start. They cannot go beyond the recording. <span class="ui">Whole capture</span> clears the limits. The same range is used by <span class="ui">Data-page time range only</span> on the Export page.</p>
+
+<h2>Data coverage</h2>
+<figure><img src="fig/data_coverage.png"><figcaption><b>Figure {N}.2</b> Data coverage and the ephemeris settings. Here the captures hold the Certus real-time solution only: the IMU and GNSS 1 bars are red and the real-time bar shows the two passes.</figcaption></figure>
+<p>One bar per data stream over the time of the capture: <b>IMU</b>, <b>GNSS 1</b>, <b>GNSS 2</b> (when the second antenna was recorded) and <b>Real-time</b>. Mint is good, amber degraded (IMU samples missing, fewer than 5 satellites), red no data. The real-time bar takes the colour of the Certus fix type (RTK fixed mint, RTK float blue, DGNSS or SBAS amber, 2D/3D red). Dashed lines mark the processing span; hover a bar for times. The Base page shows the same bars with one more per base station.</p>
+
+<h2>Satellite ephemeris</h2>
+<ul>
+<li><span class="ui">Download broadcast ephemeris</span> (on by default): merged broadcast ephemeris of all constellations from the IGS archives, for each day of the drive. Downloads are cached in the <code>pospro_cache</code> folder of your QGIS profile.</li>
+<li>The Certus records GPS ephemeris only. Without internet, add a RINEX navigation file from your base with <span class="ui">Add navigation file…</span>; <span class="ui">Remove</span> takes it off the list. Navigation files lying next to the base observation files (same 4-character station name) are also used automatically.</li>
+</ul>
+
+<h1><span class="num">{N}</span>Step 2 – Base stations</h1>
+<p>Differential processing (PPK) and tight coupling need one base station that covers the whole drive. Every point of the trajectory inherits the base position's error and its frame, so give the base a precise position before processing. The Base page is not needed for PPP or for the real-time mode (the step then reads <i>not needed (PPP)</i> or stays grey).</p>
+<figure><img src="fig/base.png"><figcaption><b>Figure {N}.1</b> The Base page before a base station is added. The position fields are filled in once a base is selected in the table.</figcaption></figure>
+
+<h2>The base table</h2>
+<table>
+<tr><th>Column</th><th>Shows</th></tr>
+<tr><td>Base</td><td>The station name. <b>★</b> marks the base used for processing.</td></tr>
+<tr><td>Distance</td><td>From the drive: green up to 20&nbsp;km, amber up to 40&nbsp;km, red beyond.</td></tr>
+<tr><td>Interval</td><td>The observation interval of the file.</td></tr>
+<tr><td>Covers</td><td>The share of the rover's time that the base file covers. It should be 100&nbsp;%.</td></tr>
+<tr><td>Position from</td><td>RINEX header, entered, built-in PPP or CSRS-PPP, with the frame and epoch.</td></tr>
+</table>
+<ul>
+<li><span class="ui">Add RINEX…</span> adds a base from RINEX observation files (<code>.obs .rnx .crx .??o .??d .gz</code>). Select several files of the same station to add them as one base; their observations are merged (they must list the same observation types, otherwise add them as separate bases). Compact (Hatanaka) RINEX is decompressed automatically.</li>
+<li><span class="ui">Download…</span> opens the base-station finder (below).</li>
+<li><span class="ui">Remove</span> removes the selected base; <span class="ui">Use this base</span> makes it the one used for processing (the first base added is used until you choose another).</li>
+</ul>
+<p>The bases also appear on the QGIS map, in the group <i>PosPro: &lt;project&gt;</i>: the base used as a large red triangle, the others grey, with distance rings at 20, 40 and 60&nbsp;km.</p>
+
+<h2>Position of the selected base (marker)</h2>
+<p>The coordinates are those of the marker. Choose the <span class="ui">Source</span> (RINEX header (approximate), Entered / published, Built-in PPP, NRCan CSRS-PPP), enter <span class="ui">Latitude</span> and <span class="ui">Longitude</span> in decimal degrees and the ellipsoidal <span class="ui">Height</span>, the <span class="ui">Frame</span> (NAD83(CSRS), ITRF2020 / IGS20, WGS 84, NAD83(2011)) and its <span class="ui">Epoch</span>, the <span class="ui">Antenna type</span> (from the RINEX header; used with the IGS antenna calibrations) and the <span class="ui">ARP height</span>, then press <span class="ui">Save position</span>. The frame and epoch of the base become those of the project: the trajectory and every export are in that frame.</p>
+
+<h2>Compute the base position</h2>
+<table>
+<tr><th>Button</th><th>Use when</th><th>Result</th></tr>
+<tr><td><span class="ui">Built-in PPP</span></td><td>No CSRS-PPP account, or offline once the products are cached</td><td>Static PPP with downloaded precise orbits and clocks (ESA, IGS or CODE; finals first, then rapids) and the IGS antenna file. ITRF2020 at the observation date, transformed to NAD83(CSRS) at the same date when the base frame is NAD83(CSRS); no velocity applied. Needs at least 2 hours of base data for centimetre level; PosPro warns when the file is shorter.</td></tr>
+<tr><td><span class="ui">Send to NRCan CSRS-PPP</span></td><td>Internet and an NRCan account</td><td>Enter the <span class="ui">E-mail</span> you use as your NRCan user name and choose the <span class="ui">NAD83(CSRS) epoch</span>: New Brunswick (1997.0), Federal (2010.0) or Observation date. PosPro sends the file, waits for the result and enters the NAD83(CSRS) position at that epoch.</td></tr>
+</table>
+<p>The result of each computation is listed under the buttons (built-in PPP: date, hours of data, products and σ). For work tied to NAD83(CSRS) epoch 1997.0, use CSRS-PPP with that epoch: the built-in PPP gives the position at the observation date, which differs by the crustal motion since 1997.</p>
+<div class="warn"><b>Approximate base positions</b> The Base step turns amber while the base position comes from the RINEX header, and <span class="ui">Process</span> asks before using it: <i>The base position comes from the RINEX header and may be metres off; every point of the trajectory inherits that error.</i></div>
+
+<h2>The base-station finder</h2>
+<p><span class="ui">Download…</span> opens <i>PosPro – base stations near the drive</i>: a map of the reference stations within 150&nbsp;km of the drive, with the drive itself in red and dashed rings at 20, 40 and 60&nbsp;km. Read the rover files first; the map centres on the drive. The finder needs the internet.</p>
+<table>
+<tr><th>Network</th><th>Symbol</th><th>Download from PosPro</th></tr>
+<tr><td>NRCan CACS, NS active control, NRCan regional</td><td>squares (red, pink, dark red)</td><td>Yes, free</td></tr>
+<tr><td>IGS</td><td>mint star</td><td>Yes, free</td></tr>
+<tr><td>NOAA CORS</td><td>blue triangle</td><td>Yes, free</td></tr>
+<tr><td>Can-Net, SmartNet, BrandtNet, TopNET, GEODNET, Other RTK</td><td>diamond, pentagon, hexagon, triangle, circle, cross</td><td>Through the network's portal (<span class="ui">Open portal</span>, then <span class="ui">Import file…</span>), or with your account where the network allows it</td></tr>
+</table>
+<ol class="steps">
+<li>Untick networks in the legend under the map to hide them. Large symbols are the three nearest stations of each network; the table lists them with <span class="ui">Network</span>, <span class="ui">Station</span>, <span class="ui">km</span>, <span class="ui">Rates</span> and <span class="ui">Access</span> (Free download, Your account, Portal only).</li>
+<li>Click a station on the map or a row. The card shows its name, operator, distance (green within 20&nbsp;km, amber within 40, red beyond), position, receiver and antenna, status (for the commercial networks, NRCan's check of their tie to NAD83(CSRS)), rates and access, and the days of the drive.</li>
+<li>Choose the <span class="ui">Rate</span> (rates under 5&nbsp;s come as 15-minute files, others as daily files), leave <span class="ui">Precise orbits, clocks and antenna file</span> on, and press <span class="ui">Download</span>. A progress card shows the file, the megabytes and the time, with <span class="ui">Cancel</span>. Networks that need your account ask for it once and keep it in the QGIS password store.</li>
+<li>When the download finishes the finder closes and the station is added to the base table, with a message saying where the files were saved (the project's <code>work/base</code> folder).</li>
+</ol>
+<p>Station lists are cached for a week; <span class="ui">Refresh station lists</span> loads them again. The commercial stations come from NRCan's list of networks tied to NAD83(CSRS), so they cover Canada only.</p>
+
+<h1><span class="num">{N}</span>Step 3 – Installation</h1>
+<p>Offsets are in metres from the Certus reference point, in the vehicle frame: <b>Forward +, Starboard +, Down +</b>. This is the same frame and the same values as the mapper's <i>Settings › Hardware</i>, and the page is laid out the same way. The offsets are filled from the capture when the rover files are read.</p>
+<figure><img src="fig/installation.png"><figcaption><b>Figure {N}.1</b> The Installation page, filled from the mapper's <code>hardware.json</code> in the capture. The green notes confirm that the values match the capture.</figcaption></figure>
+
+<h2>Mounting drawing</h2>
+<p>Choose the <span class="ui">Vehicle</span>: Van, Truck or Car, the same vehicles and sizes as in the mapper (<i>Settings › Hardware</i>). When the rover files are read, the vehicle recorded in the capture is chosen for you. The vehicle also sets the wheel constraints used in processing (below). The drawing shows the vehicle from above, from starboard and from the rear, with the Certus origin, GPS1, GPS2, the output point (Lidar) and the rear axle as you enter them, so a sign error or a swapped axis shows at a glance.</p>
+
+<h2>Positioning and motion</h2>
+<ul>
+<li><span class="ui">Positioning motion sensor</span>: the IMU model, which sets the noise and bias values the filter uses: Advanced Navigation Certus Evo (default), Advanced Navigation Certus, Generic tactical-grade MEMS, Generic industrial MEMS.</li>
+<li><span class="ui">Mounting angles</span>: the Certus alignment (roll + starboard down, pitch + bow up, heading + clockwise) from the capture. The Certus applies its alignment itself, so its output is already in the vehicle frame; the angles are shown for checking only.</li>
+<li><span class="ui">Primary GPS (GPS1)</span> and <span class="ui">Secondary GPS (GPS2)</span>: the antenna offsets. Under each row PosPro shows what the Certus or the capture reports: green <i>✓ matches</i> within 1&nbsp;cm, amber <i>≠ differs by … mm</i> otherwise. With the Certus dual antenna in automatic mode there is no GPS2 offset to read, and PosPro says so.</li>
+<li><span class="ui">Use the secondary antenna in tight coupling</span> (on by default): with both antennas, heading stays observable when parked or driving straight, and GNSS gaps are bridged better. It is greyed out when the captures hold no observations of the second antenna. GPS2 is used only when its offset is not zero.</li>
+<li><span class="ui">Measure GPS2 from the data</span>: computes the GPS1–GPS2 carrier-phase baseline from the recorded observations, turns it into the vehicle frame with the Certus attitude and adds it to GPS1. It works parked or driving, needs a few minutes with both antennas in the open, and asks before using the result (with its ± values, the antenna separation and the share of fixed epochs). Enter GPS1 first.</li>
+</ul>
+
+<h2>Survey sensor / output point</h2>
+<p>A <span class="ui">Name</span> (for example <i>Lidar</i>) and the <span class="ui">Sensor offsets</span> of the point you may want the trajectory exported at. It appears as a choice under <span class="ui">Position of</span> on the Export page. Leave it at 0 to export at the Certus. The published trajectory for AlignPro and CloudPro is always at the IMU centre, whatever you enter here.</p>
+
+<h2>Vehicle</h2>
+<ul>
+<li><b>Wheel constraints</b> follow the vehicle chosen above: the rear axle of a van or car may slide sideways at 0.10&nbsp;m/s, of a truck at 0.15&nbsp;m/s. For a platform without wheels (a boat, a trolley), switch <span class="ui">Wheeled vehicle constraint</span> off on the Processing page, and <span class="ui">Zero velocity when parked</span> too if it never stands still.</li>
+<li><span class="ui">IMU time offset</span> (ms): a fixed time shift of the IMU data, for expert use; leave it at 0 for the Certus.</li>
+<li><span class="ui">Rear axle centre</span>: the wheeled-vehicle constraint says the rear axle does not slide sideways or lift. If the Certus is not above the axle, enter where the axle centre is: in a turn at 0.3&nbsp;rad/s each metre of offset is 0.3&nbsp;m/s of sideways speed at the Certus. Measure it once per vehicle; a tape to 5&nbsp;cm is enough. The mapper's rear-axle value is read from the capture when it is there.</li>
+</ul>
+<p><span class="ui">Use offsets from the capture</span> (shown when the capture holds offsets) sets GPS1, GPS2, the Lidar offset, the rear axle and the vehicle from the mapper's <code>hardware.json</code>, or else from the Certus installation record (packet 185) and dual-antenna set-up (packet 196), and lists what it set. The line under it says where the offsets came from (<i>Offsets from: mapper hardware.json</i>, or <i>Offsets entered by hand</i>). The Installation step turns amber while the GPS1 offset is zero.</p>
+
+<h1><span class="num">{N}</span>Step 4 – Processing</h1>
+<figure><img src="fig/processing.png"><figcaption><b>Figure {N}.1</b> The Processing page with its default settings (tightly coupled, PPK, both passes) and the <span class="ui">Advanced</span> section opened.</figcaption></figure>
+
+<h2>Method</h2>
+<table>
+<tr><th>Method</th><th>What it does</th><th>Needs</th></tr>
+<tr><td><span class="ui">Tightly coupled (recommended)</span></td><td>Raw carrier phase and code from rover (both antennas) and base go straight into the inertial filter. Keeps fixing with fewer than 4 satellites and repairs cycle slips with the IMU.</td><td>Raw IMU, raw GNSS, a base station with a position</td></tr>
+<tr><td><span class="ui">Loosely coupled</span></td><td>GNSS positions are computed first (RTKLIB) and then blended with the IMU.</td><td>Raw IMU, raw GNSS; a base for PPK, or PPP without a base</td></tr>
+<tr><td><span class="ui">GNSS only (no IMU)</span></td><td>The RTKLIB kinematic solution, forward and backward, combined. No attitude: roll and pitch are 0 and the heading follows the direction of travel. For comparison, or when there is no IMU data.</td><td>Raw GNSS; a base for PPK, or PPP</td></tr>
+<tr><td><span class="ui">Real-time solution (no base station)</span></td><td>The Certus's own real-time trajectory (packet 20), cleaned in Trajectory Review. For when there is no base station, or RTK was used in the field.</td><td>The real-time solution in the captures</td></tr>
+</table>
+<ul>
+<li><span class="ui">Positioning</span>: <i>Differential (base station, PPK)</i> or <i>Precise point positioning (no base)</i>. PPP works with loose coupling and GNSS only; tight coupling always needs a base. With PPP the trajectory is in ITRF2020 at the observation date, not NAD83(CSRS), and PosPro sets the project frame that way and warns.</li>
+<li><span class="ui">Passes</span>: <i>Forward and backward, combined</i> (the normal case: the two passes are combined by their accuracy, and their difference is the separation shown on the Quality page) or <i>Forward only (quick check)</i>.</li>
+</ul>
+<figure><img src="fig/processing_rt.png"><figcaption><b>Figure {N}.2</b> The real-time mode selected. It uses the Certus solution as recorded; the positioning and passes settings do not apply to it.</figcaption></figure>
+
+<h2>GNSS</h2>
+<ul>
+<li>Constellations: <span class="ui">GPS</span>, <span class="ui">GLONASS</span>, <span class="ui">Galileo</span>, <span class="ui">BeiDou</span>, <span class="ui">QZSS</span> (GPS, GLONASS, Galileo and QZSS by default).</li>
+<li><span class="ui">Elevation mask</span> (12° by default): satellites lower than this are not used.</li>
+<li><span class="ui">Ratio test</span> (3.0): how clearly the best integer ambiguity set must win before it is accepted as fixed. Higher is safer but fixes less.</li>
+<li><span class="ui">Fix integer ambiguities</span>: off gives a float solution only.</li>
+<li><span class="ui">Frequencies</span>: <i>Dual frequency</i> or <i>L1 only</i>.</li>
+<li><span class="ui">Atmosphere</span>: estimates the difference in ionosphere (per satellite) and troposphere between rover and base. <i>Automatic (long baselines)</i> turns it on beyond 10&nbsp;km or 150&nbsp;m height difference, where it keeps ambiguities fixable; on short baselines it only adds noise. <i>Always estimate</i>, <i>Off (short baselines)</i>.</li>
+<li><span class="ui">Weight by signal strength</span>: weak signals (trees, buildings, multipath) count less than strong ones.</li>
+</ul>
+
+<h2>Inertial</h2>
+<ul>
+<li><span class="ui">Wheeled vehicle constraint</span>: the vehicle does not slide sideways or jump; keeps the solution tight in GNSS gaps. How much sideways slip it allows comes from the vehicle on the Installation page (van and car 0.10&nbsp;m/s, truck 0.15&nbsp;m/s). Switch it off for a platform without wheels.</li>
+<li><span class="ui">Zero velocity when parked</span>: zero-velocity updates while the vehicle stands still.</li>
+<li><span class="ui">Trajectory rate</span>: <i>IMU rate (200 Hz)</i>, 100, 50, 20 or 10&nbsp;Hz.</li>
+</ul>
+
+<h2>Advanced</h2>
+<ul>
+<li><span class="ui">Alignment</span>: how the filter starts its attitude: <i>Automatic (real-time attitude, else from motion)</i>, <i>Real-time attitude from packet 20</i>, or <i>From motion (GNSS course, drive straight)</i>.</li>
+<li><span class="ui">Alignment speed</span> (4.0&nbsp;m/s): the speed needed to align from motion.</li>
+<li><span class="ui">Outlier gate (χ²)</span> (9.0): GNSS measurements that disagree more than this with the filter are rejected.</li>
+<li><span class="ui">Max base gap</span> (60&nbsp;s): the longest interval between base observations that tight coupling bridges.</li>
+<li><span class="ui">Expert</span>: extra settings, one per line as <code>key = value</code>. Keys starting with <code>pos</code>, <code>stats</code>, <code>misc</code> or <code>ant</code> go to RTKLIB; all others go to the inertial engine. Lines starting with <code>#</code> are ignored.</li>
+</ul>
+
+<h2>Process</h2>
+<p>Press <span class="ui">Process</span>. PosPro first checks that the rover files are read and, for PPK and tight coupling, that a base is chosen (and asks when its position is only from the RINEX header). Then, in the background:</p>
+<ol class="steps">
+<li>the rover files are read again if they changed;</li>
+<li>for loose coupling, GNSS only and PPP: the GNSS solutions, forward and backward;</li>
+<li>the inertial passes, forward and backward at the same time (for the real-time mode: the Certus solution as one pass);</li>
+<li>the passes are combined; your Trajectory Review decisions (poor, interpolate) are applied again;</li>
+<li>the trajectory is published for AlignPro and CloudPro.</li>
+</ol>
+<p>The status line shows the stage and the progress bar the progress; <span class="ui">STOP</span> ends the run. The project box turns red and the PosPro workflow box reads <i>running</i>; another computer cannot process the same stage at the same time (<i>… is being processed by … on … since …</i>). When the run finishes, the Quality page opens. A run that fails or is stopped keeps the earlier results, and the PosPro box shows <i>failed</i>.</p>
+
+<h1><span class="num">{N}</span>Step 5 – Quality</h1>
+<figure><img src="fig/quality.png"><figcaption><b>Figure {N}.1</b> The Quality page for a real-time trajectory. With one pass there is no forward/backward separation; see the note below.</figcaption></figure>
+<p>The donut shows the share of each solution type (Fixed mint, Float blue, PPP light blue, Code (DGNSS) amber, Single red, INS only violet). The cards:</p>
+<table>
+<tr><th>Card</th><th>Green</th><th>Amber</th><th>Red</th></tr>
+<tr><td>fixed ambiguities</td><td>≥ 95&nbsp;%</td><td>≥ 75&nbsp;%</td><td>below</td></tr>
+<tr><td>bridged by the IMU only</td><td colspan="3">share of the time without GNSS updates</td></tr>
+<tr><td>fwd/bwd separation (95%)</td><td>&lt; 5&nbsp;cm</td><td>&lt; 20&nbsp;cm</td><td>above</td></tr>
+<tr><td>largest 3D σ</td><td>&lt; 10&nbsp;cm</td><td>&lt; 50&nbsp;cm</td><td>above</td></tr>
+<tr><td>longest GNSS gap</td><td colspan="3">the longest stretch bridged by the IMU only</td></tr>
+<tr><td>processing time</td><td colspan="3">of the last run</td></tr>
+</table>
+<div class="note"><b>Single-pass results</b> With <i>Forward only</i> and in the real-time mode there is no backward pass to compare with, so the separation card shows <i>–</i>.</div>
+<p>A good mobile-mapping trajectory is over 95&nbsp;% fixed, has a forward/backward separation under 5&nbsp;cm (95&nbsp;%), and no 3D σ worse than 10&nbsp;cm outside GNSS gaps. The Quality step is green from 95&nbsp;% fixed, amber below.</p>
+
+<h2>Findings</h2>
+<p>A plain-language list: the share fixed, the longest GNSS gap bridged by the IMU and the number of gaps over 2&nbsp;s, the forward/backward separation (95&nbsp;% and maximum), up to five stretches where the passes disagree by more than 10&nbsp;cm, up to three stretches where the estimated 3D accuracy is worse than 10&nbsp;cm, and the IMU biases estimated at the end. Findings with a time show it in UTC; click one to mark that place on the map and zoom the quality plots to it (the plots open if they are closed).</p>
+
+<h2>The map</h2>
+<p>PosPro puts its layers in the group <i>PosPro: &lt;project&gt;</i> of the QGIS layer panel: <b>Real-time track</b> (what the Certus computed in the field, shown as soon as the files are read), <b>Base stations</b> and <b>Base distance rings</b>, <b>Trajectory</b> (one point per second, with the time, solution, satellites, height, attitude, speed, σ, separation and gap as attributes), <b>Trajectory line</b> and, after Trajectory Review, <b>Review windows</b>. <span class="ui">Colour the map by</span> colours the trajectory points by <i>Solution type</i>, <i>Estimated accuracy (3D σ)</i> or <i>Forward/backward separation</i> (classes &lt; 2&nbsp;cm, 2–5, 5–10, 10–30, 30–60, &gt; 60&nbsp;cm).</p>
+
+<h2>The quality plots</h2>
+<p><span class="ui">Open the quality plots</span> opens <i>PosPro – quality plots</i> in a window of its own (the same standard window as PosPro: floating by default, docked from its title-bar menu).</p>
+<figure><img src="fig/plots_height.png"><figcaption><b>Figure {N}.2</b> The quality plots, Ellipsoidal height tab: the two passes of the drive with the gap between them. The strip under the plot shows the solution type.</figcaption></figure>
+<p>The tabs: <b>Position accuracy</b> (σ north, east, down), <b>Forward − backward separation</b> (north, east, down, where both passes have a solution), <b>Attitude accuracy</b> (σ roll, pitch, heading), <b>Satellites and solution</b> (satellites and the ambiguity ratio ÷ 10), <b>Speed</b>, <b>Ellipsoidal height</b>, <b>Roll and pitch</b> and <b>IMU bias estimates</b> (accelerometers in mg, gyros in deg/h).</p>
+<p>Wheel to zoom, drag to pan, double-click (or <span class="ui">Whole drive</span>) for the whole drive. Hover for the values at a time. A click marks the time with an orange line and shows that place on the map with an orange circle. With <span class="ui">Link zoom</span> on, all tabs follow the same time range. Under every plot a strip shows the solution type in the map colours, and GNSS gaps (INS only) are shaded violet.</p>
+
+<h1><span class="num">{N}</span>Step 6 – Trajectory Review</h1>
+<p>Trajectory Review finds where the trajectory misses your limits, lets you look at each place on the map and in the plots, and records what you decide for each. Decisions are kept with the project and carried to AlignPro and CloudPro.</p>
+<figure><img src="fig/review_found.png"><figcaption><b>Figure {N}.1</b> Anomalies found on a real-time trajectory with the horizontal σ limit set to 0.015&nbsp;m. Both are still open.</figcaption></figure>
+
+<h2>Limits</h2>
+<table>
+<tr><th>Limit</th><th>Default</th><th>Finds</th></tr>
+<tr><td><span class="ui">Solution worse than</span></td><td>fixed (on)</td><td>Samples worse than fixed, float, DGNSS or single (IMU-only samples are left to the IMU limit)</td></tr>
+<tr><td><span class="ui">Horizontal σ above</span></td><td>0.100&nbsp;m (on)</td><td>Horizontal accuracy worse than the limit</td></tr>
+<tr><td><span class="ui">Vertical σ above</span></td><td>0.150&nbsp;m (on)</td><td>Vertical accuracy worse than the limit</td></tr>
+<tr><td><span class="ui">Fwd/bwd separation above</span></td><td>0.100&nbsp;m (on)</td><td>The passes disagreeing horizontally by more than the limit</td></tr>
+<tr><td><span class="ui">IMU only longer than</span></td><td>10.0&nbsp;s (on)</td><td>GNSS gaps longer than the limit</td></tr>
+<tr><td><span class="ui">Heading σ above</span></td><td>0.50° (off)</td><td>Heading accuracy worse than the limit</td></tr>
+<tr><td><span class="ui">Widen each by (before / after)</span></td><td>1.0&nbsp;s / 1.0&nbsp;s</td><td>A margin added to each window, because a drop in quality is often reported a little late</td></tr>
+<tr><td><span class="ui">σ given to poor parts</span></td><td>0.300&nbsp;m</td><td>The σ that <span class="ui">Mark poor</span> gives</td></tr>
+</table>
+<p>Flagged samples less than 1.5&nbsp;s apart join into one window.</p>
+
+<h2>Finding and selecting</h2>
+<ul>
+<li><span class="ui">Find anomalies</span> checks the trajectory as processed (before any review edit) against the limits and lists the windows; a message says how many were found. Run it again after changing the limits.</li>
+<li><span class="ui">Rectangle</span>, <span class="ui">Polygon</span>, <span class="ui">Lasso</span>: select part of the trajectory on the QGIS map. Rectangle: drag. Polygon: click the corners; right-click or double-click to finish. Lasso: drag around the part. Esc cancels. Each stretch of trajectory inside the shape is added to the list as <i>Selected by hand</i>.</li>
+<li><span class="ui">Plot view</span>: adds the time range the quality plots are zoomed to. Open the plots and zoom first.</li>
+</ul>
+<p>The list shows the window (<b>A</b> found, <b>S</b> selected by hand), what found it, the start (UTC), the duration, the worst value and the decision (<i>open</i> in red until you decide). The windows are drawn on the map in the layer <i>Review windows</i>: red open, blue GNSS excluded, amber poor, violet interpolated, mint accepted. Double-click a row, or <span class="ui">Zoom to</span>, to see it on the map and in the plots.</p>
+
+<h2>Deciding</h2>
+<figure><img src="fig/review.png"><figcaption><b>Figure {N}.2</b> The same windows after the decisions: A1 marked poor, A2 accepted.</figcaption></figure>
+<p>Select one row or several, then:</p>
+<table>
+<tr><th>Decision</th><th>Effect</th><th>Applies</th></tr>
+<tr><td><span class="ui">Exclude GNSS</span></td><td>GNSS is not used in these windows; the IMU carries the trajectory, as through a tunnel. Use it where multipath or a wrong fix pulled the trajectory away. Tightly and loosely coupled only.</td><td>After <span class="ui">Process again</span>; a note in amber says the exclusions are waiting, and the Review step reads <i>process again</i></td></tr>
+<tr><td><span class="ui">Mark poor</span></td><td>The trajectory is kept, but its position σ is raised to at least <span class="ui">σ given to poor parts</span>, in the SMRMSG file, on the Quality page and in the published trajectory, so later stages know not to trust it.</td><td>At once</td></tr>
+<tr><td><span class="ui">Interpolate</span></td><td>A straight line between the good samples on both sides, <span class="ui">Horizontal</span> and/or <span class="ui">Vertical</span>. Only for GNSS-only and real-time trajectories (the button is shown only then): with the IMU, excluding the GNSS is better. It needs good samples on both sides: a window at the very start or end of the trajectory stays as processed, and PosPro says so; mark it poor instead.</td><td>At once</td></tr>
+<tr><td><span class="ui">Accept</span></td><td>Looked at and fine as it is.</td><td>At once</td></tr>
+<tr><td><span class="ui">Clear decision</span></td><td>The window is open again.</td><td>At once</td></tr>
+</table>
+<p>Decisions never change the processed result itself: PosPro keeps an untouched copy and applies your decisions to it, so <span class="ui">Undo</span> (the last change), <span class="ui">Reset to original</span> (every decision removed, after a question) and processing again lose nothing. After a decision that changes the trajectory, the Quality page, the map and the plots are updated and the trajectory is published again. <span class="ui">Edit log</span> lists every detection and decision with its time.</p>
+<figure class="half"><img src="fig/review_log.png"><figcaption><b>Figure {N}.3</b> The Trajectory Review log.</figcaption></figure>
+<div class="note"><b>Windows inside windows</b> Deciding on a window that lies inside a larger window that already has a decision adds a decision for the smaller window; the larger window keeps its own. To change a decision, select that window itself and decide again, or use <span class="ui">Clear decision</span>.</div>
+<p>The Review step shows <i>find anomalies</i> before the first search, <i>N open</i> in amber while windows are undecided, <i>process again</i> while GNSS exclusions wait, and <i>N reviewed</i> in green when all are decided.</p>
+<div class="tip"><b>No base station?</b> Choose <span class="ui">Real-time solution (no base station)</span> on the Processing page. PosPro then uses the trajectory the Certus computed in the field (RTK when it had corrections), and Trajectory Review cleans it the same way, with <span class="ui">Interpolate</span> available.</div>
+
+<h1><span class="num">{N}</span>Step 7 – Calibration</h1>
+<p>The lever-arm solver estimates the IMU-to-antenna offsets from the drive itself and shows them beside the ones you entered, so a mis-measured antenna shows up before it spoils a survey. It works on data you have already processed; measure the offsets as well as you can first, and let the solver check and refine them.</p>
+<figure><img src="fig/calibration.png"><figcaption><b>Figure {N}.1</b> The Calibration page before solving: the entered GPS1 offsets, nothing solved yet.</figcaption></figure>
+<ol class="steps">
+<li>Process the drive with <span class="ui">Tightly coupled</span> and a base station, fixed for most of the drive. The solver needs tight coupling; in any other mode it says so (Figure {N}.2).</li>
+<li>Press <span class="ui">Solve lever arms</span>. Both passes run again with the offsets as unknowns, about as long as a normal processing run, and are combined by their accuracy.</li>
+<li>Read the table: <span class="ui">Offset</span> (GNSS 1 and, when used, GNSS 2; X forward, Y right, Z down), <span class="ui">Entered</span>, <span class="ui">Solved</span>, <span class="ui">± 1σ</span> and <span class="ui">Change</span>. A change in amber is larger than three standard deviations and 2&nbsp;cm.</li>
+<li>Re-measure an amber offset if you can. Otherwise press <span class="ui">Apply solved offsets</span>: the solved values go to the Installation page. Process again so the trajectory uses them, and enter the same values in the Certus and the mapper Settings if you keep them.</li>
+</ol>
+<figure class="half"><img src="fig/calib_needs_tc.png"><figcaption><b>Figure {N}.2</b> The solver needs tight coupling.</figcaption></figure>
+<p>The offsets become observable when the vehicle turns and changes speed: drive a few figure-eights or loops in open sky. Horizontal offsets come out to about a centimetre; the vertical offset is weaker, so keep the tape measure for that one. A straight drive cannot separate the forward offset from the IMU's own errors.</p>
+
+<h1><span class="num">{N}</span>Step 8 – Export</h1>
+<figure><img src="fig/export.png"><figcaption><b>Figure {N}.1</b> The Export page with SBET + SMRMSG, a text file with seven columns and a GPX track chosen.</figcaption></figure>
+<table>
+<tr><th>Setting</th><th>What it does</th></tr>
+<tr><td><span class="ui">Folder</span></td><td>Where the files go; by default <code>01_PosPro/export</code> in the project. <span class="ui">Browse…</span> opens a folder picker.</td></tr>
+<tr><td><span class="ui">Position of</span></td><td><i>IMU centre</i> (the Certus reference point), the output point from the Installation page (by its name, when its offset is not zero), or <i>GNSS antenna</i> (GPS1).</td></tr>
+<tr><td><span class="ui">Rate</span></td><td>Every sample, 200, 100, 50, 10 or 1&nbsp;Hz.</td></tr>
+<tr><td><span class="ui">Data-page time range only</span></td><td>Export only the time range set on the Data page.</td></tr>
+<tr><td><span class="ui">SBET + SMRMSG</span></td><td>The trajectory and its accuracy: <code>sbet_YYYYMMDD.out</code> and <code>smrmsg_YYYYMMDD.out</code>.</td></tr>
+<tr><td><span class="ui">Text file</span></td><td><code>&lt;project&gt;_YYYYMMDD.txt</code> with the columns you tick, in the order you drag them to: UTC date, time; GPS seconds of week; GPS seconds; Unix time; Latitude; Longitude; Ellipsoidal height; Easting; Northing; Roll; Pitch; Heading; Velocity N, E, D; Speed; σ North, East, Down; σ Roll, Pitch, Heading; Solution type; Satellites; Separation H, V. <span class="ui">Separator</span>: Comma, Tab, Space or Semicolon. <span class="ui">Easting/northing in</span>: a transverse Mercator, UTM or stereographic system (EPSG:2953, NAD83(CSRS) / New Brunswick Stereographic, by default).</td></tr>
+<tr><td><span class="ui">Trajectory layer (GeoPackage)</span></td><td><code>&lt;project&gt;_trajectory.gpkg</code>: the Trajectory map layer (one point per second with its quality attributes).</td></tr>
+<tr><td><span class="ui">GPX track (1 s)</span></td><td><code>&lt;project&gt;_trajectory.gpx</code>: the trajectory at the Certus reference point, one point per second, with ellipsoidal heights.</td></tr>
+</table>
+<p>Press <span class="ui">Export</span>; the files written are listed under the button, and the Export step turns green (<i>exported</i> and the time) until the trajectory is processed again. Every export also writes <code>&lt;project&gt;_export_note.txt</code>, which records the project, when and how it was processed, the frame and epoch, the base and its position source, the heights, the time system, the exported point and its offset, and the attitude frame. Keep it with the files.</p>
+
+<h2>File formats</h2>
+<table>
+<tr><th>File</th><th>Content</th></tr>
+<tr><td><code>sbet_YYYYMMDD.out</code></td><td>17 little-endian doubles per record: GPS seconds of week, latitude, longitude (rad), ellipsoidal height (m), velocity north, east, down (m/s), roll, pitch, heading (rad), wander angle (0), body accelerations, body angular rates.</td></tr>
+<tr><td><code>smrmsg_YYYYMMDD.out</code></td><td>10 doubles per record: GPS seconds of week, σ north, east, down (m), σ velocity north, east, down (m/s), σ roll, pitch, heading (arc-minutes).</td></tr>
+<tr><td><code>&lt;project&gt;_YYYYMMDD.txt</code></td><td>One header line with the column names, then one line per sample.</td></tr>
+</table>
+<p>Heights are ellipsoidal, in the frame of the base station's position (for PPP: ITRF2020 at the observation date; for the real-time mode: the frame of the Certus real-time solution, that is of the RTK corrections used in the field). Apply the geoid in the point-cloud processing. SBET velocities are north, east, down with wander angle 0; angles are in radians. Use the same reference point in the point-cloud processing as in the export.</p>
+
+<h2>What PosPro hands to AlignPro and CloudPro</h2>
+<p>At the end of every processing run, and after every review decision that changes the trajectory, PosPro publishes the trajectory in <code>01_PosPro/out/</code>. You do not need the Export page for AlignPro and CloudPro: they read these files.</p>
+<table>
+<tr><th>File</th><th>Content</th></tr>
+<tr><td><code>trajectory_sbet.out</code></td><td>SBET at the Certus reference point (IMU centre), every sample</td></tr>
+<tr><td><code>trajectory_smrmsg.out</code></td><td>SMRMSG for the same samples (σ raised where you marked parts poor)</td></tr>
+<tr><td><code>trajectory_qc.csv</code></td><td>The 1&nbsp;Hz quality table (position, attitude, velocity, σ, separation, solution type, satellites, gap, IMU biases)</td></tr>
+<tr><td><code>trajectory.json</code></td><td>The description of the trajectory, written last (schema <code>dcs.trajectory/1</code>)</td></tr>
+</table>
+<h3>trajectory.json</h3>
+<table>
+<tr><th>Field</th><th>Holds</th></tr>
+<tr><td><code>schema</code>, <code>id</code>, <code>producer</code>, <code>created</code>, <code>project</code></td><td><code>dcs.trajectory/1</code>; a content id of the data files (the later stages use it to see whether they are out of date); PosPro and engine versions; time; project name</td></tr>
+<tr><td><code>built_from</code></td><td>The captures (by fingerprint) and the shared settings the trajectory was made from</td></tr>
+<tr><td><code>files</code></td><td><code>sbet</code>, <code>smrmsg</code>, <code>qc</code></td></tr>
+<tr><td><code>time</code></td><td>System GPS, GPS week, leap seconds, start and end (GPS seconds), SBET time as GPS seconds of week</td></tr>
+<tr><td><code>frame</code></td><td>Frame name and epoch (that of the base position); for a real-time trajectory, the frame of the Certus's RTK corrections; heights ellipsoidal</td></tr>
+<tr><td><code>reference_point</code>, <code>body_frame</code></td><td>Certus reference point (IMU centre), offset 0, 0, 0; Certus aligned vehicle frame: X forward, Y starboard, Z down; roll + starboard down, pitch + bow up, heading + clockwise</td></tr>
+<tr><td><code>levers_m</code></td><td>GNSS 1 and GNSS 2 offsets (with their source, and whether GNSS 2 was used), the Lidar offset from the capture's <code>hardware.json</code></td></tr>
+<tr><td><code>rate_hz</code></td><td>The rate of the published SBET, measured from its time stamps</td></tr>
+<tr><td><code>quality</code></td><td>Method, positioning, % fixed, % IMU only, separation (95&nbsp;%), largest horizontal and vertical σ</td></tr>
+<tr><td><code>base_station</code></td><td>The base used</td></tr>
+<tr><td><code>review</code></td><td>The Trajectory Review decisions (GNSS excluded, reduced quality with its σ, interpolated, accepted windows) and the limits used</td></tr>
+<tr><td><code>attitude</code></td><td>For GNSS-only trajectories only: attitude not observed (roll and pitch 0, heading from the direction of travel)</td></tr>
+</table>
+<p>When you change something the trajectory depends on (the coordinate frame, the base station, the antenna offsets) or a capture changes, the PosPro box turns <b>⚠ stale</b> in every plugin, and AlignPro and CloudPro show that their results are older than the trajectory. Process again to bring the chain up to date.</p>
+
+<h1><span class="num">{N}</span>Troubleshooting</h1>
+<h2>Messages</h2>
+<table>
+<tr><th>Message</th><th>What to do</th></tr>
+<tr><td><i>add the rover files (.anpp or .clraw) first</i> / <i>rover file not found: …</i></td><td>Add the files on the Data page; if the job folder moved, use <span class="ui">Raw data moved? Relocate the job folder…</span>.</td></tr>
+<tr><td><i>no raw IMU (packet 28) with valid time was found</i> / <i>no raw satellite observations (packet 60) were found</i></td><td>The Certus did not record these packets. Only the real-time mode can run on these captures. Set the Certus outputs on the mapper for the next capture.</td></tr>
+<tr><td><i>Read the rover files (Data).</i> / <i>Add a base station (Base stations).</i></td><td>Shown by <span class="ui">Process</span> when a step before it is missing.</td></tr>
+<tr><td><i>the base station … has no position yet</i></td><td>Enter or compute the base position on the Base page.</td></tr>
+<tr><td><i>tight coupling needs a base station; for PPP choose "Loosely coupled"</i></td><td>PPP works with loose coupling or GNSS only.</td></tr>
+<tr><td><i>no navigation (ephemeris) data: connect to the internet or add a RINEX navigation file on the Data page</i></td><td>Turn on <span class="ui">Download broadcast ephemeris</span> with internet, or add a navigation file.</td></tr>
+<tr><td><i>broadcast ephemeris for … not downloaded (…)</i></td><td>A warning: PosPro goes on with the files you supplied and the rover's GPS ephemeris.</td></tr>
+<tr><td><i>no precise orbit/clock found for …</i></td><td>Final products appear about two weeks after the day, rapid ones after about a day. Try again later, or use CSRS-PPP.</td></tr>
+<tr><td><i>antenna calibrations (igs20.atx) not available</i></td><td>Base antenna phase-centre variations are not applied; connect to the internet once so the file is cached.</td></tr>
+<tr><td><i>the base files … list different observation types; add them as separate base stations</i></td><td>Add each file as its own base.</td></tr>
+<tr><td><i>the base file is only … h long</i></td><td>PPP is good to a few cm only after 2 h; use a longer file or CSRS-PPP.</td></tr>
+<tr><td><i>CSRS-PPP needs the e-mail address you use as your NRCan user name</i></td><td>Enter it under <span class="ui">E-mail</span>.</td></tr>
+<tr><td><i>the rover files hold no real-time solution (packet 20)</i></td><td>The real-time mode cannot run on these captures.</td></tr>
+<tr><td><i>GPS2 could not be measured</i> (no GPS2 observations, baseline did not fix)</td><td>Record a few minutes with both antennas in the open, or enter GPS2 by hand.</td></tr>
+<tr><td><i>the lever-arm solver needs tight coupling</i> / <i>the filter did not report lever arms</i></td><td>Process tightly coupled with a base, with most of the drive fixed.</td></tr>
+<tr><td><i>Easting/northing: choose a transverse Mercator, UTM or stereographic system</i></td><td>Choose such a system on the Export page.</td></tr>
+<tr><td><i>process the project first</i></td><td>Export needs a processed trajectory.</td></tr>
+<tr><td><i>… is being processed by … on … since …</i></td><td>Another QGIS is processing this stage of the project. Wait for it to finish.</td></tr>
+<tr><td><i>The processing engine is missing</i></td><td>Reinstall PosPro. On Windows, allow <code>pospro-engine.exe</code> if your security software asks.</td></tr>
+<tr><td><i>The user guide is missing from this installation; reinstall PosPro.</i></td><td>Reinstall PosPro.</td></tr>
+</table>
+
+<h2>Results</h2>
+<table>
+<tr><th>What you see</th><th>Likely cause</th><th>What to try</th></tr>
+<tr><td>Fixed below 75&nbsp;%</td><td>Base far away (over 40&nbsp;km), poor sky</td><td>A nearer base; <span class="ui">Atmosphere</span> on Automatic or Always; a higher elevation mask</td></tr>
+<tr><td>Large separation at the start or end only</td><td>Vehicle parked: heading cannot be resolved without motion</td><td>Drive a few turns before and after the survey; use both antennas</td></tr>
+<tr><td>Large separation in a long gap</td><td>IMU drift both ways</td><td>Expected; check the σ plot over the gap; the wheeled-vehicle constraint and the rear axle offset help</td></tr>
+<tr><td>Everything offset by the same amount</td><td>Base position from the RINEX header, or the wrong frame or epoch</td><td>Set the base position (CSRS-PPP)</td></tr>
+<tr><td>Trajectory tilts or swings in turns</td><td>Wrong antenna offset or rear axle offset</td><td>Check the Installation drawing; solve the lever arms</td></tr>
+</table>
+
+<h1><span class="num">{N}</span>Reference</h1>
+<h2>Defaults of a new project</h2>
+<table>
+<tr><th>Setting</th><th>Default</th></tr>
+<tr><td>Frame</td><td>NAD83(CSRS), epoch 1997.0 (until a base position sets it)</td></tr>
+<tr><td>Method / positioning / passes</td><td>Tightly coupled / PPK / forward and backward</td></tr>
+<tr><td>Constellations, mask, ratio</td><td>GPS, GLONASS, Galileo, QZSS; 12°; 3.0</td></tr>
+<tr><td>Ambiguities, frequencies, atmosphere, SNR weighting</td><td>Fixed; dual; automatic; on</td></tr>
+<tr><td>Wheeled vehicle constraint, zero velocity, rate</td><td>On; on; IMU rate</td></tr>
+<tr><td>Alignment, speed, gate, max base gap</td><td>Automatic; 4&nbsp;m/s; χ² 9; 60&nbsp;s</td></tr>
+<tr><td>IMU, vehicle</td><td>Certus Evo; Van (or the vehicle recorded in the capture)</td></tr>
+<tr><td>Export</td><td>IMU centre, every sample, SBET + SMRMSG</td></tr>
+<tr><td>Review limits</td><td>See Trajectory Review</td></tr>
+</table>
+
+<h2>Folders</h2>
+<table>
+<tr><th>Path (in <code>Processing/&lt;Name&gt;/01_PosPro/</code>)</th><th>Holds</th></tr>
+<tr><td><code>pospro.json</code></td><td>PosPro's settings, bases, results summary and review decisions</td></tr>
+<tr><td><code>work/extract/</code></td><td>The data read from the captures (IMU, observations, real-time track, coverage, hardware record)</td></tr>
+<tr><td><code>work/base/</code></td><td>Downloaded and prepared base files, base PPP</td></tr>
+<tr><td><code>work/gnss/</code>, <code>work/ins/</code></td><td>GNSS solutions, inertial passes and their settings</td></tr>
+<tr><td><code>work/results/</code></td><td>The combined trajectory, its quality table and their untouched copies for Trajectory Review</td></tr>
+<tr><td><code>out/</code></td><td>The published trajectory for AlignPro and CloudPro</td></tr>
+<tr><td><code>export/</code></td><td>Exports (default folder)</td></tr>
+</table>
+
+<h2>Field practice that improves the trajectory</h2>
+<ul>
+<li>Record raw IMU and raw GNSS of both antennas on the Certus (the mapper's recommended Certus outputs), with GLONASS on: raw observations then come every 125&nbsp;ms on whole seconds.</li>
+<li>Log a base at 1&nbsp;s, within 20&nbsp;km, for the whole drive plus 10 minutes either side. Park 1–2 minutes, then drive a few turns at the start and the end; this resolves heading and IMU biases for both passes.</li>
+<li>Measure the antenna offsets to the millimetre in the Certus aligned frame, and the rear axle to 5&nbsp;cm; then check them with the lever-arm solver.</li>
+</ul>

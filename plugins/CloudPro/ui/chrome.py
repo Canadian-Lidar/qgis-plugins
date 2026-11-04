@@ -155,7 +155,7 @@ class IconButton(QtWidgets.QAbstractButton):
     def show_options(self, pos=None):
         m = QtWidgets.QMenu(self)
         for i, o in enumerate(self.options):
-            a = m.addAction(icons.icon(o[1], 18, o[3] if len(o) > 3 and o[3] else theme.TEXT), o[2].split(":")[0])
+            a = m.addAction(icons.icon(o[1], 18, o[3] if len(o) > 3 and o[3] else theme.TEXT), o[2])
             a.setCheckable(True)
             a.setChecked(i == self.index)
             a.triggered.connect(lambda _=False, i=i: self._pick(i))

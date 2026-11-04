@@ -9,7 +9,14 @@ and counted, never fatal.
   Recording     one survey line (one or more files): calibration, hardware,
                 point packet chunks, ANPP navigation states
   find_clraw, group_lines, group_recordings   files and folders -> lines
+  is_navigation, split_navigation             mapper 2.10 navigation recordings
 Packet decoding is in dcs_core.hesai and dcs_core.anpp.
+
+Mapper 2.10 (4 Nov 2026) names a line's files <line id>_0001.clraw (e.g. Deck_Test_L001_20261104_124512_0001)
+inside <Project>/lines/<line id>/clraw/, and records the whole Certus stream while a project is open in
+<Project>/nav/<Project>_NAV_<UTC start>_0001.clraw (metadata kind "navigation", line 0, no Lidar data).
+Older captures (NNN_YYYYMMDD_HHMMSS_0001.clraw) can sit inside lines/ too. So a line is found from its
+metadata (capture, line), never from its file name, and navigation recordings are never survey lines.
 """
 import csv
 import io
@@ -27,7 +34,7 @@ from .anpp import EULER_SD, SYS_STATE  # noqa: F401 - re-exported
 __all__ = ["MAGIC", "FORMAT_VERSIONS", "TOPIC_POINTS", "TOPIC_STATUS", "TOPIC_ANPP", "TOPIC_EVENTS", "TOPIC_QUALITY",
            "CH_POINTS", "CH_STATUS", "CH_ANPP", "CH_EVENTS", "CH_QUALITY", "TOPICS", "ClrawError",
            "calibration_rows", "parse_calibration", "ClrawFile", "Recording", "find_clraw", "group_lines",
-           "group_recordings", "DEFAULT_CAL", "DEFAULT_CALIB", "HESAI_LEN", "decode_hesai", "hesai_packet_times",
+           "group_recordings", "file_info", "is_navigation", "split_navigation", "NAVIGATION", "DEFAULT_CAL", "DEFAULT_CALIB", "HESAI_LEN", "decode_hesai", "hesai_packet_times",
            "EULER_SD", "SYS_STATE"]
 
 MAGIC = mcap.MAGIC
@@ -45,7 +52,10 @@ TOPICS = {TOPIC_POINTS: CH_POINTS, TOPIC_STATUS: CH_STATUS, TOPIC_ANPP: CH_ANPP,
           TOPIC_EVENTS: CH_EVENTS, TOPIC_QUALITY: CH_QUALITY}
 _CH_TOPIC = {v: k for k, v in TOPICS.items()}
 
-_FNAME = re.compile(r"^(\d+)_(\d{8})_(\d{6})_(\d{4})\.clraw$")
+_FNAME = re.compile(r"^(\d+)_(\d{8})_(\d{6})_(\d{4})\.clraw$")          # before mapper 2.10
+_FNAME_210 = re.compile(r"^(?P<prefix>.+?)_(?P<number>\d{4})\.clraw$")     # <line id or NAV prefix>_0001
+_LINE_210 = re.compile(r"_L(\d+)_\d{8}_\d{6}$")
+NAVIGATION = "navigation"
 
 
 class ClrawError(ValueError):
@@ -134,6 +144,11 @@ class ClrawFile:
         return self.attachment_json("session.json")
 
     @property
+    def is_navigation(self):
+        """A mapper 2.10 navigation recording (the Certus stream while a project is open): not a survey line."""
+        return self.metadata.get("kind") == NAVIGATION
+
+    @property
     def line(self):
         v = self.metadata.get("line")
         if v not in (None, ""):
@@ -141,8 +156,7 @@ class ClrawFile:
                 return int(v)
             except ValueError:
                 pass
-        m = re.match(r"(\d+)_", self.name)
-        return int(m.group(1)) if m else 0
+        return _line_from_name(self.name)
 
     @property
     def file_number(self):
@@ -329,6 +343,73 @@ class Recording:
 
 
 # ----------------------------------------------------------------------------- files -> lines
+def _line_from_name(name):
+    """Last resort only (the metadata line is the truth): <id>_L001_<date>_<time>_0001 or NNN_..._0001."""
+    m = _FNAME_210.match(name)
+    if m:
+        m2 = _LINE_210.search(m.group("prefix"))
+        if m2:
+            return int(m2.group(1))
+    m = re.match(r"(\d+)_", name)
+    return int(m.group(1)) if m else 0
+
+
+_meta_cache = {}
+
+
+def file_info(path):
+    """{"kind", "capture", "line", "project_id", "start" (UTC s of the first data, or None), "digits"} of a
+    .clraw from its header (cached by size and time);
+    from the file name when the header cannot be read."""
+    try:
+        st = os.stat(path)
+        key = (os.path.abspath(path), st.st_size, st.st_mtime_ns)
+    except OSError:
+        key = None
+    if key is not None and key in _meta_cache:
+        return _meta_cache[key]
+    name = os.path.basename(path)
+    start = None
+    try:
+        mf = mcap.McapFile(path).scan()
+        md = dict(mf.metadata.get("clraw", {}))
+        if mf.chunk_pos:
+            start = min(cp[5] for cp in mf.chunk_pos) * 1e-9
+    except (OSError, ValueError):
+        md = {}
+    m = _FNAME_210.match(name)
+    old = _FNAME.match(name)
+    if md.get("capture"):
+        capture = md["capture"]
+    elif old:
+        capture = os.path.basename(os.path.dirname(os.path.dirname(os.path.abspath(path)))) or old.group(1)
+    else:
+        capture = m.group("prefix") if m else name
+    try:
+        line = int(md.get("line"))
+    except (TypeError, ValueError):
+        line = _line_from_name(name)
+    kind = md.get("kind") or (NAVIGATION if m and "_NAV_" in m.group("prefix") else "line")
+    info = {"kind": kind, "capture": capture, "line": line, "project_id": md.get("project_id", ""), "start": start,
+            "digits": int(md.get("line_digits") or 3) if str(md.get("line_digits") or "3").isdigit() else 3}
+    if key is not None:
+        _meta_cache[key] = info
+    return info
+
+
+def is_navigation(path):
+    """True for a mapper 2.10 navigation recording (kind "navigation"): the Certus stream, no Lidar."""
+    return file_info(path)["kind"] == NAVIGATION
+
+
+def split_navigation(paths):
+    """(survey line files, navigation recordings) of a list of .clraw paths."""
+    lines, nav = [], []
+    for p in paths:
+        (nav if is_navigation(p) else lines).append(p)
+    return lines, nav
+
+
 def find_clraw(paths):
     """Expand files/folders (capture folders, clraw/ folders, export dirs) to .clraw files.
     .partial files are ignored."""
@@ -344,12 +425,15 @@ def find_clraw(paths):
     return sorted(set(out), key=lambda x: os.path.basename(x))
 
 
-def group_lines(files):
+def group_lines(files, navigation=False):
     """Group .clraw files into survey lines {key: [ClrawFile...]} in name order.
-    The key is capture id + line number so lines from different capture folders never merge."""
+    The key is capture id + line number so lines from different capture folders never merge.
+    Navigation recordings (mapper 2.10) are left out unless navigation=True."""
     lines = {}
     for p in files:
         cf = ClrawFile(p)
+        if cf.is_navigation and not navigation:
+            continue
         key = "%s:%03d" % (cf.metadata.get("capture", os.path.dirname(p)), cf.line)
         lines.setdefault(key, []).append(cf)
     for k in lines:
@@ -357,17 +441,26 @@ def group_lines(files):
     return dict(sorted(lines.items(), key=lambda kv: kv[1][0].name))
 
 
-def group_recordings(paths):
+def group_recordings(paths, navigation=False):
     """Group .clraw paths into recordings (survey lines) read in name order.
-    Returns {(folder, line): [paths...]}. ``.partial`` files are ignored."""
+    Returns {(folder, line): [paths...]}, line as zero-padded text ("001"). The line comes from each file's
+    metadata (capture, line), so the old NNN_YYYYMMDD_HHMMSS_0001 and the 2.10 <line id>_0001 names both
+    group. ``.partial`` files are ignored; navigation recordings too unless navigation=True. The groups come
+    in recording order."""
     groups = {}
     for p in paths:
         b = os.path.basename(p)
         if b.endswith(".partial"):
             continue
-        m = _FNAME.match(b)
-        key = (os.path.dirname(os.path.abspath(p)), m.group(1) if m else b)
+        info = file_info(p)
+        if info["kind"] == NAVIGATION and not navigation:
+            continue
+        folder = os.path.dirname(os.path.abspath(p))
+        key = (folder, "%0*d" % (max(1, info["digits"]), info["line"]) if info["kind"] != NAVIGATION
+               else info["capture"])
         groups.setdefault(key, []).append(p)
     for k in groups:
         groups[k].sort(key=lambda q: os.path.basename(q))
-    return groups
+    # in recording order (the first data of each line), so lines from old and 2.10 folders interleave in time
+    start = lambda ps: min([file_info(q)["start"] for q in ps if file_info(q)["start"] is not None] or [float("inf")])  # noqa: E731
+    return dict(sorted(groups.items(), key=lambda kv: (start(kv[1]), kv[0])))

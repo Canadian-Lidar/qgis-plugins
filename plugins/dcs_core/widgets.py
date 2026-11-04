@@ -262,6 +262,12 @@ class DockTitle(QWidget):
         p.setFont(theme.font("ui", 12, 700, 106))
         p.drawText(QRectF(10, 0, self.width() - 70, self.height()),
                    _af(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), self.title.upper())
+        p.end()
+        self._paint_buttons()
+
+    def _paint_buttons(self):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         for k, r in self._btns().items():
             if self.hover == k:
                 p.setPen(Qt.PenStyle.NoPen)

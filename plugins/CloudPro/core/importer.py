@@ -249,7 +249,7 @@ def import_chain(project, inp, opts, files=None, progress=None, cancel=None, kee
         opts.source_crs = inp.source_crs
     out = []
     n = len(groups)
-    for k, (key, paths) in enumerate(sorted(groups.items(), key=lambda kv: os.path.basename(kv[1][0]))):
+    for k, (key, paths) in enumerate(groups.items()):         # in recording order (DCS Core)
         rec = _clraw.Recording(paths)
         traj = inp.traj if inp.traj is not None else load_trajectory(rec)
         o = ImportOptions(**dict(opts.__dict__))

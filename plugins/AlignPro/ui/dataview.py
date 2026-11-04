@@ -458,7 +458,7 @@ class DataView(QWidget):
         dl = [m - b for m, b in zip(lever, a[1])]
         self.kv.set("Δ R P H", "%+.4f %+.4f %+.4f" % tuple(dm))
         self.kv.set("Δ F S D", "%+.3f %+.3f %+.3f" % tuple(dl))
-        changed = any(abs(v) > 1e-9 for v in dm + dl) or abs(lat - a[2]) > 1e-9
+        changed = not self._same_as_applied(mount, lever, lat)
         self.dirty.setText("● Trial values not applied yet" if changed else "")
         refit = getattr(self, "_refit", False)
         self._refit = False
@@ -468,7 +468,7 @@ class DataView(QWidget):
         c = self.p.cfg
         i = self.compare.currentIndex()
         if i == 1:
-            return (c["mount_preset"], c["lever"], c["latency_ms"])
+            return (c["mount_preset"], c.get("lever_preset") or c["lever"], 0.0)
         if i == 2:
             return self.applied
         if i == 3 and c.get("results"):
@@ -622,9 +622,22 @@ class DataView(QWidget):
         p.drawLine(QPointF(a.x(), 0), QPointF(a.x(), 5000))
 
     # ================================================================ output
+    # the fields show angles to 0.0001 deg, lever arms to the mm and latency to 0.1 ms; values equal to the
+    # applied ones at that precision are the applied ones (not a manual change)
+    TOL = (5e-5, 5e-4, 0.05)
+
+    def _same_as_applied(self, mount, lever, lat):
+        a = self.applied
+        return (all(abs(m - b) < self.TOL[0] for m, b in zip(mount, a[0]))
+                and all(abs(m - b) < self.TOL[1] for m, b in zip(lever, a[1])) and abs(lat - a[2]) < self.TOL[2])
+
     def _apply(self):
         mount, lever, lat = self.values()
-        self.apply_requested.emit(lever, lat, mount)
+        a = self.applied
+        mount = [b if abs(m - b) < self.TOL[0] else m for m, b in zip(mount, a[0])]
+        lever = [b if abs(m - b) < self.TOL[1] else m for m, b in zip(lever, a[1])]
+        lat = a[2] if abs(lat - a[2]) < self.TOL[2] else lat
+        self.apply_requested.emit(list(lever), lat, list(mount))
 
     def _copy(self):
         mount = self.values()[0]

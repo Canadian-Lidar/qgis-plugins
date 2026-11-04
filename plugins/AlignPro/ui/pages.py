@@ -164,7 +164,7 @@ class DataPage(Page):
         self.p.save()
         if self.p.dcs is not None and not self.p.dcs.capture_files() and self._inputs():
             from ..core import clraw
-            found = clraw.find_clraw(self._inputs())
+            found = clraw.split_navigation(clraw.find_clraw(self._inputs()))[0]
             if found:           # AlignPro is the first stage on this job: record the raw files it uses
                 self.p.dcs.set_capture_files(found, "AlignPro")
                 self.p.cfg["files"] = []
@@ -698,8 +698,9 @@ class CalibPage(Page):
             self.dock.apply_angles([r["advised"][k] for k in KEYS])
 
     def _copy(self):
-        r = self.p.cfg.get("results") if self.p else None
-        a = [r["advised"][k] for k in KEYS] if r else self.p.cfg["mount"]
+        if self.p is None:
+            return
+        a = list(self.p.cfg["mount"])              # the applied (published) mounting
         QGuiApplication.clipboard().setText(mapper_text(a))
         self.dock.toast("Copied for the mapper: " + mapper_text(a))
 
@@ -710,7 +711,8 @@ class CalibPage(Page):
             return
         row = r["combis"][i]
         m = theme.dark_menu(QMenu(self))
-        act = m.addAction("Load these angles (%.4f, %.4f, %.4f)" % (row["roll"], row["pitch"], row["heading"]))
+        act = m.addAction("Apply and publish these angles (%.4f, %.4f, %.4f)" % (row["roll"], row["pitch"],
+                                                                              row["heading"]))
         cp = m.addAction("Copy for mapper")
         ch = m.exec(self.tbl.viewport().mapToGlobal(pos))
         if ch == act:
@@ -909,7 +911,8 @@ class ReportPage(Page):
             e.setText(p.cfg["report"].get(k, ""))
         self.notes.setPlainText(p.cfg["report"].get("notes", ""))
         if not self.folder.text():
-            self.folder.setText(os.path.dirname(p.folder))
+            jf = getattr(p.dcs, "job_folder", None) if p.dcs is not None else None
+            self.folder.setText(os.path.dirname(os.path.normpath(jf)) if jf else os.path.dirname(p.folder))
             self.scan()
 
     def create(self):
@@ -981,29 +984,18 @@ class ReportPage(Page):
 
 # ================================================================= no project
 class WelcomePage(Page):
-    """Shown when no project is open: the way in, instead of a greyed-out Data page."""
+    """Shown when no project is open. Projects are created and opened from the project box in the
+    header (New project, Open project, Recent projects), as in PosPro and CloudPro; this page only
+    says so and gives the field procedure for a patch test."""
 
     def __init__(self, dock):
         super().__init__(dock)
-        self.lay.addWidget(_title("Start a patch test"))
-        self.lay.addWidget(_hint("AlignPro works on the shared processing project of a job (Processing/<Name>/ in the "
-                                 "job folder), after PosPro: open the project PosPro made, or create a new one from the "
-                                 "job folder that holds the mapper captures."))
-        b_new = _primary("New project\u2026")
-        b_new.clicked.connect(self.dock.new_project)
-        b_open = QPushButton("Open project\u2026")
-        b_open.clicked.connect(self.dock.open_dialog)
-        self.lay.addLayout(_row(b_new, b_open, None))
-        g, gl = _group("Recent projects")
-        self.lst = QListWidget()
-        self.lst.setMinimumHeight(180)
-        self.lst.itemDoubleClicked.connect(lambda it: self.dock.open_project(it.data(Qt.ItemDataRole.UserRole)))
-        gl.addWidget(self.lst)
-        b_rec = QPushButton("Open selected")
-        b_rec.clicked.connect(self._open_sel)
-        gl.addLayout(_row(None, b_rec))
-        self.lay.addWidget(g)
-        g2, gl2 = _group("Field procedure")
+        self.lay.addWidget(_title("No project open"))
+        self.lay.addWidget(_hint("Use the project box at the top right: New project (from the job folder that holds "
+                                 "the mapper captures), Open project (the project PosPro made), or Recent projects. "
+                                 "AlignPro works on the job's shared processing project (Processing/<Name>/ in the job "
+                                 "folder), after PosPro."))
+        g2, gl2 = _group("Patch test field procedure")
         for t in ("Vertical surfaces (walls, building corners, thick poles) beside open flat ground, good GNSS, "
                   "a base station within 20 km for PPK.",
                   "At least 3 passes, ideally 6: reciprocal pairs (opposite directions) at increasing distance.",
@@ -1015,18 +1007,4 @@ class WelcomePage(Page):
         self.lay.addStretch(1)
 
     def refresh(self):
-        from .dialogs import recent_projects
-        from qgis.PyQt.QtWidgets import QListWidgetItem
-        self.lst.clear()
-        for path in recent_projects():
-            it = QListWidgetItem("%s   \u2014   %s" % (os.path.basename(path).replace(".alignpro.json", ""),
-                                                      os.path.dirname(path)))
-            it.setData(Qt.ItemDataRole.UserRole, path)
-            self.lst.addItem(it)
-        if self.lst.count():
-            self.lst.setCurrentRow(0)
-
-    def _open_sel(self):
-        it = self.lst.currentItem()
-        if it:
-            self.dock.open_project(it.data(Qt.ItemDataRole.UserRole))
+        pass

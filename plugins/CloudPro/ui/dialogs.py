@@ -144,7 +144,7 @@ class ImportDialog(QtWidgets.QDialog):
     def _add_paths(self, paths):
         groups = clraw.group_recordings(paths)
         have = {tuple(r.paths) for r in self.recs}
-        for key, ps in sorted(groups.items()):
+        for key, ps in groups.items():                 # in recording order
             if tuple(sorted(ps)) in have:
                 continue
             try:
@@ -395,7 +395,9 @@ class GeorefDialog(QtWidgets.QDialog):
                 ("  (R %.4f  P %.4f  H %.4f deg)" % inp.mount) if inp.mount else ""), "warn"))
         f.addRow(_k("Captures"), self._val("%d .clraw file(s) in %d line(s)" % (
             len(inp.files), len(clraw.group_recordings(inp.files)))))
-        f.addRow(_k("Coordinate system"), self._val("%s, heights %s" % (project.crs, "ellipsoidal")))
+        self._crs_val = self._val("")
+        self._crs_text = project.crs
+        f.addRow(_k("Coordinate system"), self._crs_val)
         lay.addWidget(g)
         if inp.warnings:
             w = QtWidgets.QLabel("\n".join("! " + x for x in inp.warnings))
@@ -417,6 +419,13 @@ class GeorefDialog(QtWidgets.QDialog):
         self.dec.setToolTip("Keep every Nth Lidar packet (1 = all points)")
         self.geoid = QtWidgets.QLineEdit(project.data.get("geoid_path", ""))
         self.geoid.setPlaceholderText("optional geoid grid (.tif / .gtx) for orthometric heights")
+        if getattr(self, "_crs_val", None) is not None:
+            def heights(t):
+                g = (t or "").strip()
+                self._crs_val.setText("%s, heights %s" % (self._crs_text, ("orthometric (geoid %s)" % os.path.basename(g))
+                                                         if g else "ellipsoidal"))
+            self.geoid.textChanged.connect(heights)
+            heights(self.geoid.text())
         gb = QtWidgets.QToolButton()
         gb.setText("...")
         gb.clicked.connect(self._pick_geoid)

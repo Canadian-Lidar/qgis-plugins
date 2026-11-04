@@ -1,0 +1,504 @@
+<!--#vars {
+"EXTRAS_ROW": "",
+"WINDOW_EXTRA": ", and Open the Data View",
+"PROJECT_MENU_TABLE": "<table><tr><th>Item</th><th>What it does</th></tr><tr><td><span class='ui'>New project…</span></td><td>Creates a shared processing project in a job folder (below) and opens it.</td></tr><tr><td><span class='ui'>Open project…</span></td><td>Opens a <code>.dcsproj</code>, for example the one PosPro made. The file dialog also offers older stand-alone AlignPro projects (<code>*.alignpro.json</code>); they open without the workflow boxes and cannot publish.</td></tr><tr><td><span class='ui'>Recent projects</span></td><td>The last 15 projects AlignPro opened, as <i>name — folder</i>; <i>(none)</i> when the list is empty. Projects that no longer exist are left out. When AlignPro starts it reopens the most recent one.</td></tr><tr><td><span class='ui'>Open the project folder</span></td><td>Opens <code>Processing/&lt;Name&gt;/</code> in your file manager.</td></tr><tr><td><span class='ui'>Raw data moved? Relocate the job folder…</span></td><td>Asks for the job folder's new location and finds the captures there (see below).</td></tr><tr><td><span class='ui'>Save the QGIS project in the project folder</span></td><td>Saves the QGIS project, with AlignPro's map layers, as <code>&lt;Name&gt;.qgz</code> in the project folder. If another QGIS project is open, AlignPro asks before saving it under the new name.</td></tr><tr><td><span class='ui'>Reset AlignPro to the recorded values…</span></td><td>After a confirmation: puts the mounting angles, lever arm and latency back to the values recorded in the <code>.clraw</code> files, uses every line again, removes the calibration result and places the inspection boxes again. The processing settings stay (Settings has <i>Restore defaults</i>), and nothing is published by the reset itself. Available once the data is read.</td></tr><tr><td><span class='ui'>Show the log</span></td><td>The <i>AlignPro log</i> window: this session's messages followed by the project's own log (the last 500 entries).</td></tr><tr><td><span class='ui'>User guide (this version)</span></td><td>Opens this guide.</td></tr></table>",
+"AFTER_CREATE": "AlignPro then looks for the survey lines' <code>.clraw</code> files in the job folder (mapper 2.10 navigation recordings are left out); when the project has no captures recorded yet it lists the files it found and asks whether to use them, then reads them straight away (see the Data chapter)."
+}-->
+<!--#contents-->
+
+<h1><span class="num">{N}</span>Introduction</h1>
+<p>AlignPro finds the mounting angles of the Lidar on the Canadian Lidar mobile mapper (roll, pitch and heading) from a short calibration drive, the <b>patch test</b>. It hands the result to CloudPro, the next stage of the processing chain, and gives you the three angles in the mapper's own convention so you can enter them in the mapper. This guide is for AlignPro {VERSION}.</p>
+
+<h2>What a patch test is</h2>
+<p>Each Lidar point is turned into a map coordinate with the trajectory (the vehicle's position and attitude), the <b>lever arm</b> (where the Lidar sits relative to the Certus reference point, measured with a tape or total station) and the <b>mounting angles</b> (how the Lidar is turned relative to the vehicle). The angles cannot be measured to the hundredth of a degree a point cloud needs: an error of 0.1° moves a point 10 m away by about 1.7 cm, in different directions on passes driven in opposite directions.</p>
+<p>A patch test drives past the same solid surfaces (walls, building corners, poles, open ground) several times, in opposite directions and at different distances. With the wrong angles the passes do not agree: a wall seen from both sides of the road appears twice, a little apart. AlignPro finds small flat <b>patches</b> that two or more passes see, and solves the three angles that bring the points of every pass onto the same planes (a point-to-plane adjustment). This correction to the recorded mounting is the <b>boresight</b>. With three or more passes it also solves with each pass left out in turn; the spread of those answers is the <b>SDEV</b> of each angle.</p>
+
+<h2>AlignPro in the DCS chain</h2>
+<p>AlignPro is stage 02 of the Data Collection Systems (DCS) chain. It reads the captures (<code>.clraw</code>) and PosPro's trajectory, and publishes <code>alignment.json</code> for CloudPro when you <b>apply</b> values; calibrating alone publishes nothing (Chapter <a href="#publishing">Publishing</a>).</p>
+
+<h2>What's new</h2>
+<table>
+<tr><th>Version</th><th>Changes</th></tr>
+<tr><td>1.4.1</td><td>Mapper 2.10 projects: the survey lines are recognised from what the files record (new file names, a line split over several files, older captures grouped into <code>lines/</code>); navigation recordings are left out, also when PosPro processed them. Needs DCS Core 1.4.0.</td></tr>
+<tr><td>1.4.0</td><td>The same header as the other DCS plugins (logo, name, workflow boxes, project box, Window and guide buttons); the workflow boxes are always shown. Without a project the start page gives the patch test field procedure; projects are created and opened from the project box. Needs DCS Core 1.3.0.</td></tr>
+<tr><td>1.3.0</td><td>DCS Core's standard window (also for the Data View): floating the first time, docked only from the Window menu, and back as you left it after QGIS restarts. Lighter view backgrounds.</td></tr>
+<tr><td>1.2.0</td><td><code>.clraw</code>, SBET and LAS handling come from DCS Core, shared with CloudPro. Without a channel calibration in the capture, the measured default table is used. SBET files with a GPS week rollover read correctly.</td></tr>
+
+</table>
+
+<!--#include install-->
+<!--#include window-->
+<!--#include projects-->
+
+<h1><span class="num">{N}</span>Working in AlignPro</h1>
+<p>Below the header, AlignPro has the seven workflow steps on the left and the page of the current step on the right. Work down the steps; you can go back to any step at any time.</p>
+<figure><img src="fig/welcome.png" style="max-height:95mm"><figcaption><b>Figure {N}.1</b> AlignPro without a project: the start page gives the patch test field procedure. The steps are greyed out until a project is open.</figcaption></figure>
+
+<h2>The start page</h2>
+<p>With no project open, AlignPro shows <span class="ui">No project open</span>: where projects come from (the project box) and the patch test field procedure (Chapter <a href="#field">The calibration drive</a>). AlignPro reopens the project you used last when it starts, so you usually see this page only the first time.</p>
+
+<h2>The steps</h2>
+<p>Each step is a pill with its number, its name and a second line that says what it holds. The colour gives its state:</p>
+<table>
+<tr><th>Step</th><th>Second line</th><th>Green when</th><th>Amber or red when</th></tr>
+<tr><td>1 Data</td><td>lines and total driving time</td><td>the files are read without warnings</td><td>amber: a data warning (Chapter <a href="#trouble">Troubleshooting</a>)</td></tr>
+<tr><td>2 Installation</td><td>the lever arm</td><td>a lever arm is set</td><td>amber: the lever arm is 0, 0, 0</td></tr>
+<tr><td>3 Quality</td><td>worst PPS lock and lost packets</td><td>PPS lock 100 % and no lost packets</td><td>amber: PPS lock lost or packets lost</td></tr>
+<tr><td>4 Pairs</td><td>pairs and patches</td><td>at least 2 reciprocal pairs and 20 wall patches</td><td>amber: fewer, but at least 6 patches; red: fewer than 6 patches</td></tr>
+<tr><td>5 Calibration</td><td>the advised angles, or what to do next</td><td>calibrated, applied and published, no warnings</td><td>amber: a calibration warning, <i>apply to publish</i>, or <i>out of date: re-run</i></td></tr>
+<tr><td>6 Analyze</td><td>latency, lever, angles</td><td colspan="2">optional; always grey</td></tr>
+<tr><td>7 Report</td><td>the last report's file name</td><td>a report was written in this session</td><td>–</td></tr>
+</table>
+<p>Only <b>1 Data</b> is available until the captures have been read; the other steps follow.</p>
+
+<h2>Under the steps</h2>
+<ul>
+<li><span class="ui">Data View · Fine Tune</span> opens the Data View as a floating window (Chapter <a href="#dataview">Data View and fine tuning</a>).</li>
+<li>The live figures: <b>AVG ERROR</b>, the mean point-to-plane distance over the planar patches with the current angles (green below 1 cm, amber below 2.5 cm, red above); <b>SDEV</b> and <b>SEP</b>, the average standard deviation and line separation of the map grid; the trajectory in use (<i>POSPRO</i>, <i>SBET FILE</i> or <i>REAL-TIME</i>) and <i>LOCAL ENU</i>, the local frame AlignPro works in; and the current roll (R), pitch (P) and heading (H). Hover for an explanation.</li>
+<li><span class="ui">Map grid</span>: which value the grid layer on the QGIS map shows: <i>Mean height</i> (with a hillshade), <i>Standard deviation</i>, <i>Line separation</i> (the default), <i>Count</i> or <i>Lines per cell</i>. See Chapter <a href="#maplayers">Map layers</a>.</li>
+</ul>
+
+<h2>Messages and running jobs</h2>
+<p>Reading, calibrating, applying, analysing and exporting run as QGIS background tasks. While one runs, the project box turns red, the status line at the bottom shows what is being done, a progress bar and a <span class="ui">STOP</span> button appear, and the pages cannot be changed. <span class="ui">STOP</span> cancels the job; a stopped or failed job keeps the earlier results. Starting a second job meanwhile gives <i>Wait for the current job to finish (or stop it).</i></p>
+<p>Short results appear in a bar above the status line. Warnings and errors also appear in the QGIS message bar, and every message goes to the log (<span class="ui">Show the log</span> in the project menu).</p>
+
+<h1 id="field"><span class="num">{N}</span>The calibration drive</h1>
+<p>A good calibration depends more on the drive than on the software. Plan it with the crew; they record it like any other job.</p>
+<h2>Site</h2>
+<ul>
+<li>Vertical surfaces (building walls, building corners, thick poles) beside open, flat ground. Walls drive the heading; flat ground and walls together drive roll and pitch. Walls facing the road and walls across it are both useful.</li>
+<li>Good GNSS sky view and a base station within 20 km, so PosPro can make a fixed post-processed (PPK) trajectory.</li>
+</ul>
+<h2>Passes</h2>
+<ul>
+<li>At least 3 passes, ideally 6, as reciprocal pairs (out and back in opposite directions) at increasing distance from the target. With three or more passes AlignPro can leave each one out in turn and give a real SDEV; with two it reports the solver's formal standard deviation instead.</li>
+<li>Drive steadily. One pass per Start/Stop is easiest. Several passes in one capture also work: AlignPro splits them at the turns and drops the stops (Settings, <i>Passes and pairs</i>).</li>
+<li>Set the mapper's file split large enough that a pass is never split across files (3.9 GB is about 40 minutes of <code>.clraw</code>).</li>
+<li>Stay static for 5 minutes at the start and at the end for the PPK, and press <b>Mark</b> on the mapper when passing the target.</li>
+</ul>
+<h2>Before and during the drive</h2>
+<ul>
+<li>Enter the measured Lidar lever arm in the mapper. AlignPro solves the angles, not the lever arm.</li>
+<li>Check that the Lidar time lock (PPS) stays locked. A pass with a lost lock or lost packets is best left out of the calibration (Chapter <a href="#quality">Quality</a>).</li>
+</ul>
+<h2>Processing order</h2>
+<p>Process the job in PosPro first, then open the same project in AlignPro. AlignPro can start on the mapper's real-time trajectory or on another post-processed SBET file for a quick look, but the final calibration should use PosPro's trajectory.</p>
+
+<h1><span class="num">{N}</span>1 Data</h1>
+<p>The Data page shows which captures and which trajectory the calibration uses, what the files contain, and the passes (<b>lines</b>) AlignPro made of them.</p>
+<figure><img src="fig/data.png" style="max-height:92mm"><figcaption><b>Figure {N}.1</b> The Data page after reading two captures with an SBET file as trajectory. PosPro has not run on this project, so its trajectory is not available.</figcaption></figure>
+
+<h2>Captures</h2>
+<figure class="small"><img src="fig/found_captures.png"><figcaption><b>Figure {N}.2</b> After <span class="ui">New project…</span>: AlignPro lists the captures it found in the job folder. Yes records them as the project's captures and reads them.</figcaption></figure>
+<p><b>Job folder</b> and <b>Captures</b> come from the shared project: AlignPro uses the captures recorded there (usually by PosPro) and finds the <code>.clraw</code> files in each capture folder. When the project has no captures recorded, AlignPro searches the job folder (<i>the job folder is searched</i>); when AlignPro is the first stage on the job, <span class="ui">Read files</span> records the files it uses as the project's captures. If raw files are missing, a red <b>Missing</b> line points to <span class="ui">Relocate the job folder</span>. Files inside the <code>Processing</code> folder are never read as raw data.</p>
+<p>The list under it holds extra <code>.clraw</code> files or folders for this calibration only:</p>
+<ul>
+<li><span class="ui">Add files…</span> adds <code>.clraw</code> files; <span class="ui">Add folder…</span> adds a capture or export folder (its <code>.clraw</code> files are found inside); <span class="ui">Remove</span> takes the selected entries off the list.</li>
+<li><span class="ui">Read files</span> saves the list and the trajectory choice and reads everything again. It also places the inspection boxes again.</li>
+</ul>
+<p>The first read decodes every capture and keeps a cache in <code>02_AlignPro/work/</code>; later opens read the cache and are much faster. A capture with turns and stops is split into straight passes, named after the capture's line number with a letter (<code>003a</code>, <code>003b</code>); a capture that is one straight pass keeps its number (<code>001</code>).</p>
+
+<h2>Trajectory</h2>
+<p>The trajectory gives the vehicle's position and attitude for every point. Choose one of three:</p>
+<table>
+<tr><th>Option</th><th>Use it</th></tr>
+<tr><td><span class="ui">PosPro trajectory published for this project (trajectory.json)</span></td><td>For the final calibration. This is the choice for a new project. The line under it says PosPro's state: <i>published and current</i> (green), <i>published, but out of date</i> with the reasons, <i>PosPro is processing now</i>, <i>the last PosPro run failed</i>, or <i>not run yet</i> (amber). While PosPro has not published a trajectory, AlignPro uses the Certus real-time trajectory and says so in a warning. GPS week and leap seconds come from PosPro's file.</td></tr>
+<tr><td><span class="ui">Another post-processed SBET file</span></td><td>An SBET made elsewhere. <span class="ui">Browse…</span> picks the file (<code>*.out</code>, <code>*.sbet</code>) and selects this option; a date in the file name such as <code>sbet_20261020.out</code> fills the date. <span class="ui">Find the GPS week from the .clraw times</span> (on by default) works out the GPS week from the capture times; turn it off to give the <span class="ui">Date (UTC)</span> yourself. <span class="ui">Leap seconds</span> is GPS − UTC (18 s since 2017). Without a file name this option falls back to the real-time trajectory.</td></tr>
+<tr><td><span class="ui">Certus real-time (packet 20 in the .clraw), quick look</span></td><td>A first look in the field. Without RTK fixed throughout, the real-time position wanders between passes and the solved angles absorb it; AlignPro warns when it is RTK fixed less than 95 % of the time.</td></tr>
+</table>
+<p>A calibration solved on anything other than PosPro's trajectory is marked on the Calibration page (<i>Solved on the SBET file trajectory, not PosPro's…</i>) and in <code>alignment.json</code>. When PosPro later publishes, AlignPro turns stale in the workflow boxes.</p>
+
+<h2>What the files contain</h2>
+<table>
+<tr><th>Row</th><th>Shows</th></tr>
+<tr><td>Recording</td><td>First and last time of the lines (UTC)</td></tr>
+<tr><td>Lines</td><td>Passes, the captures they come from, and how many are used</td></tr>
+<tr><td>Lidar</td><td>Model, return mode, rotation speed and range unit</td></tr>
+<tr><td>Channel calibration</td><td><i>from the .clraw</i>, or <i>missing: nominal angles used</i> (amber)</td></tr>
+<tr><td>Points kept</td><td>Points read in all lines and the budget per line (Settings, <i>Points kept per line</i>)</td></tr>
+<tr><td>Trajectory</td><td>The trajectory in use and its rate</td></tr>
+<tr><td>RTK fixed</td><td>The worst line's share of RTK fixed epochs, when the trajectory carries a fix type</td></tr>
+<tr><td>Mapper</td><td>Mapper software version and coordinate system recorded in the capture</td></tr>
+</table>
+<p>Data warnings appear in amber under the rows (see Chapter <a href="#trouble">Troubleshooting</a>).</p>
+
+<h2>Lines</h2>
+<p>One row per pass. The line colour is the same on the map, in the Data View and on the other pages.</p>
+<table>
+<tr><th>Column</th><th>Meaning</th></tr>
+<tr><td>Use</td><td>Untick to leave the line out. AlignPro saves the choice and finds the pairs and planar surfaces again; calibrate again afterwards.</td></tr>
+<tr><td>Line</td><td>Name in its colour. A tooltip says when the trajectory does not cover the whole pass.</td></tr>
+<tr><td>COG, SOG m/s</td><td>Course over ground (degrees) and speed</td></tr>
+<tr><td>Length m, Dur s</td><td>Length and duration of the pass</td></tr>
+<tr><td>RTK %</td><td>Share of RTK fixed epochs (green from 99 %, amber above 80 %, red below); <i>-</i> when the trajectory has no fix type, as with an SBET file</td></tr>
+<tr><td>PPS %</td><td>Share of Lidar status packets with the PPS time lock (green at 100 %)</td></tr>
+<tr><td>Lost</td><td>Lost Lidar packets (red when any)</td></tr>
+<tr><td>Points, Range m</td><td>Points kept and their median range</td></tr>
+<tr><td>Err before, Err after</td><td>The line's mean point-to-plane error (cm) before and after the last auto calibration</td></tr>
+<tr><td>Files</td><td>The <code>.clraw</code> files of the line</td></tr>
+</table>
+
+<h1><span class="num">{N}</span>2 Installation</h1>
+<p>The Installation page holds the lever arm, mounting angles and latency the calibration starts from. They come from the hardware record in the first capture (shared in the project).</p>
+<figure><img src="fig/installation.png" style="max-height:88mm"><figcaption><b>Figure {N}.1</b> The Installation page with the vehicle drawing, the survey sensor values and the Certus as recorded.</figcaption></figure>
+<ul>
+<li>The <b>drawing</b> shows the vehicle from above, from starboard and from behind, with the Certus origin, both GNSS antennas and the Lidar (output point) at the lever arm you type. It is the mapper's own mounting drawing and follows the vehicle type in the capture.</li>
+<li><span class="ui">Lever arm (m)</span>: from the Certus reference point to the Lidar optical centre, <b>Forward</b>, <b>Starboard</b>, <b>Down</b>. It is measured, not solved. The value recorded in the capture is shown under each field. A lever arm of 0, 0, 0 turns the step amber: enter the measured one.</li>
+<li><span class="ui">Mounting angles (deg)</span>: roll, pitch and heading in the mapper's convention (Chapter <a href="#reference">Reference</a>), with the recorded values under them.</li>
+<li><span class="ui">Lidar latency (ms)</span>: added to the Lidar time. Leave it at 0 while the PPS time lock is good.</li>
+<li><span class="ui">Revert to recorded</span> puts the recorded lever arm and angles back in the fields and sets the latency to 0. Nothing changes until you press Apply.</li>
+<li><span class="ui">Apply</span> re-georeferences every line with the values in the fields, finds the planar surfaces again, and publishes <code>alignment.json</code> for CloudPro.</li>
+<li><span class="ui">Certus as recorded</span>: the Certus model, the alignment the Certus applies, both antenna offsets and the Lidar model, for reference.</li>
+</ul>
+<div class="note"><b>Note</b> A corrected lever arm goes to <code>alignment.json</code> only. To make it permanent, enter it in the mapper as well. If the lines were recorded with different mountings or lever arms, AlignPro warns and uses the first line's values for all.</div>
+
+<h1 id="quality"><span class="num">{N}</span>3 Quality</h1>
+<p>The Quality page checks the data before you trust a calibration. The mapper locks the Lidar clock to the GNSS (1PPS and GPRMC), so no latency should be needed: PPS lock should be 100 % and arrival minus sensor time about 1 ms.</p>
+<figure><img src="fig/quality.png" style="max-height:70mm"><figcaption><b>Figure {N}.1</b> The Quality page after calibration: the cards, and the sections Time sync and rates, Heading vs course and Residuals opened.</figcaption></figure>
+<h2>Cards</h2>
+<table>
+<tr><th>Card</th><th>Shows</th></tr>
+<tr><td>PPS lock</td><td>The worst line's PPS lock (green at 100 %, red below)</td></tr>
+<tr><td>Lost Lidar packets</td><td>Lost packets in all lines (UDP sequence gaps)</td></tr>
+<tr><td>RTK fixed</td><td>The worst line's RTK fixed share, or <i>SBET</i> when the trajectory has no fix type</td></tr>
+<tr><td>Mean error now</td><td>The mean point-to-plane error with the current angles (green below 1 cm, amber below 2.5 cm)</td></tr>
+</table>
+<h2>Sections</h2>
+<p>Click a section's title to open or close it.</p>
+<table>
+<tr><th>Section</th><th>What to look for</th></tr>
+<tr><td>Time sync and rates</td><td>Per line: Lidar packets per second (amber below 4,900; about 5,000 is normal), lost packets, PPS lock %, NMEA valid %, arrival − sensor time (amber above 5 ms), navigation rate (amber below 50 Hz), return mode, RPM and damaged chunks skipped. A line with a lost PPS lock or lost packets is a reason to leave it out (Data page, <span class="ui">Use</span>).</td></tr>
+<tr><td>Positioning</td><td>Position standard deviation (3D) over each pass, and the fix type when the trajectory has one. Without accuracies (no SMRMSG with the SBET) the plot says <i>No position accuracies (SMRMSG missing)</i>.</td></tr>
+<tr><td>Attitude accuracy</td><td>Roll, pitch and heading standard deviation over each pass; shown only when the trajectory carries them. Look for steady values without jumps.</td></tr>
+<tr><td>Heading vs course</td><td>Per line: course, heading − course (crab), speed, length, duration. A land vehicle shows almost no crab; a steady offset with the same sign in both directions points at the trajectory heading, not the Lidar.</td></tr>
+<tr><td>Residuals</td><td>The spread of point-to-plane residuals with the recorded angles (red) and the current ones (green), with their mean in the legend. After a good calibration the current curve is narrow and centred on 0.</td></tr>
+<tr><td>Ranges</td><td>Points per range for each line, up to the range gate. Points should spread over the range gate, not all be close to the vehicle.</td></tr>
+</table>
+
+<h1><span class="num">{N}</span>4 Pairs</h1>
+<p>The Pairs page shows which passes overlap and how many planar surfaces the calibration can use.</p>
+<figure><img src="fig/pairs.png" style="max-height:72mm"><figcaption><b>Figure {N}.1</b> The Pairs page after calibration: one reciprocal pair with 142 shared patches.</figcaption></figure>
+<h2>Cards and the pairs table</h2>
+<p>The cards give the number of <b>Pairs</b>, <b>Reciprocal pairs</b> (green from 2), <b>Walls / sloped</b> patches (green from 20 walls) and <b>Flat patches</b>. A <b>patch</b> is a small flat piece of a surface (a voxel of <i>Patch size</i>, 2 m by default) that two or more lines see and that is flat within <i>Max thickness per line</i> in each of them. Walls drive the heading, so flat ground is capped to the number of walls and sloped patches (Settings, <i>Flat patches per non-flat patch</i>).</p>
+<p>Each pair of lines is typed by heading difference, speed and overlap:</p>
+<table>
+<tr><th>Type</th><th>Meaning (default limits)</th></tr>
+<tr><td><b style="color:#00a87d">Reciprocal</b></td><td>Opposite directions over the same ground (heading difference ≥ 150°): the strongest pair for roll and pitch</td></tr>
+<tr><td><b>Same direction</b></td><td>Heading difference ≤ 30°, side by side</td></tr>
+<tr><td><b>Crossing</b></td><td>Passes at an angle</td></tr>
+<tr><td><b>Latency</b></td><td>Same direction, tracks less than 2 m apart, with clearly different speeds (≥ 2 m/s apart): shows a timing error</td></tr>
+<tr><td><b>Additional</b></td><td>Too little overlap (below 20 %) or fewer than 3 shared patches</td></tr>
+</table>
+<p>The columns are the pair, its type, ΔHdg (degrees), ΔSpeed (m/s), Overlap %, Separation m (distance between the two tracks), the shared Patches, and the pair's error before and after the last auto calibration (cm).</p>
+
+<h2>Calibration area</h2>
+<table>
+<tr><th>Button</th><th>What it does</th></tr>
+<tr><td><span class="ui">Draw area of interest</span></td><td>For a single target (a pole, a building corner). Click around the target on the QGIS map; right-click or double-click to finish (at least three points). Only patches inside the area are used, and the pairs and surfaces are found again. The area appears on the map as <i>Area of interest</i>.</td></tr>
+<tr><td><span class="ui">Clear area</span></td><td>Back to the automatic choice over all the data.</td></tr>
+<tr><td><span class="ui">Place boxes automatically</span></td><td>Puts the roll, pitch and heading inspection boxes on suitable surfaces again. The boxes are what the Data View shows under <i>Roll box</i>, <i>Pitch box</i> and <i>Heading box</i>, and the report's box pictures.</td></tr>
+<tr><td><span class="ui">Free profile</span></td><td>Press on the QGIS map at the start of a profile, drag, and release at the end. A <i>AlignPro – Profile</i> window shows the points of every line along it. <span class="ui">Corridor width</span> sets how wide it is; <span class="ui">Plan view</span> shows it from above instead of from the side.</td></tr>
+<tr><td><span class="ui">Settings…</span></td><td>The processing settings (below).</td></tr>
+</table>
+<figure><img src="fig/free_profile.png" style="max-height:62mm"><figcaption><b>Figure {N}.2</b> A free profile through a wall before calibration, at the recorded angles: the two passes (red and violet) show the wall a few centimetres apart.</figcaption></figure>
+
+<h2>Settings</h2>
+<p>The defaults suit the mapper; change them only for a reason. <span class="ui">Restore defaults</span> puts every value back. What happens on OK depends on what changed: data and pass settings read the lines again (and place the boxes again); the grid cell size only redraws the map grid; anything else finds the pairs and patches again.</p>
+<div style="display:flex;gap:4mm"><figure style="flex:1;margin:2mm 0"><img src="fig/settings_passes.png"></figure><figure style="flex:1;margin:2mm 0"><img src="fig/settings_patches.png"></figure></div>
+<p style="font-size:8.8pt;color:#5a636b;margin-top:-2mm"><b style="color:#1d2024">Figure {N}.3</b> The Settings dialog, tabs Passes and pairs, and Patches. All tabs and values are listed in Chapter <a href="#reference">Reference</a>.</p>
+
+<h1><span class="num">{N}</span>5 Calibration</h1>
+<p><span class="ui">Auto calibrate</span> solves roll, pitch and heading from every planar patch with all used lines, then again with each line left out when there are at least three. It starts from the current (applied) angles. It holds the AlignPro stage lock while it runs, so a second QGIS cannot work on AlignPro in the same project at the same time.</p>
+<figure><img src="fig/calibration.png" style="max-height:70mm"><figcaption><b>Figure {N}.1</b> The Calibration page right after Auto calibrate: the advised angles with their SDEV, the error before and after, and <i>not published yet</i>.</figcaption></figure>
+
+<h2>Calibrate, check, apply</h2>
+<ol class="steps">
+<li>Press <span class="ui">Auto calibrate</span>. When it ends, the bar says <i>Calibration done … Apply to publish it.</i> and the Data View opens with the advised angles as live values over the applied ones in grey.</li>
+<li>Read the cards. Each angle card shows the advised value and its SDEV: green below 0.02°, amber from 0.02° to 0.05°, red above. <span class="ui">Error before → after</span> is the mean point-to-plane error with the starting and the advised angles; after should be about 1 cm or less (green below 1 cm).</li>
+<li>Check the Data View (Chapter <a href="#dataview">Data View</a>): the passes should fall on one surface in the roll, pitch and heading boxes.</li>
+<li>Press <span class="ui">Apply advised</span>. AlignPro re-georeferences every line with the advised angles and publishes <code>alignment.json</code> for CloudPro.</li>
+<li>Press <span class="ui">Copy for mapper</span> and paste the angles into the mapper: <i>Settings › Hardware › Survey sensor › Mounting angles</i>.</li>
+</ol>
+
+<h2>Under the cards</h2>
+<table>
+<tr><th>Row</th><th>Shows</th></tr>
+<tr><td>Boresight about vehicle axes</td><td>The correction from the starting angles, as small rotations about the vehicle's roll, pitch and heading axes. It stays readable near pitch 90°, where the mounting angles themselves can jump (Chapter <a href="#reference">Reference</a>).</td></tr>
+<tr><td>Its SDEV</td><td>The spread of that correction over the combinations</td></tr>
+<tr><td>Patches</td><td>Walls, sloped and flat patches used</td></tr>
+<tr><td>Trajectory</td><td>The trajectory the calibration was solved on</td></tr>
+</table>
+<p>Calibration warnings appear in amber under these rows (Chapter <a href="#trouble">Troubleshooting</a>).</p>
+<p><span class="ui">Copy for mapper</span> copies the line <code>Roll 89.7187   Pitch 44.6997   Heading 0.6480</code> to the clipboard, to four decimals. It copies the <b>applied</b> angles, the ones published for CloudPro, so press it after <span class="ui">Apply advised</span> (or after applying your own values). To copy trial values you have not applied, use <span class="ui">Copy for mapper</span> in the Data View.</p>
+
+<h2>Published for CloudPro</h2>
+<figure><img src="fig/calibration_published.png" style="max-height:80mm"><figcaption><b>Figure {N}.2</b> After Apply advised: the state is <i>current</i>, with the published values, time and identifier. The amber line is a reminder that this result was solved on an SBET file, not on PosPro's trajectory.</figcaption></figure>
+<ul>
+<li><b>State</b>: <i>current</i>, <i>out of date</i> (with the reasons), <i>not published yet</i>, <i>running now</i> or <i>the last run failed</i>.</li>
+<li><b>Values</b> and <b>Published</b>: the published roll, pitch and heading, the time (UTC) and the start of the publication's identifier.</li>
+<li>Amber notes: why it is out of date; <i>The applied values differ from the published ones</i>; or that the calibration was not solved on PosPro's trajectory.</li>
+<li><span class="ui">Publish the applied values</span> writes <code>alignment.json</code> again with the values applied now. It is available when nothing is published, the publication is out of date, or the applied values differ from it, for example after <span class="ui">Reset AlignPro to the recorded values…</span>.</li>
+</ul>
+
+<h2>Current angles</h2>
+<p><b>Recorded</b> shows the angles recorded in the capture; <b>Current</b> holds the applied ones. Type values and press <span class="ui">Apply</span> to apply and publish your own.</p>
+
+<h2>Combinations</h2>
+<p>One row per solve: <i>All lines</i>, then <i>Without 001</i>, <i>Without 002</i> and so on when there are at least three used lines. Columns: the lines used, the solved roll, pitch and heading, their change from the starting angles (Δ), the mean error before and after (cm), and the points and patches used. A solve that did not converge says so in red.</p>
+<ul>
+<li><b>Select</b> a row to try its angles in the Data View (as trial values; nothing is applied).</li>
+<li><b>Right-click</b> a row: <span class="ui">Apply and publish these angles (…)</span> applies those angles and publishes them for CloudPro; <span class="ui">Copy for mapper</span> copies them.</li>
+</ul>
+<p>A combination clearly apart from the others points at a line that disagrees: check that line's quality and its error in the Data page, and leave it out if it is bad.</p>
+
+<h1 id="dataview"><span class="num">{N}</span>Data View and fine tuning</h1>
+<p>The Data View shows the real points in plan, profile and section, and draws them again a moment after every change of an angle, the lever arm or the latency. Use it to check the automatic result and to adjust by hand when needed. The points are georeferenced with the live (trial) values; a grey <b>ghost</b> shows the same points with other values underneath.</p>
+<figure><img src="fig/dataview_advised.png" style="max-height:96mm"><figcaption><b>Figure {N}.1</b> The Data View as it opens after Auto calibrate: the roll box, with the advised angles as trial values and the applied ones as ghost. The panel on the right holds the values.</figcaption></figure>
+
+<h2>Opening it</h2>
+<ul>
+<li><span class="ui">Data View · Fine Tune</span> under the steps or on the Calibration page: as a floating window.</li>
+<li><span class="ui">Open the Data View</span> in the Window menu: where you left it.</li>
+<li>After reading the data AlignPro docks it at the bottom of the QGIS window; after Auto calibrate it opens floating.</li>
+</ul>
+<p>It is a standard DCS window with its own <span class="ui">⤢</span> Window menu (top right of the toolbar) and title bar menu: floating, maximise, dock right, left, bottom or top, reset, close.</p>
+
+<h2>The three views</h2>
+<ul>
+<li><b>Plan</b> (left): up to 400,000 points of the used lines around the calibration boxes, from above, true to scale, with the line legend and the boxes as dotted outlines. The current profile is the solid rectangle with an arrow at its end; the dashed line across it is where the section is cut. <b>Right-drag</b> in the plan to draw a new profile anywhere (the Section list switches to <i>Custom</i>).</li>
+<li><b>Profile</b> (top right): the points along the profile, height against distance. <b>Click</b> in the profile to move the section there.</li>
+<li><b>Section</b> (bottom right): a thin slice across the profile at that place.</li>
+</ul>
+<p>In every view: the <b>wheel</b> zooms, <b>Shift + wheel</b> (or Ctrl + wheel) stretches the height, <b>drag</b> pans, <b>double-click</b> fits. The hint line under the views shows the coordinates under the mouse. The note at the top right of each view gives the point count and the width or thickness.</p>
+
+<h2>The toolbar</h2>
+<table>
+<tr><th>Control</th><th>What it does</th></tr>
+<tr><td><span class="ui">Section</span> list</td><td><i>Roll box</i>, <i>Pitch box</i>, <i>Heading box</i>, or <i>Custom (right-drag in plan)</i>. Each box is placed where its angle shows best: roll across a surface, pitch through a wall, heading along a wall.</td></tr>
+<tr><td><span class="ui">Profile width</span></td><td>How wide the profile is (0.1 to 50 m)</td></tr>
+<tr><td><span class="ui">Section</span> (metres)</td><td>The thickness of the cross-section, along the profile</td></tr>
+<tr><td><span class="ui">Plan height band</span> and its two heights</td><td>Shows only the points in this band above the ground in the plan, so walls and poles stand out. The Heading box turns it on with the box's own band.</td></tr>
+<tr><td><span class="ui">Colour</span></td><td><i>Line</i> (the line colours), <i>Height</i> or <i>Intensity</i></td></tr>
+<tr><td><span class="ui">Ghost</span></td><td>Grey points under the live ones, with: <i>None</i>, <i>Recorded angles</i> (the angles and lever arm recorded in the capture, latency 0), <i>Applied values</i> (the default), <i>Advised angles</i>, or <i>When view opened</i>. Coloured points are the trial values; grey shows where the points were.</td></tr>
+<tr><td><span class="ui">Load view area</span></td><td>Loads the points around the centre of the plan view (a square of 20 to 300 m, up to 400,000 points). Use it to look at another part of the drive.</td></tr>
+<tr><td><span class="ui">Fit</span></td><td>Fits all three views to their points</td></tr>
+</table>
+
+<h2>The heading box</h2>
+<p>A heading error turns the passes against each other about a vertical axis, which a side view hardly shows. For the Heading box the profile view becomes <i>Heading box · plan, wall edge-on</i>: the wall seen from above, within the height band, so a heading error shows as passes turned apart.</p>
+<figure><img src="fig/dataview_heading.png" style="max-height:92mm"><figcaption><b>Figure {N}.2</b> The heading box: the plan with the height band on, and the wall seen from above, edge-on.</figcaption></figure>
+
+<h2>What a misalignment looks like</h2>
+<figure><img src="fig/dataview_compare.png" style="max-height:70mm"><figcaption><b>Figure {N}.3</b> The same wall in the pitch box profile, zoomed in, coloured by line. Left: with the recorded angles the two passes (red and violet) are a few centimetres apart and the wall looks thick. Right: with the advised angles they fall on one thin wall.</figcaption></figure>
+
+<h2>Adjusting by hand</h2>
+<div style="display:flex;gap:6mm;align-items:flex-start">
+<div style="flex:1.3">
+<p>The panel on the right holds the trial values:</p>
+<ul>
+<li><b>Error now (planar patches)</b>: the mean error with the trial values; under it, with the applied values and the difference (Δ).</li>
+<li><span class="ui">Mounting angles (deg)</span>: roll, pitch, heading. Each has <span class="ui">−</span> and <span class="ui">+</span> buttons (hold to repeat) and a field you can type in. <span class="ui">Step</span> sets the step: 0.001 to 1°.</li>
+<li><span class="ui">Lever arm (m)</span>: forward, starboard, down, with a step of 0.001 to 0.1 m, and <span class="ui">Latency ms</span> in steps of 1 ms. A latency change takes a little longer to draw.</li>
+<li><b>Δ R P H</b>, <b>Δ F S D</b>: trial minus applied values.</li>
+<li><span class="ui">Start from</span>: <span class="ui">Recorded</span> (the angles and lever arm recorded in the <code>.clraw</code>, latency 0), <span class="ui">Applied</span> (the values applied to the project) or <span class="ui">Advised</span> (the auto calibration result).</li>
+<li><span class="ui">Apply to project</span> applies the trial angles, lever arm and latency, finds the planar surfaces again and publishes <code>alignment.json</code>.</li>
+<li><span class="ui">Copy for mapper</span> copies the trial angles; the button reads <i>COPIED ✓</i> for two seconds.</li>
+</ul>
+<p>Until you apply, the panel says <b>● Trial values not applied yet</b>.</p>
+</div>
+<figure style="flex:1;margin-top:0"><img src="fig/dataview_panel.png" style="max-height:100mm"><figcaption><b>Figure {N}.4</b> The panel with pitch raised by two steps of 0.01°: the error goes up by 0.03 cm.</figcaption></figure>
+</div>
+<ol class="steps">
+<li>Start from <span class="ui">Applied</span> or <span class="ui">Advised</span>.</li>
+<li>Pick the box that shows the angle you want to change: roll in the Roll box, pitch in the Pitch box, heading in the Heading box. Set <span class="ui">Ghost</span> to <i>Applied values</i> to see where you started.</li>
+<li>Nudge until the passes fall on one surface and Error now is at its lowest.</li>
+<li>Press <span class="ui">Apply to project</span>, then copy the angles to the mapper.</li>
+</ol>
+<div class="note"><b>Note</b> The fields show angles to 0.0001°, the lever arm to the millimetre and the latency to 0.1&nbsp;ms. Values equal to the applied ones at that precision count as applied, so after <span class="ui">Apply advised</span> the panel shows nothing to apply, and <span class="ui">Apply</span> keeps the advised angles exactly (published as <i>calibration</i>).</div>
+
+<h1><span class="num">{N}</span>6 Analyze</h1>
+<p>Analyze sweeps one value with everything else fixed and plots the mean point-to-plane error against it (the planar surfaces are fitted again at each step). The lowest point is the best value. Use it to check the latency or a lever arm component, or to confirm an angle.</p>
+<figure><img src="fig/analyze.png" style="max-height:70mm"><figcaption><b>Figure {N}.1</b> A sweep of the mounting heading, ±0.3° in 21 steps, after applying the advised angles. The best value is the applied one.</figcaption></figure>
+<ol class="steps">
+<li>Choose the <span class="ui">Parameter</span>: <i>Lidar latency (ms)</i>, <i>Lever forward (m)</i>, <i>Lever starboard (m)</i>, <i>Lever down (m)</i>, <i>Mounting roll (deg)</i>, <i>Mounting pitch (deg)</i> or <i>Mounting heading (deg)</i>. <b>Current value</b> shows the applied value; Centre, Range and Steps are filled with defaults (latency ±20 ms; lever ±0.3 m; roll and pitch ±0.3°; heading ±0.5°; 21 steps).</li>
+<li>Adjust <span class="ui">Centre</span>, <span class="ui">Range ±</span> and <span class="ui">Steps</span> (3 to 201) if needed, then press <span class="ui">Analyze</span>.</li>
+<li>The plot shows the error at each step, with the best value as an amber line and the current value as a grey one. <b>BEST</b> gives the value and its error, and the Centre moves to it, so pressing Analyze again with a smaller range refines it.</li>
+<li><span class="ui">Apply best value</span> sets the parameter to the best value and publishes <code>alignment.json</code>.</li>
+</ol>
+<p>Latency shows as an along-track shift that flips with the driving direction, so it needs passes in both directions; a latency pair (Pairs page) helps. If the curve is jumpy, widen the range and add steps. Small values found on a quiet drive are usually noise: if it isn't broken, don't fix it.</p>
+
+<h1><span class="num">{N}</span>7 Report</h1>
+<p>The Report page writes the calibration report as PDF and text, keeps the history of earlier calibrations, and exports corrected points.</p>
+<figure><img src="fig/report.png" style="max-height:100mm"><figcaption><b>Figure {N}.1</b> The Report page after writing a report. The history lists the reports found under the folder at the top.</figcaption></figure>
+<h2>Creating a report</h2>
+<ol class="steps">
+<li>Fill the <span class="ui">Header</span>: <i>Vehicle</i>, <i>Operator</i>, <i>Client</i>, <i>Location</i> and <i>Notes</i>. They are saved with the project.</li>
+<li>Choose the options (remembered for next time):
+<ul>
+<li><span class="ui">Add header</span>: the header fields go into the text report too.</li>
+<li><span class="ui">Ask for file name</span>: choose where to save; otherwise the report goes to <code>02_AlignPro/out/Report_YYYY-MM-DD-HHMMSS_&lt;project&gt;.pdf</code>.</li>
+<li><span class="ui">Add screenshots</span>: adds the QGIS map, the Data View's plan, profile and section, and the roll, pitch and heading boxes, each on its own page. Set up the map and the Data View first.</li>
+<li><span class="ui">Copy text to clipboard</span>: copies the text report.</li>
+</ul></li>
+<li>Press <span class="ui">Create report</span>. AlignPro writes the PDF and a <code>.txt</code> beside it, then asks whether to open the PDF.</li>
+</ol>
+<figure class="half"><img src="fig/report_pdf.png"><figcaption><b>Figure {N}.2</b> The top of the first page of the PDF report.</figcaption></figure>
+<p>The report holds the project, trajectory, lever arm, latency and convention; the recorded, starting and advised angles with their SDEV and the boresight about the vehicle axes; the error before and after; the patches; every combination, line and pair; the warnings; the notes; and the files used. The text report ends with where to enter the advised angles in the mapper.</p>
+
+<h2>Calibration history</h2>
+<p>The history reads the text reports (<code>Report_*.txt</code>) found under the folder at the top, down to six folder levels, skipping <code>work</code> and <code>log</code> folders. It starts with the folder that holds this job's folder, so the reports of the other jobs beside it are listed too (each job's <code>Processing/&lt;Name&gt;/02_AlignPro/out</code>). Press <span class="ui">Browse…</span> to read another folder. <span class="ui">Scan</span> reads the folder again.</p>
+<ul>
+<li>The table lists each report's data date, project, roll, pitch, heading, SDEV and file, oldest data first. Double-click a row to open its PDF.</li>
+<li>The plot shows the change of roll, pitch and heading from the first report, one point per report: a mounting that moves shows up as a trend.</li>
+<li><span class="ui">View ASCII</span> and <span class="ui">View PDF</span> open the selected report; <span class="ui">Explore</span> opens its folder.</li>
+</ul>
+
+<h2>Export corrected LAS</h2>
+<p><span class="ui">Export corrected LAS…</span> writes the points of the used lines with the applied values to a LAS file (default <code>02_AlignPro/&lt;Name&gt;_corrected.las</code>), to check them in other tools. Coordinates are in the coordinate system recorded in the capture (EPSG:2953 when none is recorded) with ellipsoidal heights; each point keeps its intensity, its line number as point source ID and its GPS time. These are the thinned points AlignPro works with; full point cloud products come from CloudPro.</p>
+
+<h1 id="publishing"><span class="num">{N}</span>Publishing for CloudPro and the mapper</h1>
+<p>CloudPro reads only what AlignPro publishes; the mapper keeps its own settings, so copy the angles there too (<span class="ui">Copy for mapper</span>) and enter a corrected lever arm or latency by hand. Every apply publishes: <span class="ui">Apply advised</span>, <span class="ui">Apply</span> on the Calibration or Installation page, a right-click <span class="ui">Load these angles</span>, <span class="ui">Apply to project</span> in the Data View, <span class="ui">Apply best value</span> on the Analyze page and <span class="ui">Publish the applied values</span>. Each one writes, in <code>02_AlignPro/out/</code>:</p>
+<ul>
+<li><code>alignment.json</code>: the file CloudPro reads (schema <code>dcs.alignment/1</code>);</li>
+<li><code>alignment_report.txt</code> (the text report) and <code>alignment_combinations.csv</code> (one row per combination).</li>
+</ul>
+<p>Publishing holds the AlignPro stage lock and writes a log in <code>02_AlignPro/log/</code>. If it fails, the earlier publication stays. CloudPro turns stale when AlignPro publishes again.</p>
+
+<h2>What alignment.json holds</h2>
+<table>
+<tr><th>Field</th><th>Content</th></tr>
+<tr><td><code>mount_deg</code></td><td>The applied roll, pitch and heading, their SDEV (<code>sd</code>), and <code>source</code>: <i>calibration</i> when they are the advised angles, otherwise <i>manual adjustment</i></td></tr>
+<tr><td><code>mount_recorded_deg</code></td><td>The mounting the calibration started from, recorded in the capture, with its source</td></tr>
+<tr><td><code>lidar_lever_m</code></td><td>The lever arm used (<code>value</code>), its <code>source</code> (<i>capture</i>, <i>measured</i> when you changed it, or <i>solved</i>) and the <code>recorded</code> one</td></tr>
+<tr><td><code>latency_s</code></td><td>The Lidar latency applied, in seconds</td></tr>
+<tr><td><code>boresight_deg</code></td><td>The correction relative to the mounting recorded in the capture, about the vehicle axes, with its SDEV</td></tr>
+<tr><td><code>quality</code></td><td>The mean error now and with the recorded angles (cm), the SDEV, the lines used and their total, the patches, and the calibration warnings</td></tr>
+<tr><td><code>trajectory</code></td><td>Which trajectory the values were solved on (<i>pospro</i>, <i>sbet</i> or <i>realtime</i>), PosPro's publication identifier, and a description</td></tr>
+<tr><td><code>convention</code>, <code>built_from</code></td><td>The mounting convention (Chapter <a href="#reference">Reference</a>), and what the result was made from, used to tell when it is out of date</td></tr>
+</table>
+<p>An excerpt of the file published in this guide's example:</p>
+<pre class="code" style="font-family:'Source Code Pro',monospace;font-size:8pt;background:#f3f5f6;padding:2.5mm 3mm;border-radius:2px;white-space:pre-wrap">"mount_deg": {"roll": 89.71865, "pitch": 44.69973, "heading": 0.64803,
+              "sd": {"roll": 0.00015, "pitch": 0.00061, "heading": 0.00079},
+              "source": "calibration"},
+"mount_recorded_deg": {"roll": 90.0, "pitch": 45.0, "heading": 0.0, "source": "capture"},
+"latency_s": 0.0,
+"trajectory": {"source": "sbet", "handover_id": null, "description": "SBET sbet_20261020.out"}</pre>
+
+<h2>When AlignPro is out of date</h2>
+<p>AlignPro's box in the header turns <b>⚠ stale</b> (reason on hover and on the Calibration page) when:</p>
+<ul>
+<li>PosPro publishes a new trajectory, or publishes one for the first time after AlignPro used an SBET file or the real-time trajectory;</li>
+<li>a raw capture file changes or is not found;</li>
+<li>the job's coordinate system or starting Lidar mounting (shared settings) is edited.</li>
+</ul>
+<p>A stale result stays usable. To update it, run <span class="ui">Auto calibrate</span> again and apply.</p>
+
+
+
+<h1 id="maplayers"><span class="num">{N}</span>Map layers and the command-line tool</h1>
+<h2>Map layers in QGIS</h2>
+<p>AlignPro adds a layer group <b>AlignPro – &lt;project&gt;</b> to the QGIS project and zooms the map to the tracks when the data is read. The layers are drawn again whenever the lines, angles or boxes change. They use a local east-north frame centred on the job.</p>
+<table>
+<tr><th>Layer</th><th>Shows</th></tr>
+<tr><td>Tracks</td><td>One line per pass in its line colour; a line left out is thin and dashed and marked <i>(not used)</i>. Attributes: line, use, COG, SOG, points.</td></tr>
+<tr><td>Line starts</td><td>A circle at the start of each pass, so you can tell the driving direction.</td></tr>
+<tr><td>Calibration boxes</td><td>The roll (red), pitch (green) and heading (blue) inspection boxes, each with a filled arrow at its end.</td></tr>
+<tr><td>Planar patches</td><td>The patches used: walls (blue squares), sloped (amber diamonds), flat (grey circles), with the number of lines and the height. Hidden when added; tick it in the Layers panel.</td></tr>
+<tr><td>Grid – &lt;value&gt;</td><td>A grid of the lowest surface per cell (cell size in Settings, <i>Display</i>, 0.5 m by default), coloured by the value chosen in <span class="ui">Map grid</span> under the steps: <i>Mean height</i>, <i>Standard deviation</i>, <i>Line separation</i>, <i>Count</i> or <i>Lines per cell</i>. Line separation is the quickest map check of a calibration: where passes overlap it should be close to zero everywhere.</td></tr>
+<tr><td>Grid – hillshade</td><td>A hillshade over the grid, with <i>Mean height</i>.</td></tr>
+<tr><td>Area of interest</td><td>The area drawn on the Pairs page; dashed when it is not in use.</td></tr>
+</table>
+<p>The grid is a five-band GeoTIFF in <code>02_AlignPro/work/</code>. <span class="ui">Save the QGIS project in the project folder</span> keeps the map with the job.</p>
+
+<h2 id="cli">Command-line tool</h2>
+<p>The plugin folder holds <code>tools/alignpro_cli.py</code>, which runs the same calibration without QGIS, for example on a processing server. It makes a stand-alone project (<code>&lt;NAME&gt;.alignpro.json</code>), not a shared DCS project, so it does not publish <code>alignment.json</code>; it prints the results and writes the text report into PROJECT_DIR. It needs Python 3 with NumPy, and DCS Core beside the <code>alignpro</code> folder.</p>
+<pre class="code" style="font-family:'Source Code Pro',monospace;font-size:8pt;background:#f3f5f6;padding:2.5mm 3mm;border-radius:2px;white-space:pre-wrap">python3 alignpro_cli.py PROJECT_DIR NAME CLRAW_OR_FOLDER... [--sbet FILE [--date YYYY-MM-DD]]
+                        [--apply] [--sweep PARAM CENTER HALF STEPS] [--set KEY VALUE]</pre>
+<table>
+<tr><th>Argument</th><th>Meaning</th></tr>
+<tr><td><code>PROJECT_DIR NAME CLRAW_OR_FOLDER…</code></td><td>Where the project, cache and report go; the project name; the <code>.clraw</code> files or capture folders</td></tr>
+<tr><td><code>--sbet FILE</code>, <code>--date</code></td><td>A post-processed SBET as trajectory (otherwise the real-time one), and its date when the GPS week should not come from the captures</td></tr>
+<tr><td><code>--apply</code></td><td>Applies the advised angles to the project and prints the error with them</td></tr>
+<tr><td><code>--sweep</code></td><td>A sweep as on the Analyze page; PARAM is <code>latency_ms</code>, <code>lever_f</code>, <code>lever_s</code>, <code>lever_d</code>, <code>roll</code>, <code>pitch</code> or <code>heading</code></td></tr>
+<tr><td><code>--set KEY VALUE</code></td><td>Overrides a setting, e.g. <code>--set voxel_m 1.5</code> (keys in Chapter <a href="#reference">Reference</a>); repeatable</td></tr>
+</table>
+
+
+<h1 id="trouble"><span class="num">{N}</span>Troubleshooting</h1>
+<table>
+<tr><th>You see</th><th>Why, and what to do</th></tr>
+<tr><td><i>AlignPro needs the DCS Core plugin …</i></td><td>Install DCS Core, then restart QGIS.</td></tr>
+<tr><td><i>No .clraw captures were found in …</i> / <i>No .clraw files found in the project</i></td><td>Check the job folder (relocate it if it moved), or add files on the Data page and press <span class="ui">Read files</span>.</td></tr>
+<tr><td><i>Raw data not found</i> when a project opens, or a red <b>Missing</b> line</td><td>Answer Yes and choose the job folder's new place, or use <span class="ui">Raw data moved? Relocate the job folder…</span>.</td></tr>
+<tr><td><i>PosPro has not published a trajectory for this project yet: using the Certus real-time trajectory …</i></td><td>Run PosPro on the project, then read the data again in AlignPro and calibrate. Meanwhile choose an SBET file if you have one.</td></tr>
+<tr><td><i>PosPro's trajectory is out of date …</i> / <i>Real-time trajectory is RTK fixed only …%</i></td><td>Re-run PosPro, then read and calibrate again in AlignPro.</td></tr>
+<tr><td><i>The PosPro trajectory does not cover line …</i> / <i>SBET does not cover line …; check the SBET date and file.</i></td><td>Process that part in PosPro, or check the SBET date, the <span class="ui">Find the GPS week</span> option and the leap seconds.</td></tr>
+<tr><td><i>The Lidar lever arm recorded in the capture is 0, 0, 0 …</i></td><td>Enter the measured lever arm on the Installation page (and in the mapper), then Apply.</td></tr>
+<tr><td><i>Line …: Lidar PPS lock lost in … status packets.</i> / <i>… damaged chunk(s) skipped.</i></td><td>Look at that line on the Quality page; untick it on the Data page if it disagrees.</td></tr>
+<tr><td><i>Line … was recorded with a different Lidar mounting or lever arm …</i></td><td>The first line's values are used for all. Check each capture's mapper settings.</td></tr>
+<tr><td><i>Not enough planar surfaces seen by two or more lines (…)</i> / <i>The calibration did not converge …</i></td><td>The passes do not share enough surfaces. Check the overlap on the Pairs page and the range gate in Settings; clear or widen the area of interest.</td></tr>
+<tr><td><i>Few vertical surfaces (…): heading is weakly determined.</i></td><td>Drive past more walls, also walls across the road. Check the heading in the Heading box.</td></tr>
+<tr><td><i>Combination spread above 0.05 deg …</i></td><td>One line disagrees with the others. Compare the combinations, the line errors and the Quality page; leave a bad line out and calibrate again.</td></tr>
+<tr><td><i>The mounting pitch is near 90 deg …</i></td><td>Expected for the upright mounting. Enter all three angles exactly; judge the result on the boresight about vehicle axes and its SDEV (Chapter <a href="#reference">Reference</a>).</td></tr>
+<tr><td><i>The solved heading is close to minus the entered heading …</i></td><td>The heading sign of the mounting convention has not been confirmed for this case. Check the result in the Heading box before applying.</td></tr>
+<tr><td><i>Wait for the current job to finish (or stop it).</i></td><td>Let it end or press <span class="ui">STOP</span>.</td></tr>
+<tr><td><i>AlignPro is being processed by … on … since …</i></td><td>Another QGIS holds the AlignPro stage lock of this project. Wait until it finishes.</td></tr>
+<tr><td><i>PDF not written (…). The ASCII report is at …</i></td><td>Close the PDF if another program has it open; check the folder is writable.</td></tr>
+</table>
+<h2>Limits in this version</h2>
+<ul>
+<li>The lever arm is measured, not solved. Settings has a lever arm solve for diagnosis only.</li>
+<li>The inspection boxes are placed automatically (<span class="ui">Place boxes automatically</span>); for any other place use a custom profile in the Data View or <span class="ui">Free profile</span>.</li>
+</ul>
+
+<h1 id="reference"><span class="num">{N}</span>Reference</h1>
+<h2>Conventions</h2>
+<p>AlignPro uses the mapper's own conventions, so its numbers go into the mapper unchanged.</p>
+<ul>
+<li><b>Vehicle frame</b>: X forward, Y starboard, Z down, from the Certus reference point. Lever arms in metres, Forward / Starboard / Down.</li>
+<li><b>Angles</b>: roll + starboard down, pitch + bow up, heading + clockwise, in degrees.</li>
+<li><b>Lidar mounting</b>: M = Rz(heading) · Ry(pitch) · Rx(−roll) · Z0.</li>
+<li><b>Near pitch 90°</b> (an upright mounting) roll and heading trade against each other: only their sum or difference is defined, so a tiny correction can change them a lot. The three angles together are still exact: enter all three. AlignPro warns and also gives the correction about the vehicle axes, which stays readable.</li>
+<li><b>Errors</b>: mean point-to-plane distance over the planar patches, in centimetres, with the planes fitted again for each set of values.</li>
+<li><b>SDEV</b>: the spread of the leave-one-line-out solutions (one sigma); with fewer than three used lines, the solver's formal standard deviation.</li>
+</ul>
+
+<h2>Settings</h2>
+<table>
+<tr><th>Tab</th><th>Setting (key)</th><th>Default</th><th>Notes</th></tr>
+<tr><td rowspan="5">Data</td><td>Return used (<code>returns</code>)</td><td>strongest</td><td>strongest, last or both. One return per firing avoids near-duplicate points.</td></tr>
+<tr><td>Range min (m) (<code>range_min</code>)</td><td>1.5</td><td></td></tr>
+<tr><td>Range max (m) (<code>range_max</code>)</td><td>60</td><td>Far points carry the most angle signal but also the most noise; 60 m suits the XT-32.</td></tr>
+<tr><td>Intensity min (<code>intensity_min</code>)</td><td>0</td><td></td></tr>
+<tr><td>Points kept per line (<code>points_per_line</code>)</td><td>1,500,000</td><td>Random thinning budget; reads the lines again.</td></tr>
+<tr><td rowspan="8">Passes and pairs</td><td>Split captures into passes at turns (<code>split_turns</code>)</td><td>on</td><td></td></tr>
+<tr><td>Minimum speed (m/s) (<code>min_speed</code>)</td><td>1.0</td><td>Slower periods (statics) are dropped.</td></tr>
+<tr><td>Turn limit (deg) (<code>turn_deg</code>)</td><td>35</td><td></td></tr>
+<tr><td>Minimum pass length (s) (<code>min_pass_s</code>)</td><td>4</td><td></td></tr>
+<tr><td>Reciprocal pair: heading difference ≥ (deg) (<code>reciprocal_deg</code>)</td><td>150</td><td></td></tr>
+<tr><td>Same direction: heading difference ≤ (deg) (<code>same_dir_deg</code>)</td><td>30</td><td></td></tr>
+<tr><td>Minimum overlap (%) (<code>min_overlap_pct</code>)</td><td>20</td><td></td></tr>
+<tr><td>Latency pair: speed difference ≥ (m/s) (<code>speed_margin</code>)</td><td>2.0</td><td></td></tr>
+<tr><td rowspan="7">Patches</td><td>Patch size (m) (<code>voxel_m</code>)</td><td>2.0</td><td>Voxel edge; 1.5–3 m for roadside scenes.</td></tr>
+<tr><td>Max thickness per line (m) (<code>thickness_m</code>)</td><td>0.04</td><td>A patch must be planar within this in every line that sees it.</td></tr>
+<tr><td>Min points per line (<code>min_pts_line</code>)</td><td>20</td><td></td></tr>
+<tr><td>Max points per line per patch (<code>max_pts_patch_line</code>)</td><td>80</td><td></td></tr>
+<tr><td>Flat patches per non-flat patch (<code>flat_ratio</code>)</td><td>1.0</td><td>Caps ground so walls drive heading.</td></tr>
+<tr><td>Max patches (<code>max_patches</code>)</td><td>4000</td><td></td></tr>
+<tr><td>Use only the area of interest (<code>use_aoi</code>)</td><td>off</td><td>Set by Draw area of interest and Clear area.</td></tr>
+<tr><td rowspan="4">Solver</td><td>Huber threshold (sigma) (<code>huber_k</code>)</td><td>2.0</td><td>Down-weights residuals beyond this.</td></tr>
+<tr><td>Reject after convergence (sigma, 0 = off) (<code>reject_sigma</code>)</td><td>3.5</td><td></td></tr>
+<tr><td>Max iterations (<code>max_iter</code>)</td><td>12</td><td></td></tr>
+<tr><td>Also solve the Lidar lever arm (weak; for diagnosis) (<code>solve_lever</code>)</td><td>off</td><td></td></tr>
+<tr><td>Display</td><td>Grid cell size (m) (<code>grid_cell_m</code>)</td><td>0.5</td><td>Display only.</td></tr>
+</table>
+<p>Data and pass settings read the lines again; the grid cell size only redraws the grid; the others find the pairs and patches again. Settings are saved per project.</p>
+
+<h2>Files</h2>
+<table>
+<tr><th>Path in <code>Processing/&lt;Name&gt;/02_AlignPro/</code></th><th>Holds</th></tr>
+<tr><td><code>alignpro.json</code></td><td>AlignPro's settings, applied values, boxes, area of interest, last calibration result, report header and log (a <code>.bak</code> copy beside it)</td></tr>
+<tr><td><code>work/</code></td><td>Line caches, the map grid, report screenshots; can be deleted (rebuilt on the next read)</td></tr>
+<tr><td><code>out/</code></td><td><code>alignment.json</code>, <code>alignment_report.txt</code>, <code>alignment_combinations.csv</code>, the PDF and text reports</td></tr>
+<tr><td><code>log/</code></td><td>One log per run, e.g. <code>20261104_095507_auto_calibration.log</code></td></tr>
+</table>

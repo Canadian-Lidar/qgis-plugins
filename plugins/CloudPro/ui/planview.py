@@ -1,5 +1,6 @@
 """Plan view: the whole project as a gridded top view (mean / max / min
-height, span, hit count, reject count, intensity, with hill shading) under
+height, span, hit count, density, coverage against a target density, reject
+count, intensity, with hill shading) under
 the points of the Inspection Area, the drive lines with direction arrows,
 the slice position and the Inspection Area itself.
 
@@ -12,12 +13,15 @@ import math
 import numpy as np
 
 from ..core.pointset import rect_corners, to_box_frame
+from ..core.coverage import DEFAULT_TARGET, coverage_summary
 from ..core.store import GRID_CELL, parse_key
 from ..qt import QtCore, QtGui, Qt, Signal, evpos, mods
 from . import render, theme
 from .view2d import CloudView2D
 
-ATTRS = ["Mean height", "Max height", "Min height", "Span", "Hit count", "Reject count", "Intensity", "None"]
+ATTRS = ["Mean height", "Max height", "Min height", "Span", "Hit count", "Density", "Coverage", "Reject count",
+         "Intensity", "None"]
+COVER_OK, COVER_LOW, COVER_POOR = (0, 229, 170), (245, 166, 35), (232, 72, 85)   # theme ACCENT, AMBER, RED
 
 
 class PlanView(CloudView2D):
@@ -32,6 +36,8 @@ class PlanView(CloudView2D):
         self.line_enabled = {}
         self.track_visible = {}
         self.attr = "Mean height"
+        self.target_density = DEFAULT_TARGET
+        self._cover = None
         self.lut = "Rainbow"
         self.shade = True
         self.box = None
@@ -50,8 +56,26 @@ class PlanView(CloudView2D):
         self.line_colours = line_colours
         self._tiles = {}
         self._range = None
+        self._cover = None
+
+    def set_target(self, target):
+        """Target density (pts/m2) for the Coverage grid."""
+        target = max(0.01, float(target))
+        if target != self.target_density:
+            self.target_density = target
+            if self.attr == "Coverage":
+                self.invalidate()
+
+    def coverage(self):
+        """coverage_summary() for the current cell and target, cached until the grid changes."""
+        if self.store is None:
+            return None
+        if self._cover is None:
+            self._cover = coverage_summary(self.store, getattr(self, "cell", GRID_CELL), self.target_density)
+        return self._cover
 
     def invalidate(self, keys=None):
+        self._cover = None
         if keys is None:
             self._tiles = {}
             self._range = None
@@ -135,6 +159,9 @@ class PlanView(CloudView2D):
                 v = (g["zmax"] - g["zmin"]).astype(float)
             elif a == "Hit count":
                 v = g["count"].astype(float)
+            elif a in ("Density", "Coverage"):
+                cell = getattr(self, "cell", GRID_CELL)
+                v = g["count"].astype(float) / (cell * cell)
             elif a == "Reject count":
                 v = g["rej"].astype(float)
                 v[(g["count"] + g["rej"]) == 0] = np.nan
@@ -166,7 +193,16 @@ class PlanView(CloudView2D):
         lo, hi = self._range
         n = v.shape[0]
         ok = np.isfinite(v)
-        rgb = render.scalar_colours(np.nan_to_num(v, nan=lo), lo, hi, self.lut).astype(np.float32)
+        if self.attr == "Coverage":
+            t = self.target_density
+            d = np.nan_to_num(v, nan=0.0)
+            rgb = np.empty(v.shape + (3,), np.float32)
+            rgb[...] = COVER_POOR
+            rgb[d >= 0.5 * t] = COVER_LOW
+            rgb[d >= t] = COVER_OK
+            rgb *= 0.75                               # less dimmed than a scalar grid: this is the answer
+        else:
+            rgb = render.scalar_colours(np.nan_to_num(v, nan=lo), lo, hi, self.lut).astype(np.float32)
         if self.shade and "height" in self.attr.lower():
             z = np.where(ok, v, np.nanmean(v) if ok.any() else 0)
             gy, gx = np.gradient(z, getattr(self, "cell", GRID_CELL))
@@ -175,7 +211,8 @@ class PlanView(CloudView2D):
             aspect = np.arctan2(-gx, gy)
             sh = np.sin(alt) * np.cos(slope) + np.cos(alt) * np.sin(slope) * np.cos(az - aspect)
             rgb *= (0.55 + 0.45 * np.clip(sh, 0, 1))[..., None]
-        rgb *= 0.55                      # dimmed: the points of the Inspection Area stand out on top
+        if self.attr != "Coverage":
+            rgb *= 0.55                  # dimmed: the points of the Inspection Area stand out on top
         argb = render.pack(np.clip(rgb, 0, 255).astype(np.uint8))
         argb = np.where(ok, argb, np.uint32(0))
         argb = np.ascontiguousarray(np.flipud(argb.reshape(n, n)))
@@ -244,6 +281,8 @@ class PlanView(CloudView2D):
                 p.drawText(QtCore.QPointF(sx[0] + 4, sy[0] - 4), "L%d" % (lid + 1))
 
     def _legend(self, p):
+        if self.attr == "Coverage":
+            return self._cover_legend(p)
         lo, hi = self._range
         x, y, w, h = self.width() - 22, 34, 10, 110
         lut = render.LUTS[self.lut]
@@ -255,7 +294,28 @@ class PlanView(CloudView2D):
         off = self.b_offset_z if "height" in self.attr.lower() and self.attr != "Span" else 0
         p.drawText(QtCore.QRectF(x - 66, y - 6, 62, 14), int(Qt.AlignmentFlag.AlignRight), "%.2f" % (hi + off))
         p.drawText(QtCore.QRectF(x - 66, y + h - 8, 62, 14), int(Qt.AlignmentFlag.AlignRight), "%.2f" % (lo + off))
-        p.drawText(QtCore.QRectF(x - 110, y + h + 6, 120, 14), int(Qt.AlignmentFlag.AlignRight), self.attr)
+        p.drawText(QtCore.QRectF(x - 110, y + h + 6, 120, 14), int(Qt.AlignmentFlag.AlignRight),
+                   "pts/m²" if self.attr == "Density" else self.attr)
+
+    def _cover_legend(self, p):
+        t = self.target_density
+        c = self.coverage() or {}
+        rows = [(COVER_OK, "≥ %g pts/m²" % t), (COVER_LOW, "%g – %g" % (0.5 * t, t)), (COVER_POOR, "< %g" % (0.5 * t))]
+        p.setFont(theme.mono(10))
+        w = 200
+        x, y = self.width() - w - 12, 30
+        p.fillRect(QtCore.QRectF(x - 8, y - 6, w + 12, 18 * len(rows) + 52), QtGui.QColor(38, 41, 45, 215))
+        for i, (col, text) in enumerate(rows):
+            p.fillRect(QtCore.QRectF(x, y + 18 * i + 2, 12, 10), QtGui.QColor(*col))
+            p.setPen(QtGui.QColor(theme.TEXT))
+            p.drawText(QtCore.QRectF(x + 18, y + 18 * i - 1, w - 18, 16), int(Qt.AlignmentFlag.AlignLeft), text)
+        y += 18 * len(rows) + 4
+        p.setPen(QtGui.QColor(theme.BRIGHT))
+        p.drawText(QtCore.QRectF(x, y, w, 16), int(Qt.AlignmentFlag.AlignLeft),
+                   "%.0f%% on target" % (100 * c.get("ok_share", 0)))
+        p.setPen(QtGui.QColor(theme.DIM))
+        p.drawText(QtCore.QRectF(x, y + 16, w, 16), int(Qt.AlignmentFlag.AlignLeft),
+                   "%s covered · median %.0f" % (_area(c.get("area_m2", 0)), c.get("median", 0)))
 
     b_offset_z = 0.0
 
@@ -404,3 +464,7 @@ class PlanView(CloudView2D):
         brg = math.degrees(math.atan2(tr["E"][j1] - tr["E"][j0], tr["N"][j1] - tr["N"][j0])) % 360
         self.box.update(cx=float(tr["E"][j]), cy=float(tr["N"][j]), bearing=brg)
         self.boxChanged.emit(dict(self.box), True)
+
+
+def _area(m2):
+    return "%.2f km²" % (m2 / 1e6) if m2 >= 1e5 else "{:,.0f} m²".format(m2)

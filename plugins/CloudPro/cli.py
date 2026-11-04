@@ -73,6 +73,8 @@ def main(argv=None):
     e.add_argument("--include-rejected", action="store_true")
     n = sub.add_parser("info")
     n.add_argument("project")
+    n.add_argument("--target", type=float, default=100.0, help="coverage target density, pts/m2 (default 100)")
+    n.add_argument("--cell", type=float, default=1.0, help="coverage cell size, m (default 1)")
     u = sub.add_parser("update")
     u.add_argument("project")
     pb = sub.add_parser("publish")
@@ -95,6 +97,11 @@ def main(argv=None):
         for ln in prj.lines:
             print("  L%d %-20s %12s pts  %s" % (ln["id"] + 1, ln.get("name", ""), "{:,}".format(ln.get("points", 0)),
                                                 ln.get("trajectory", "")))
+        if prj.store.total:
+            from .core.coverage import coverage_summary
+            c = coverage_summary(prj.store, a.cell, a.target)
+            print("  coverage  %.0f m2 with points (%g m cells), median %.0f pts/m2, %.0f%% at or above %g pts/m2"
+                  % (c["area_m2"], a.cell, c["median"], 100 * c["ok_share"], a.target))
         if prj.dcs is not None:
             from .core import chain
             for k, label, st, why in prj.dcs.chain():
@@ -110,7 +117,7 @@ def main(argv=None):
                                       mount=tuple(a.mount) if a.mount else None,
                                       lever=tuple(a.lever) if a.lever else None)
         traj = importer.load_trajectory(a.sbet) if a.sbet else None
-        for key, ps in sorted(clraw.group_recordings(paths).items()):
+        for key, ps in clraw.group_recordings(paths).items():          # in recording order
             rec = clraw.Recording(ps)
             tr = traj or importer.load_trajectory(rec)
             t = time.time()

@@ -1,4 +1,5 @@
 """New / open project dialogs shared by every DCS plugin (dark theme)."""
+import json
 import os
 
 from qgis.PyQt.QtCore import QSettings
@@ -25,7 +26,8 @@ class NewProjectDialog(QDialog):
         t = QLabel("New processing project")
         t.setObjectName("ppTitle")
         v.addWidget(t)
-        h = QLabel("Choose the job folder that holds the mapper captures. PosPro, AlignPro and CloudPro then share "
+        h = QLabel("Choose the job folder that holds the mapper captures (for mapper 2.10 and later, the mapper "
+                   "project's folder, the one holding lines/ and nav/). PosPro, AlignPro and CloudPro then share "
                    "one project in Processing/<name>/ there; the raw data is never changed.")
         h.setObjectName("ppHint")
         h.setWordWrap(True)
@@ -69,9 +71,10 @@ class NewProjectDialog(QDialog):
     def pick_job(self):
         d = QFileDialog.getExistingDirectory(self, "Job folder (holding the mapper captures)", self.job.text())
         if d:
-            self.job.setText(d)
+            root, name = mapper_project(d)
+            self.job.setText(root)
             if not self.name.text().strip():
-                self.name.setText(os.path.basename(d.rstrip("/\\")))
+                self.name.setText(name or os.path.basename(root.rstrip("/\\")))
 
     def pick_proc(self):
         d = QFileDialog.getExistingDirectory(self, "Where the Processing folder goes", self.job.text())
@@ -88,14 +91,39 @@ class NewProjectDialog(QDialog):
         self.where.setText("Project folder: %s" % os.path.join(root, n) if root and n else "")
 
     def create(self):
+        job = self.job.text().strip()
+        if job:
+            job = mapper_project(job)[0]          # typed or pasted: inside a mapper project, use its folder
+            self.job.setText(job)
         try:
-            self.project = DcsProject.create(self.job.text().strip(), self.name.text(),
+            self.project = DcsProject.create(job, self.name.text(),
                                              self.proc.text().strip() or None, plugin=self.plugin)
         except (ProjectError, OSError) as e:
             theme.msg_warn(self, "New project", str(e))
             return
         QSettings().setValue(KEY, self.job.text().strip())
         self.accept()
+
+
+def mapper_project(folder):
+    """A folder chosen as job folder -> (job folder, project name). Inside a mapper 2.10 project (its lines/ or
+    nav/ folder, or a line folder) the job folder is the mapper project's folder, the one holding project.json,
+    and the name is its id (the project's folder name, safe for file names)."""
+    d = os.path.abspath(folder)
+    for _ in range(4):
+        pj = os.path.join(d, "project.json")
+        if os.path.isfile(pj) and os.path.isdir(os.path.join(d, "lines")):
+            try:
+                with open(pj, encoding="utf-8") as f:
+                    info = json.load(f)
+            except (OSError, ValueError):
+                info = {}
+            return d, str(info.get("id") or os.path.basename(d))
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return os.path.abspath(folder), None
 
 
 def new_project(parent=None, plugin="DCS", default_name=""):

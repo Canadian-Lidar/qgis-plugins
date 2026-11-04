@@ -51,8 +51,7 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__(parent)
         self.iface = iface
         self.map_pick = None
-        from dcs_core import menu as _dcs_menu
-        self.setWindowTitle("CloudPro  -  %s  -  %s" % (_dcs_menu.TOP, _dcs_menu.GROUP))
+        self.setWindowTitle("CloudPro")
         self.resize(1680, 1000)
         self.project = None
         self.edits = None
@@ -128,6 +127,9 @@ class MainWindow(QtWidgets.QMainWindow):
             pane.legendToggled.connect(lambda _on, k=k: self.refresh_views(which=(k,)))
             pane.linkChanged.connect(lambda t, k=k: self._set_link(k, t))
         self.plan_pane.grid.currentTextChanged.connect(self._grid_attr)
+        self.plan_pane.target.setValue(self._saved_target())
+        self.plan.set_target(self.plan_pane.target.value())
+        self.plan_pane.target.valueChanged.connect(self._target)
         self.slice_pane.sliceChanged.connect(self._slice_changed)
         self.slice_pane.stepRequested.connect(lambda d: self.step("sec_next" if d > 0 else "sec_prev"))
         self.v3d_pane.what.currentTextChanged.connect(lambda _t: self.refresh_views(which=("3d",)))
@@ -177,37 +179,30 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------ header
     def _header(self):
-        from dcs_core.stepbar import StepBar
-        from dcs_core.widgets import Logo
-        h = chrome.HeaderStrip()
-        lay = QtWidgets.QHBoxLayout(h)
-        lay.setContentsMargins(12, 6, 12, 6)
-        lay.setSpacing(12)
-        lay.addWidget(Logo(42))
-        brand = QtWidgets.QVBoxLayout()
-        brand.setSpacing(1)
-        from dcs_core import menu as _dcs_menu
-        t1 = QtWidgets.QLabel(_dcs_menu.GROUP.upper())
-        t1.setObjectName("ppBrandTitle")
-        t2 = QtWidgets.QLabel("CLOUDPRO · POINT CLOUD")
-        t2.setObjectName("ppBrandSub")
-        brand.addWidget(t1)
-        brand.addWidget(t2)
-        lay.addLayout(brand)
-        lay.addSpacing(8)
+        """DCS Core's header, the same in every plugin: logo, name, workflow boxes, then CloudPro's
+        inputs line, Update and MENU, the project box, the Window button and the user guide."""
+        from dcs_core.header import PluginHeader
+        h = PluginHeader("cloudpro", "CloudPro", window=None, guide=self.open_guide)
+        self.header = h
+        self.chainbar = h.chain
+        self.lbl_inputs = QtWidgets.QLabel("")
+        self.lbl_inputs.setObjectName("ppVal")
+        self.lbl_inputs.setWordWrap(True)
+        self.lbl_inputs.setFixedWidth(250)
+        self.lbl_inputs.hide()                  # shown when a project is open
+        h.add_extra(self.lbl_inputs)
+        self.btn_update = QtWidgets.QPushButton("Update")
+        self.btn_update.setObjectName("ppPrimary")
+        self.btn_update.setToolTip("Re-georeference with the current PosPro trajectory and AlignPro calibration; "
+                                   "every manual and filter edit is carried over")
+        self.btn_update.clicked.connect(self.georeference)
+        self.btn_update.hide()
+        h.add_extra(self.btn_update)
         self.btn_menu = chrome.IconButton("", "Properties, georeference, publish, export, save, pick on map, QGIS "
                                           "layers", size=34, text="MENU")
         self.btn_menu.clicked.connect(self._main_menu)
-        lay.addWidget(self.btn_menu)
-        self.chainbar = StepBar("cloudpro")
-        self.chainbar.setFixedWidth(360)
-        lay.addWidget(self.chainbar)
-        lay.addStretch(1)
-        self.btn_project = QtWidgets.QToolButton(h)
-        self.btn_project.setObjectName("ppProject")
-        self.btn_project.setText("NO PROJECT  \u25be")
-        self.btn_project.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
-        m = QtWidgets.QMenu(self.btn_project)
+        h.add_extra(self.btn_menu)
+        m = QtWidgets.QMenu(h.project_btn)
         m.addAction("New job project...", self.new_project)
         m.addAction("Open project...", self.open_project)
         self.recent_menu = m.addMenu("Recent")
@@ -219,64 +214,21 @@ class MainWindow(QtWidgets.QMainWindow):
         m.addAction("Save the QGIS project in the project folder", self.save_qgis_project)
         m.addSeparator()
         m.addAction("User guide (this version)", self.open_guide)
-        theme.dark_menu(m)
+        h.set_project_menu(m)
         theme.dark_menu(self.recent_menu)
-        self.btn_project.setMenu(m)
-        self.btn_project.setParent(h)              # kept centred on the bar (see _centre_project)
-        self._header_left = self.chainbar
-        h.installEventFilter(self)
-        self.lbl_inputs = QtWidgets.QLabel("")
-        self.lbl_inputs.setObjectName("ppVal")
-        self.lbl_inputs.setWordWrap(True)
-        self.lbl_inputs.setFixedWidth(250)
-        lay.addWidget(self.lbl_inputs)
-        self.btn_update = QtWidgets.QPushButton("Update")
-        self.btn_update.setObjectName("ppPrimary")
-        self.btn_update.setToolTip("Re-georeference with the current PosPro trajectory and AlignPro calibration; "
-                                   "every manual and filter edit is carried over")
-        self.btn_update.clicked.connect(self.georeference)
-        self.btn_update.hide()
-        lay.addWidget(self.btn_update)
-        # the Window menu (DCS Core), connected by the plugin once this window sits in its standard window
-        self.btn_window = QtWidgets.QToolButton(h)
-        self.btn_window.setObjectName("ppWinBtn")
-        self.btn_window.setText("\u2922")
-        self.btn_window.setFixedSize(34, 34)
-        self.btn_window.hide()
-        lay.addWidget(self.btn_window)
-        self.btn_guide = chrome.IconButton("help", "User guide for this version of CloudPro (PDF)", size=34)
-        self.btn_guide.setObjectName("ppGuideBtn")
-        self.btn_guide.clicked.connect(self.open_guide)
-        lay.addWidget(self.btn_guide)
+        self.btn_project = h.project_btn
+        self.btn_window = h.window_btn
+        self.btn_guide = h.help_btn
         return h
 
     def attach_window(self, panel):
-        """Sit inside DCS Core's standard plugin window: the header button gets its Window menu."""
+        """Sit inside DCS Core's standard plugin window: the header's Window button gets its menu."""
         panel.attach_menu(self.btn_window)
         self.btn_window.show()
 
     def open_guide(self):
         from .. import guide
         return guide.open_guide(self)
-
-    def eventFilter(self, obj, ev):
-        if ev.type() in (QtCore.QEvent.Type.Resize, QtCore.QEvent.Type.Show, QtCore.QEvent.Type.LayoutRequest) and \
-                obj is self.menuWidget():
-            QtCore.QTimer.singleShot(0, self._centre_project)
-        return super().eventFilter(obj, ev)
-
-    def _centre_project(self):
-        """The project button in the middle of the top bar (or just clear of the chain bar when narrow)."""
-        h = self.menuWidget()
-        b = self.btn_project
-        b.adjustSize()
-        x = (h.width() - b.width()) // 2
-        left = self.chainbar.geometry().right() + 16
-        right = self.lbl_inputs.geometry().left() - 16 - b.width()
-        x = max(left, min(x, right)) if right >= left else left
-        b.move(x, (h.height() - b.height()) // 2)
-        b.raise_()
-        b.show()
 
     def _main_menu(self):
         m = QtWidgets.QMenu(self)
@@ -448,6 +400,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _shortcuts(self):
         for seq, fn in (("PgUp", lambda: self.step("sec_next")), ("PgDown", lambda: self.step("sec_prev")),
                         ("Shift+PgUp", lambda: self.step("fwd")), ("Shift+PgDown", lambda: self.step("back")),
+                        ("Ctrl+PgUp", lambda: self.step("sec_next_big")),
+                        ("Ctrl+PgDown", lambda: self.step("sec_prev_big")),
                         ("Ctrl+Z", self.undo), ("Ctrl+Y", self.redo), ("Ctrl+Home", self.zoom_all),
                         ("Ctrl+I", self.georeference), ("Ctrl+P", self.publish_dialog), ("Ctrl+E", self.export),
                         ("Ctrl+S", self.save_project), ("F1", self.show_help), ("Ctrl+R", self.show_properties), ("Shift+F1", self.open_guide),
@@ -567,9 +521,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plan.set_project(p.store, self.tracks, {l["id"]: l["colour"] for l in p.lines})
         self.plan.b_offset_z = float(self._origin()[2])
         self._track_masks()
-        self.setWindowTitle("CloudPro  -  %s  -  %s" % (p.name, p.crs))
-        self.btn_project.setText("%s  \u25be" % p.name.upper())
-        self._centre_project()
+        self.setWindowTitle("CloudPro")
+        self.header.set_project_name(p.name)
         self.btn_project.setToolTip(p.dcs.path if p.dcs is not None else p.path)
         v = p.data.get("view", {})
         if v.get("slice"):
@@ -725,6 +678,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                           "AlignPro calibration" if cal == "applied" else cal)
             lvl = "ok" if cal == "applied" and src == "pospro" else "warn"
         self.lbl_inputs.setText(txt)
+        self.lbl_inputs.setVisible(bool(txt))
         self.lbl_inputs.setToolTip(txt)
         self.lbl_inputs.setProperty("level", lvl)
         self.lbl_inputs.style().unpolish(self.lbl_inputs)
@@ -1447,7 +1401,12 @@ class MainWindow(QtWidgets.QMainWindow):
             info.update(kind="swatches", items=[((0, 229, 170), "Last / single"), ((245, 166, 35), "Strongest")])
         extra = []
         if self.preview is not None:
-            extra += [(render.PREVIEW_REJECT_RGB, "Rejected by the preview"), ((120, 255, 120), "Re-accepted by the preview")]
+            prej = (self.preview.flag & REJECTED) != 0
+            rej = self.ps.rejected
+            if (prej & ~rej).any():
+                extra.append((render.PREVIEW_REJECT_RGB, "Rejected by the preview"))
+            if (rej & ~prej).any():
+                extra.append(((120, 255, 120), "Re-accepted by the preview"))
         if self.show_rejected and self.ps.rejected.any():
             extra.append((render.REJECT_RGB, "Rejected"))
         if self.selected is not None and self.selected.any():
@@ -1461,7 +1420,24 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _grid_attr(self, a):
         self.plan.attr = a
+        self.plan_pane.target.setVisible(a == "Coverage")
         self.plan.invalidate()
+
+    @staticmethod
+    def _saved_target():
+        try:
+            from qgis.PyQt.QtCore import QSettings
+            return float(QSettings().value("CloudPro/coverage_target", 100.0))
+        except (ImportError, TypeError, ValueError):
+            return 100.0
+
+    def _target(self, v):
+        self.plan.set_target(v)
+        try:
+            from qgis.PyQt.QtCore import QSettings
+            QSettings().setValue("CloudPro/coverage_target", float(v))
+        except ImportError:
+            pass
 
     def _cell(self, v):
         c = self.plan.set_cell(v)
@@ -2114,6 +2090,7 @@ class MainWindow(QtWidgets.QMainWindow):
             theme.msg_info(self, "CloudPro", "Another task is still running.")
             return
         self._busy = True
+        self.header.set_busy(True)              # the project box turns red while CloudPro works
         self._cancel_flag = [False]
         cancel = lambda: self._cancel_flag[0]      # noqa: E731
         self.prog.setValue(0)
@@ -2167,6 +2144,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._preview_done(res)
             return
         self._busy = False
+        self.header.set_busy(False)
         self.prog.hide()
         self.btn_cancel.hide()
         self.status("", 1)
@@ -2270,7 +2248,8 @@ PLAN AND INSPECTION AREA
 
 SLICE
   The bar on top: cross-section / profile, rotate 90, whole area, thickness, step, previous /
-  next, position.  PgUp / PgDn or ] / [ : next / previous slice (Shift = 5 steps).
+  next, position.  PgUp / PgDn or ] / [ : next / previous slice; Ctrl+PgUp / Ctrl+PgDn
+  or } / { : 5 steps.
 
 EDITING
   Tools: Pan (Space), shape button (click to cycle: rectangle G, polygon P, lasso L, brush B),
@@ -2283,6 +2262,7 @@ EDITING
   Arrows top left: click an arrow head to turn the cloud that way (blue up / down, red left / right,
   green clockwise / anticlockwise on the screen); hold to keep turning.  The presets reset the turn.
   Left drag: orbit.  Shift+left or middle drag: pan.  Wheel: zoom, Ctrl+wheel: Z scale.
-  Right drag: lasso / rectangle edit.  Double click: new centre.  W/S/A/D/Q/E: fly by the step.
+  Right drag: lasso / rectangle edit.  Double click: new centre.  W/S/A/D/Q/E (click the 3D view
+  first): fly by the step.
   1 top, 2 along, 3 across, 4 oblique, O orthographic, 0 fit.
 """

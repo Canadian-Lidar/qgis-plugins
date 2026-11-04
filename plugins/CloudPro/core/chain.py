@@ -5,7 +5,6 @@
 
 CloudPro may run without AlignPro: it then uses the mounting recorded in the
 capture and says "no calibration" in its report and cloud.json. No Qt."""
-import os
 
 from . import clraw
 from .trajectory import read_sbet
@@ -63,29 +62,9 @@ def frame_to_crs(frame_name):
 
 
 def clraw_files(dcs):
-    """The .clraw files of the job: inside the shared captures' folders (a capture recorded as .anpp by PosPro
-    still gives its .clraw), else the job folder; never anything under the Processing folder."""
-    paths = []
-    caps = dcs.captures()
-    if caps:
-        for c in caps:
-            paths.append(c["path"])
-            paths.extend(f for f in c["files"] if f.lower().endswith(".clraw"))
-    else:
-        paths.append(dcs.job_folder)
-    out = set()
-    proc = os.path.abspath(dcs.folder)
-    for p in paths:
-        if os.path.isdir(p):
-            for root, dirs, files in os.walk(p):
-                dirs[:] = [d for d in dirs if d != "Processing"]
-                for fn in files:
-                    if fn.lower().endswith(".clraw"):
-                        out.add(os.path.join(root, fn))
-        elif p.lower().endswith(".clraw") and os.path.isfile(p):
-            out.add(p)
-    return sorted([f for f in out if not os.path.abspath(f).startswith(proc + os.sep)],
-                  key=lambda x: os.path.basename(x))
+    """The .clraw files of the job's survey lines (DCS Core): the captures' folders, else the job folder; never
+    anything under the Processing folder, never a mapper 2.10 navigation recording."""
+    return dcs.survey_clraw_files()
 
 
 def resolve(dcs, use_alignpro=True, override=None):

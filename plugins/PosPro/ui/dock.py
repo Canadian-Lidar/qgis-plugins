@@ -18,22 +18,22 @@ import time
 
 from qgis.core import Qgis, QgsApplication, QgsCoordinateReferenceSystem, QgsProject
 from qgis.PyQt.QtCore import QDateTime, QSettings, Qt, QTimer, pyqtSignal
-from qgis.PyQt.QtGui import QColor, QFont, QIcon
+from qgis.PyQt.QtGui import QColor, QIcon
 from qgis.PyQt.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDateTimeEdit,
                                  QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                  QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
-                                 QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
+                                 QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit,
                                  QProgressBar, QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSpinBox,
-                                 QStackedWidget, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
+                                 QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ..core import csrs, engine, geo, pipeline, products, results, rinex
-from ..core.project import FRAMES, IMU_PRESETS, PROJECT_SUFFIX, VEHICLE_PROFILES, Project
+from ..core.project import FRAMES, IMU_PRESETS, PROJECT_SUFFIX, Project
 from . import maplayers, theme
 from .tasks import WorkTask
-from dcs_core.stepbar import StepBar
+from dcs_core.header import PluginHeader
 from dcs_core.window import PluginWindow
 
-from .widgets import VEHICLE_PRESETS, Card, CoverageView, Logo, Section, StepButton, Toast, VehicleView
+from .widgets import VEHICLE_PRESETS, Card, CoverageView, Section, StepButton, Toast, VehicleView
 from .plots import Donut
 
 
@@ -62,21 +62,27 @@ def _dspin(lo, hi, dec, step, suffix="", val=0.0):
     return s
 
 
-def find_captures(job_folder, max_depth=3):
-    """Mapper captures in a job folder: the .clraw files, or where there are
-    none the Certus logs (.anpp). The Processing folder is skipped."""
-    clraw, anpp = [], []
+def find_captures(job_folder, max_depth=5):
+    """Mapper captures in a job folder: {"lines": survey line .clraw files, "nav": mapper 2.10 navigation
+    recordings (.clraw), "anpp": Certus logs (.anpp), used only where there is no .clraw}. The Processing
+    folder, the mapper's processed/ folders and the ephemeris side files are skipped."""
+    from dcs_core import clraw as dclraw
+    clr, anpp = [], []
     base = os.path.abspath(job_folder)
     for root, dirs, fs in os.walk(base):
         depth = root[len(base):].count(os.sep)
-        dirs[:] = [x for x in dirs if x.lower() != "processing" and not x.startswith(".") and depth < max_depth]
+        dirs[:] = [x for x in dirs if x.lower() not in ("processing", "processed") and not x.startswith(".")
+                   and depth < max_depth]
         for f in fs:
             low = f.lower()
             if low.endswith(".clraw"):
-                clraw.append(os.path.join(root, f))
-            elif low.endswith(".anpp"):
+                clr.append(os.path.join(root, f))
+            elif low.endswith(".anpp") and "ephemeris" not in low:
                 anpp.append(os.path.join(root, f))
-    return sorted(clraw) if clraw else sorted(anpp)
+    lines, nav = dclraw.split_navigation(clr)
+    by_name = lambda x: (os.path.dirname(x), os.path.basename(x))      # noqa: E731 - a recording's files in order
+    return {"lines": sorted(lines, key=by_name), "nav": sorted(nav, key=by_name),
+            "anpp": [] if clr else sorted(anpp, key=by_name)}
 
 
 def _scroll(widget):
@@ -239,13 +245,13 @@ class DataPage(Page):
         self.dock.save()
 
     def store_times(self):
-        ex = self.project.cfg["rover"].get("extract") or {}
-        if not ex.get("imu_t0"):
+        span = self.project.capture_span()
+        if not span:
             return
         a, b = _qdt_to_gps(self.t0.dateTime()), _qdt_to_gps(self.t1.dateTime())
         if b <= a:
             return
-        t0, t1 = float(ex["imu_t0"]), float(ex["imu_t1"])
+        t0, t1 = span
         self.project.cfg["rover"]["time_start"] = a if a > t0 + 0.5 else None
         self.project.cfg["rover"]["time_end"] = b if b < t1 - 0.5 else None
         self.dock.save()
@@ -296,10 +302,14 @@ class DataPage(Page):
             self.form.addRow(k, l)
 
         try:
-            t0, t1 = float(ex["imu_t0"]), float(ex["imu_t1"])
+            span = p.capture_span()
+            if not span:
+                raise ValueError("no time span")
+            t0, t1 = span
             u0, u1 = geo.gps_to_utc(t0), geo.gps_to_utc(t1)
-            row("Recording", "%s  to  %s UTC  (%s)" % (u0.strftime("%Y-%m-%d %H:%M:%S"), u1.strftime("%H:%M:%S"),
-                                                       geo.fmt_duration(t1 - t0)))
+            row("Recording", "%s  to  %s UTC  (%s)%s" % (
+                u0.strftime("%Y-%m-%d %H:%M:%S"), u1.strftime("%H:%M:%S"), geo.fmt_duration(t1 - t0),
+                "" if p.capture_span_source() == "imu" else ";  from the real-time solution (no raw IMU)"))
             for w, g in ((self.t0, p.cfg["rover"].get("time_start") or t0), (self.t1, p.cfg["rover"].get("time_end") or t1)):
                 w.blockSignals(True)
                 q = QDateTime()
@@ -346,12 +356,13 @@ class DataPage(Page):
         ex = p.cfg["rover"].get("extract") or {}
         if not ex:
             return "todo", "not read yet"
+        span = p.capture_span()
+        dur = geo.fmt_duration(span[1] - span[0]) if span else ""
         if "obs0_epochs" not in ex:
+            if p.cfg["processing"].get("mode") == "rt" and span:
+                return "done", dur + " (real-time)"       # the real-time mode needs no raw GNSS
             return "error", "no raw GNSS"
-        try:
-            return "done", geo.fmt_duration(float(ex["imu_t1"]) - float(ex["imu_t0"]))
-        except (KeyError, ValueError):
-            return "done", ""
+        return "done", dur
 
 
 # ---------------------------------------------------------------------------
@@ -893,16 +904,15 @@ class InstallPage(Page):
         vl = QVBoxLayout(vw)
         vl.setContentsMargins(0, 0, 0, 0)
         f = QFormLayout()
-        self.vehicle = QComboBox()
-        for k, dd in VEHICLE_PROFILES.items():
-            self.vehicle.addItem(dd["label"], k)
-        self.vehicle.currentIndexChanged.connect(self.store)
-        f.addRow("Motion constraints", self.vehicle)
         self.toff = _dspin(-500, 500, 3, 0.5, " ms")
         self.toff.valueChanged.connect(self.store)
         f.addRow("IMU time offset", self.toff)
         vl.addLayout(f)
         vl.addLayout(self._offset_grid((("lever_nhc", "Rear axle centre"),)))
+        vl.addWidget(_hint("The wheel constraints follow the vehicle chosen under Mounting drawing (the same Van, "
+                           "Truck and Car as the mapper): the rear axle of a van or car may slide sideways at "
+                           "0.10 m/s, of a truck at 0.15 m/s. For a platform without wheels, switch the "
+                           "wheeled-vehicle constraint off on the Processing page."))
         vl.addWidget(_hint("The wheeled-vehicle constraint says the rear axle does not slide sideways or lift. "
                            "If the Certus is not above the axle, enter where the axle centre is: in a turn at "
                            "0.3 rad/s each metre of offset is 0.3 m/s of sideways speed at the Certus, three times "
@@ -968,7 +978,6 @@ class InstallPage(Page):
         ex = p.cfg["rover"].get("extract") or {}
         self.use2.setEnabled(int(ex.get("obs1_epochs", 0) or 0) > 0 or not ex)
         veh = p.cfg["vehicle"]
-        self.vehicle.setCurrentIndex(max(0, self.vehicle.findData(veh.get("profile", "car"))))
         self.vtype.setCurrentIndex(max(0, self.vtype.findData(veh.get("type", "van"))))
         self.imu.setCurrentIndex(max(0, self.imu.findData(p.cfg["imu"].get("preset", "certus_evo"))))
         cap = pipeline.capture_offsets(p)
@@ -988,7 +997,6 @@ class InstallPage(Page):
         inst["time_offset_ms"] = self.toff.value()
         inst["use_antenna2"] = self.use2.isChecked()
         veh = self.project.cfg["vehicle"]
-        veh["profile"] = self.vehicle.currentData()
         if self.vtype.currentData() != veh.get("type"):
             veh["type"] = self.vtype.currentData()
             veh["outline"] = {}
@@ -1108,7 +1116,6 @@ class InstallPage(Page):
         if veh.get("type") in VEHICLE_PRESETS:
             p.cfg["vehicle"]["type"] = veh["type"]
             p.cfg["vehicle"]["outline"] = {k: v for k, v in veh.items() if k.endswith("_m")}
-            p.cfg["vehicle"]["profile"] = "truck" if veh["type"] == "truck" else "car"
         if not msg:
             if ask:
                 theme.msg_info(self, "PosPro", "The capture holds no offsets (no mapper hardware.json and no "
@@ -1388,8 +1395,10 @@ class QualityPage(Page):
         self.cards["ins"].set("%.1f%%" % ins)
         try:
             s95 = float(cmb.get("sep_h_p95_m", "nan"))
+            if s95 != s95:                      # NaN: one pass only (forward only, real-time), nothing to compare
+                raise ValueError("single pass")
             self.cards["sep"].set("%.3f m" % s95, "ok" if s95 < 0.05 else "warn" if s95 < 0.2 else "bad")
-        except ValueError:
+        except (TypeError, ValueError):
             self.cards["sep"].set("\u2013")
         sd = max(qc["sd_3d"]) if qc["sd_3d"] else 0
         self.cards["sd"].set("%.3f m" % sd, "ok" if sd < 0.1 else "warn" if sd < 0.5 else "bad")
@@ -1692,10 +1701,16 @@ class ReviewPage(Page):
         its = self.selected_items()
         if not its:
             return
+        if action == "interpolate" and self.dock.qc and self.dock.qc.get("gps_time"):
+            t = self.dock.qc["gps_time"]
+            if any(it["t0"] <= t[0] or it["t1"] >= t[-1] for it in its):
+                self.dock.toast("Interpolate needs good samples on both sides: windows at the start or end of the "
+                                "trajectory stay as processed. Mark them poor instead.", "warn")
         for it in its:
-            if it["edit"] is not None:
-                review.state(self.project)["edits"] = [e for e in review.state(self.project)["edits"]
-                                                       if e is not it["edit"]]
+            e = it["edit"]
+            if e is not None and abs(e["t0"] - it["t0"]) < 0.01 and abs(e["t1"] - it["t1"]) < 0.01:
+                review.state(self.project)["edits"] = [x for x in review.state(self.project)["edits"]
+                                                       if x is not e]
             review.add_edit(self.project, it["t0"], it["t1"], action,
                             source=next((k for k, lab in review.KIND_LABEL.items() if lab == it["what"]), "manual"),
                             horizontal=self.interp_h.isChecked(), vertical=self.interp_v.isChecked())
@@ -1982,8 +1997,7 @@ class ExportPage(Page):
         f = QFormLayout()
         row = QHBoxLayout()
         self.folder = QLineEdit()
-        b = QPushButton("\u2026")
-        b.setFixedWidth(30)
+        b = QPushButton("Browse\u2026")
         b.clicked.connect(self.pick_folder)
         row.addWidget(self.folder)
         row.addWidget(b)
@@ -2133,12 +2147,21 @@ class ExportPage(Page):
             except OSError:
                 pass
             self.out.setText("Written:\n" + "\n".join(res))
+            p.cfg["export"]["last"] = {"time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                       "results": (p.cfg.get("results") or {}).get("finished", ""),
+                                       "files": len(res)}
+            self.dock.save()
+            self.dock.update_steps()
         self.dock.start_task("Export", work, done)
 
     def state(self):
         p = self.project
-        if not p or not (p.cfg.get("results") or {}).get("combine"):
+        r = (p.cfg.get("results") or {}) if p else {}
+        if not p or not r.get("combine"):
             return "todo", "after processing"
+        last = (p.cfg.get("export") or {}).get("last") or {}
+        if last and last.get("results") == r.get("finished", ""):
+            return "done", "exported %s" % last.get("time", "")[11:16]
         return "todo", "SBET, text, layers"
 
 
@@ -2161,31 +2184,9 @@ class PosProDock(PluginWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # header: logo, brand, project box (as the mapper dashboard)
-        hw = QWidget()
-        hw.setObjectName("ppHeader")
-        head = QHBoxLayout(hw)
-        head.setContentsMargins(12, 8, 12, 8)
-        head.setSpacing(12)
-        head.addWidget(Logo(42))
-        brand = QVBoxLayout()
-        brand.setSpacing(1)
-        from dcs_core import menu as _dcs_menu
-        t1 = QLabel(_dcs_menu.GROUP)
-        t1.setObjectName("ppBrandTitle")
-        t2 = QLabel("PosPro")
-        t2.setObjectName("ppBrandSub")
-        for t_ in (t1, t2):
-            theme.caps(t_, 107)
-        brand.addWidget(t1)
-        brand.addWidget(t2)
-        head.addLayout(brand)
-        head.addStretch(1)
-        self.pbox = QToolButton()
-        self.pbox.setObjectName("ppProject")
-        self.pbox.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.pbox.setMinimumWidth(170)
-        mm = QMenu(self.pbox)
+        # header (DCS Core, the same in every plugin): logo, name, workflow boxes, project box, window, guide
+        self.header = PluginHeader("pospro", "PosPro", window=self, guide=self.open_guide)
+        mm = self.header.new_project_menu()
         mm.addAction("New project\u2026", self.new_project)
         mm.addAction("Open project\u2026", self.open_project)
         mm.addSeparator()
@@ -2196,33 +2197,12 @@ class PosProDock(PluginWindow):
         mm.addAction("Engine version", self.engine_info)
         mm.addSeparator()
         mm.addAction("User guide (this version)", self.open_guide)
-        self.pbox.setMenu(mm)
-        head.addWidget(self.pbox)
-        # the Window menu (DCS Core): floating, maximise, dock left / right / top / bottom, reset
-        self.wbtn = QToolButton()
-        self.wbtn.setObjectName("ppWinBtn")
-        self.wbtn.setText("\u2922")
-        self.wbtn.setFixedSize(34, 34)
-        self.attach_menu(self.wbtn)
-        head.addWidget(self.wbtn)
-        self.helpbtn = QToolButton()
-        self.helpbtn.setObjectName("ppWinBtn")
-        self.helpbtn.setText("?")
-        self.helpbtn.setToolTip("User guide for this version of PosPro (PDF)")
-        self.helpbtn.setFixedSize(34, 34)
-        self.helpbtn.clicked.connect(self.open_guide)
-        head.addWidget(self.helpbtn)
+        self.pbox = self.header.project_btn
+        self.wbtn = self.header.window_btn
+        self.helpbtn = self.header.help_btn
+        self.chain = self.header.chain
         self.pname = self.pbox
-        self._set_pname("No project")
-        outer.addWidget(hw)
-        # the chain bar: PosPro -> AlignPro -> CloudPro on this project
-        cw = QWidget()
-        cw.setObjectName("ppChain")
-        cl = QHBoxLayout(cw)
-        cl.setContentsMargins(12, 4, 12, 6)
-        self.chain = StepBar("pospro")
-        cl.addWidget(self.chain)
-        outer.addWidget(cw)
+        outer.addWidget(self.header)
         self._chain_timer = QTimer(self)
         self._chain_timer.setInterval(5000)
         self._chain_timer.timeout.connect(self._refresh_chain)
@@ -2319,10 +2299,7 @@ class PosProDock(PluginWindow):
         self.update_steps()
 
     def _set_pname(self, name):
-        self.pbox.setText(name.upper() + "  \u25be")
-        f = self.pbox.font()
-        f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 110)
-        self.pbox.setFont(f)
+        self.header.set_project_name(name)
 
     def toast(self, text, level="ok"):
         self.toast_w.show_message(text, level)
@@ -2424,16 +2401,40 @@ class PosProDock(PluginWindow):
             return
         p = Project.from_dcs(dcs)
         found = find_captures(dcs.job_folder)
-        if found:
-            names = "\n".join(os.path.relpath(f, dcs.job_folder) for f in found[:12])
-            more = "\n\u2026 and %d more" % (len(found) - 12) if len(found) > 12 else ""
-            r = theme.msg_question(self, "PosPro", "Found %d capture file(s) in the job folder:\n\n%s%s\n\n"
-                                                   "Use them as the rover files?" % (len(found), names, more))
-            if r == QMessageBox.StandardButton.Yes:
-                p.cfg["rover"]["files"] = found
-                p.save()
+        use = self._choose_rover_files(dcs.job_folder, found)
+        if use:
+            p.cfg["rover"]["files"] = use
+            p.save()
         self.set_project(p)
         self.toast("Project %s created in %s" % (dcs.name, dcs.folder))
+
+    def _choose_rover_files(self, job, found):
+        """Ask which of the captures found in a new project's job folder are the rover files."""
+        def listing(fs):
+            fs = sorted(fs, key=pipeline._in_time_order)              # in recording order
+            names = "\n".join("  " + os.path.basename(f) for f in fs[:10])
+            return names + ("\n  \u2026 and %d more" % (len(fs) - 10) if len(fs) > 10 else "")
+        lines, nav = found["lines"], found["nav"]
+        if lines and nav:
+            r = theme.msg_choice(
+                self, "PosPro",
+                "This job holds the mapper's navigation recordings (%d file(s)) and %d survey line file(s).\n\n"
+                "The navigation recordings hold everything the Certus sent while the project was open, also "
+                "between the lines and in the static periods, so one trajectory covers every line: use them "
+                "when you have them. The survey lines hold only the time of each line (and a few seconds "
+                "around it).\n\nNavigation (nav/):\n%s\n\nSurvey lines (lines/):\n%s\n\nNeither: add the rover "
+                "files by hand on the Data page."
+                % (len(nav), len(lines), listing(nav), listing(lines)),
+                ["Navigation", "Survey lines", "Neither"], 0)
+            return nav if r == 0 else lines if r == 1 else None
+        fs = lines or nav or found["anpp"]
+        if not fs:
+            return None
+        what = ("navigation recording file(s)" if nav and not lines else
+                "capture file(s)" if lines else "Certus log(s) (.anpp)")
+        r = theme.msg_question(self, "PosPro", "Found %d %s in the job folder:\n\n%s\n\nUse them as the rover "
+                                               "files?" % (len(fs), what, listing(fs)))
+        return fs if r == QMessageBox.StandardButton.Yes else None
 
     def open_project(self):
         from dcs_core.project import SUFFIX
@@ -2472,7 +2473,6 @@ class PosProDock(PluginWindow):
         QSettings().setValue("PosPro/last_project", p.dcs.path if p.dcs else p.path)
         QSettings().setValue("PosPro/last_dir", os.path.dirname(p.project_folder))
         self.chain.set_project(p.dcs)
-        self.chain.setVisible(p.dcs is not None)
         self._set_pname(p.name)
         self.set_enabled(True)
         self.qc = results.load_qc(os.path.join(p.work_dir, "results", "qc.csv"))
@@ -2497,9 +2497,7 @@ class PosProDock(PluginWindow):
 
         def finished(ok, res):
             self.task = None
-            self.pbox.setProperty("busy", False)
-            self.pbox.style().unpolish(self.pbox)
-            self.pbox.style().polish(self.pbox)
+            self.header.set_busy(False)
             self.prog.setVisible(False)
             self.b_cancel.setVisible(False)
             self.status.setText("%s: %s" % (title, "done" if ok else "stopped"))
@@ -2509,9 +2507,7 @@ class PosProDock(PluginWindow):
             self.update_steps()
         t.done.connect(finished)
         self.task = t
-        self.pbox.setProperty("busy", True)
-        self.pbox.style().unpolish(self.pbox)
-        self.pbox.style().polish(self.pbox)
+        self.header.set_busy(True)
         self.prog.setValue(0)
         self.prog.setVisible(True)
         self.b_cancel.setVisible(True)
@@ -2702,11 +2698,14 @@ class PosProDock(PluginWindow):
         b = p.base()
         fr = p.cfg["frame"]
         span = p.rover_span()
+        rt_mode = p.cfg["processing"].get("mode") == "rt"
         lines = ["PosPro export", "=============", "",
                  "Project      %s" % p.name,
-                 "Processed    %s (%s, %s)" % ((p.cfg.get("results") or {}).get("finished", ""),
-                                               p.cfg["processing"].get("mode"), p.cfg["processing"].get("passes")),
-                 "Frame        %s, epoch %s (that of the base position)" % (fr.get("name"), fr.get("epoch")),
+                 "Processed    %s (%s)" % ((p.cfg.get("results") or {}).get("finished", ""),
+                                          "real-time solution" if rt_mode else "%s, %s passes" % (
+                                              p.cfg["processing"].get("mode"), p.cfg["processing"].get("passes"))),
+                 ("Frame        as the Certus real-time solution (the frame of its RTK corrections)" if rt_mode else
+                  "Frame        %s, epoch %s (that of the base position)" % (fr.get("name"), fr.get("epoch"))),
                  "Base         %s, position from %s" % (b.get("name") if b else "-", b.get("pos_source") if b else "-"),
                  "Heights      ellipsoidal",
                  "Time         GPS; SBET time is GPS seconds of week %s" % (geo.gps_week_sow(span[0])[0] if span else ""),

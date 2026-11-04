@@ -25,7 +25,7 @@ import numpy as np
 
 from . import clraw, engine, geo, lines as lines_mod, trajectory
 
-VERSION = "1.3.0"
+VERSION = "1.4.1"
 STAGE_FILE = "alignpro.json"
 PLUGIN = "AlignPro"
 CONVENTION = {"name": "navaq_hesai", "matrix": "M = Rz(heading) Ry(pitch) Rx(-roll) Z0",
@@ -205,12 +205,18 @@ class Project:
         return out
 
     def resolve_files(self):
-        files = clraw.find_clraw(self.input_paths())
+        """The survey lines' .clraw files: the shared project's (DCS Core: captures' folders, else the job
+        folder; no Processing folder, no mapper 2.10 navigation recordings) and any added in AlignPro."""
+        added = []
+        for f in self.cfg["files"]:
+            added.append(f if os.path.isabs(f) else os.path.join(self.folder, f))
+        files = clraw.find_clraw(added) if added else []
         if self.dcs is not None:        # never read a stage's own output as raw data
             proc = os.path.abspath(self.dcs.folder)
             files = [f for f in files if not os.path.abspath(f).startswith(proc + os.sep)
                      and os.sep + "Processing" + os.sep not in os.path.abspath(f)]
-        return files
+            files = sorted(set(self.dcs.survey_clraw_files()) | set(files), key=lambda x: os.path.basename(x))
+        return clraw.split_navigation(files)[0]
 
     def load(self, progress=None, cancelled=None):
         """Read all lines (cached), build the trajectory, split passes, georeference."""
