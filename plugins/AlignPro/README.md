@@ -13,6 +13,12 @@ Install **DCS Core** first, then AlignPro (Plugins ▸ Manage and Install Plugin
 zip at a time), then restart QGIS once. Without DCS Core, AlignPro shows a message instead of opening.
 QGIS 3.34 or later (QGIS 4 / Qt6 supported). No extra Python packages.
 
+## User guide
+
+`docs/AlignPro_User_Guide_<version>.pdf` ships in the plugin. It opens from the **?** button at the top
+right of the panel, the project box menu (**User guide (this version)**) and **Help ▸ Plugins ▸ AlignPro
+user guide**. The guide matching the installed version opens; if it is missing, the newest one in `docs/`.
+
 ## Panels and docking
 
 The AlignPro panel and the Data View dock only when you ask: **right-click the panel's title bar** and
@@ -66,7 +72,7 @@ AlignPro works on the job's processing project, created by whichever plugin is u
 
 ## Conventions
 
-Mounting angles use the mapper's convention (`navaq_hesai`): `M = Rz(heading) Ry(pitch) Rx(−roll) Z0`,
+Mounting angles use the mapper's own convention: `M = Rz(heading) Ry(pitch) Rx(−roll) Z0`,
 roll + starboard down, pitch + bow up, heading + clockwise; vehicle frame X forward, Y starboard, Z down
 from the Certus reference point. Near pitch 90° (the upright mounting 0/90/180) the convention is singular:
 AlignPro warns and also reports the correction about the vehicle axes with its own SDEV.
@@ -80,3 +86,11 @@ QT_QPA_PLATFORM=offscreen python3 tests/qgis_ui_test.py PROJECT.dcsproj OUTDIR
 python3 tools/alignpro_cli.py PROJECT_DIR NAME CAPTURES...    # stand-alone, without DCS
 ```
 DCS Core must be importable beside the `alignpro` folder (as in the QGIS plugins folder).
+
+## Release
+
+1. Bump `version=` in `metadata.txt` (and `VERSION` in `core/project.py`), update the "AlignPro — User Guide" doc.
+2. Export the doc to PDF, then `python3 tools/build_guide.py RAW.pdf` (needs reportlab and PyMuPDF) makes
+   `docs/AlignPro_User_Guide_<version>.pdf` with its cover page and running header.
+3. `sh tools/package.sh [OUTDIR]` makes `alignpro-<version>.zip`. It refuses to build without the guide for
+   the current version and removes older guide PDFs from `docs/`.

@@ -28,7 +28,7 @@ from ..core.pointset import PointSet, rect_corners, to_box_frame
 from ..core.project import Project
 from ..core.store import REJ_AUTO, REJ_MANUAL, REJ_ORIG, REJECTED
 from ..qt import QShortcut, QtCore, QtGui, QtWidgets, Qt, Signal, exec_
-from . import chrome, icons, render, theme
+from . import chrome, render, theme
 from .dialogs import ExportDialog, ImportDialog
 from .filterpanel import FilterPanel
 from .props import AreaProperties, InfoPanel, ProjectProperties
@@ -93,6 +93,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._chain_timer = QtCore.QTimer(self)
         self._chain_timer.timeout.connect(self.refresh_chain)
         self._chain_timer.start(5000)
+        self._save_timer = QtCore.QTimer(self)
+        self._save_timer.timeout.connect(self._autosave)
+        self._save_timer.start(120000)
 
     # =================================================================== build
     def _build(self):
@@ -117,9 +120,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plan.boxChanged.connect(self._box_from_plan)
         self.plan.slice_lines = self._plan_slice_lines
         self.slice.overlays.append(self._slice_overlay)
-        self.plan_pane.colourChanged.connect(lambda m: self._view_colour("plan", m))
-        self.slice_pane.colourChanged.connect(lambda m: self._view_colour("slice", m))
-        self.v3d_pane.colourChanged.connect(lambda m: self._view_colour("3d", m))
+        self.panes = {"plan": self.plan_pane, "slice": self.slice_pane, "3d": self.v3d_pane}
+        self.links = {"plan": "", "slice": "", "3d": ""}
+        for k, pane in self.panes.items():
+            pane.colourChanged.connect(lambda m, k=k: self._view_colour(k, m))
+            pane.legendToggled.connect(lambda _on, k=k: self.refresh_views(which=(k,)))
+            pane.linkChanged.connect(lambda t, k=k: self._set_link(k, t))
         self.plan_pane.grid.currentTextChanged.connect(self._grid_attr)
         self.slice_pane.sliceChanged.connect(self._slice_changed)
         self.slice_pane.stepRequested.connect(lambda d: self.step("sec_next" if d > 0 else "sec_prev"))
@@ -130,6 +136,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.filters.previewOff.connect(self.clear_preview)
         self.filters.acceptRequested.connect(self.accept_preview)
         self.filters.runRequested.connect(self.run_scope)
+        self.filters.tuneRequested.connect(self.tune_filters)
         self.infop = InfoPanel()
         self.lines_w, self.classes_w, self.info = self.infop.lines_w, self.infop.classes_w, self.infop.info
         self.lines_w.itemChanged.connect(self._line_toggled)
@@ -186,11 +193,15 @@ class MainWindow(QtWidgets.QMainWindow):
         brand.addWidget(t2)
         lay.addLayout(brand)
         lay.addSpacing(8)
-        self.btn_menu = chrome.IconButton("menu", "Georeference, publish, export, save, pick on map, QGIS layers",
-                                          size=34, text="MENU")
+        self.btn_menu = chrome.IconButton("", "Properties, georeference, publish, export, save, pick on map, QGIS "
+                                          "layers", size=34, text="MENU")
         self.btn_menu.clicked.connect(self._main_menu)
         lay.addWidget(self.btn_menu)
-        self.btn_project = QtWidgets.QToolButton()
+        self.chainbar = StepBar("cloudpro")
+        self.chainbar.setFixedWidth(360)
+        lay.addWidget(self.chainbar)
+        lay.addStretch(1)
+        self.btn_project = QtWidgets.QToolButton(h)
         self.btn_project.setObjectName("ppProject")
         self.btn_project.setText("NO PROJECT  \u25be")
         self.btn_project.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -200,22 +211,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.recent_menu = m.addMenu("Recent")
         self.recent_menu.aboutToShow.connect(self._fill_recent)
         m.addSeparator()
+        m.addAction("Project properties...", self.show_properties)
         m.addAction("Open the project folder", self.open_folder)
         m.addAction("Raw data moved? Relocate the job folder...", self.relocate)
         m.addAction("Save the QGIS project in the project folder", self.save_qgis_project)
+        m.addSeparator()
+        m.addAction("User guide (this version)", self.open_guide)
         theme.dark_menu(m)
         theme.dark_menu(self.recent_menu)
         self.btn_project.setMenu(m)
-        lay.addWidget(self.btn_project)
-        self.btn_props = chrome.IconButton("props", "Project properties: information, geodetics, survey "
-                                                    "configuration, project files (stays open while you work)",
-                                           size=34, text="PROPERTIES")
-        self.btn_props.clicked.connect(self.show_properties)
-        lay.addWidget(self.btn_props)
-        lay.addStretch(1)
-        self.chainbar = StepBar("cloudpro")
-        self.chainbar.setFixedWidth(360)
-        lay.addWidget(self.chainbar)
+        self.btn_project.setParent(h)              # kept centred on the bar (see _centre_project)
+        self._header_left = self.chainbar
+        h.installEventFilter(self)
         self.lbl_inputs = QtWidgets.QLabel("")
         self.lbl_inputs.setObjectName("ppVal")
         self.lbl_inputs.setWordWrap(True)
@@ -228,11 +235,40 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_update.clicked.connect(self.georeference)
         self.btn_update.hide()
         lay.addWidget(self.btn_update)
+        self.btn_guide = chrome.IconButton("help", "User guide for this version of CloudPro (PDF)", size=34)
+        self.btn_guide.setObjectName("ppGuideBtn")
+        self.btn_guide.clicked.connect(self.open_guide)
+        lay.addWidget(self.btn_guide)
         return h
+
+    def open_guide(self):
+        from .. import guide
+        return guide.open_guide(self)
+
+    def eventFilter(self, obj, ev):
+        if ev.type() in (QtCore.QEvent.Type.Resize, QtCore.QEvent.Type.Show, QtCore.QEvent.Type.LayoutRequest) and \
+                obj is self.menuWidget():
+            QtCore.QTimer.singleShot(0, self._centre_project)
+        return super().eventFilter(obj, ev)
+
+    def _centre_project(self):
+        """The project button in the middle of the top bar (or just clear of the chain bar when narrow)."""
+        h = self.menuWidget()
+        b = self.btn_project
+        b.adjustSize()
+        x = (h.width() - b.width()) // 2
+        left = self.chainbar.geometry().right() + 16
+        right = self.lbl_inputs.geometry().left() - 16 - b.width()
+        x = max(left, min(x, right)) if right >= left else left
+        b.move(x, (h.height() - b.height()) // 2)
+        b.raise_()
+        b.show()
 
     def _main_menu(self):
         m = QtWidgets.QMenu(self)
-        for txt, fn, sc in (("Georeference / update the points...", self.georeference, "Ctrl+I"),
+        for txt, fn, sc in (("Project properties (information, geodetics, survey configuration, files)...",
+                             self.show_properties, "Ctrl+R"), (None, None, None),
+                            ("Georeference / update the points...", self.georeference, "Ctrl+I"),
                             ("Publish for the job (LAS, ground grid, cloud.json)...", self.publish_dialog, "Ctrl+P"),
                             ("Export (LAS, XYZ, grid) anywhere...", self.export, "Ctrl+E"),
                             ("Save", self.save_project, "Ctrl+S"), (None, None, None),
@@ -240,8 +276,10 @@ class MainWindow(QtWidgets.QMainWindow):
                             ("Add the drive lines and Inspection Area to QGIS", self.add_qgis_layers, ""),
                             (None, None, None),
                             ("Add other .clraw files to the job...", self.import_lines, ""),
+                            ("Memory limit (points loaded at once)...", self.set_max_load, ""),
                             ("Remove all points (keep settings)...", self.reset_points, ""),
-                            (None, None, None), ("Keys and mouse", self.show_help, "F1")):
+                            (None, None, None), ("Keys and mouse", self.show_help, "F1"),
+                            ("User guide (this version)", self.open_guide, "Shift+F1")):
             if txt is None:
                 m.addSeparator()
                 continue
@@ -319,6 +357,18 @@ class MainWindow(QtWidgets.QMainWindow):
         for b in (self.b_undo, self.b_redo, self.b_rej, self.b_zoom):
             tb.addWidget(b)
         tb.add_sep()
+        tb.addWidget(chrome.label(" CELL "))
+        self.sp_cell = QtWidgets.QDoubleSpinBox()
+        self.sp_cell.setRange(0.5, 25.0)
+        self.sp_cell.setSingleStep(0.5)
+        self.sp_cell.setDecimals(1)
+        self.sp_cell.setValue(0.5)
+        self.sp_cell.setSuffix(" m")
+        self.sp_cell.setKeyboardTracking(False)
+        self.sp_cell.setToolTip("Cell size of the project grid under the Plan view (0.5, 1, 2, 2.5, 5, 10, 12.5 or "
+                                "25 m: the stored 0.5 m grid summed into larger cells)")
+        self.sp_cell.valueChanged.connect(self._cell)
+        tb.addWidget(self.sp_cell)
         tb.addWidget(chrome.label(" POINT "))
         self.sp_size = QtWidgets.QSpinBox()
         self.sp_size.setRange(1, 6)
@@ -386,7 +436,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         ("Shift+PgUp", lambda: self.step("fwd")), ("Shift+PgDown", lambda: self.step("back")),
                         ("Ctrl+Z", self.undo), ("Ctrl+Y", self.redo), ("Ctrl+Home", self.zoom_all),
                         ("Ctrl+I", self.georeference), ("Ctrl+P", self.publish_dialog), ("Ctrl+E", self.export),
-                        ("Ctrl+S", self.save_project), ("F1", self.show_help),
+                        ("Ctrl+S", self.save_project), ("F1", self.show_help), ("Ctrl+R", self.show_properties), ("Shift+F1", self.open_guide),
                         ("Space", lambda: self.set_tool("pan")), ("G", lambda: self._shape_key("rect")),
                         ("P", lambda: self._shape_key("poly")), ("L", lambda: self._shape_key("lasso")),
                         ("B", lambda: self._shape_key("brush")), ("U", lambda: self._line_key("above")),
@@ -505,6 +555,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._track_masks()
         self.setWindowTitle("CloudPro  -  %s  -  %s" % (p.name, p.crs))
         self.btn_project.setText("%s  \u25be" % p.name.upper())
+        self._centre_project()
         self.btn_project.setToolTip(p.dcs.path if p.dcs is not None else p.path)
         v = p.data.get("view", {})
         if v.get("slice"):
@@ -543,7 +594,16 @@ class MainWindow(QtWidgets.QMainWindow):
                     "bearing": 0.0}
         return {"cx": 0.0, "cy": 0.0, "length": 60.0, "width": 30.0, "bearing": 0.0}
 
-    def save_project(self):
+    def _autosave(self):
+        """Every 2 minutes: flush the point store and save the project quietly (crash safety)."""
+        if self.project is None or self._busy:
+            return
+        try:
+            self.save_project(quiet=True)
+        except Exception:       # noqa: BLE001
+            pass
+
+    def save_project(self, quiet=False):
         if self.project is None:
             return
         sp = self.slice_pane
@@ -553,6 +613,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                                "pos": sp.position(self._slice_half())}}
         self.project.store.sync()
         self.project.save()
+        if quiet:
+            self.filters.save_quiet()
+            return
         self.filters.save()
         self.status("Project saved (edits are written to disk as you make them)")
 
@@ -1066,9 +1129,56 @@ class MainWindow(QtWidgets.QMainWindow):
         if final:
             self.set_box(box, load=True, fit=False)
 
+    def max_load(self):
+        try:
+            from qgis.PyQt.QtCore import QSettings
+            return float(QSettings().value("CloudPro/max_load_m", 15.0)) * 1e6
+        except Exception:       # noqa: BLE001
+            return 15e6
+
+    def set_max_load(self):
+        v, ok = QtWidgets.QInputDialog.getDouble(self, "Memory", "Ask before loading an Inspection Area with more "
+                                                 "than (million points):", self.max_load() / 1e6, 1, 500, 1)
+        if ok:
+            from qgis.PyQt.QtCore import QSettings
+            QSettings().setValue("CloudPro/max_load_m", v)
+
+    def estimate_points(self, box):
+        """Points inside a box from the project grids (no tile is read): for the memory check."""
+        st = self.project.store
+        cor = rect_corners(box["cx"], box["cy"], box["length"], box["width"], box["bearing"])
+        n = 0.0
+        from ..core.store import GRID_CELL, parse_key
+        for k in st.tiles_in_bbox(cor[:, 0].min(), cor[:, 1].min(), cor[:, 0].max(), cor[:, 1].max()):
+            g = st.load_grid(k)
+            if "count" not in g:
+                continue
+            i, j = parse_key(k)
+            c = g["count"].astype(float) + g["rej"]
+            ny, nx = c.shape
+            yy, xx = np.mgrid[0:ny, 0:nx]
+            u, v = to_box_frame(i * st.tile + (xx.ravel() + 0.5) * GRID_CELL, j * st.tile + (yy.ravel() + 0.5) *
+                                GRID_CELL, box["cx"], box["cy"], box["bearing"])
+            m = (np.abs(u) <= box["length"] / 2) & (np.abs(v) <= box["width"] / 2)
+            n += float(c.ravel()[m].sum())
+        return n
+
     def load_box(self, fit=False):
         if self.project is None or self.box is None:
             return
+        try:
+            est = self.estimate_points(self.box)
+        except Exception:       # noqa: BLE001
+            est = 0
+        if est > self.max_load() and getattr(self, "_loaded_box", None) != self.box:
+            r = theme.msg_question(self, "CloudPro", "This Inspection Area holds about %.1f million points (the limit "
+                                   "is %.0f million; Menu > Memory limit). Loading it may be slow or run out of "
+                                   "memory.\n\nLoad it anyway?" % (est / 1e6, self.max_load() / 1e6))
+            if r != QtWidgets.QMessageBox.StandardButton.Yes:
+                self.status("Not loaded: make the Inspection Area smaller (right click > Inspection Area properties)",
+                            10000)
+                return
+        self._loaded_box = dict(self.box)
         t = time.time()
         QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
@@ -1081,6 +1191,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.selected = None
             self._compute_file_idx()
             self._col_cache = {}
+            self._ranges = {}
             self._fill_classes()
             self.refresh_views(fit=fit)
             self._area_info()
@@ -1217,6 +1328,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return c
         if mode == "File":
             c = render.pack(FILE_COLOURS[self.file_idx % len(FILE_COLOURS)])
+        elif mode in ("Height", "Intensity", "Intensity (range normalised)", "Time", "Range"):
+            c = render.colour_points(self.ps if self.preview is None else _Proxy(self.ps, z=self.preview.z), mode,
+                                     self.lut, rng=self._range(mode))
         else:
             lc = np.array([render.hex_rgb(l.get("colour", "#00e5aa")) for l in self.project.lines] or [(0, 229, 170)],
                           np.uint8)
@@ -1227,12 +1341,120 @@ class MainWindow(QtWidgets.QMainWindow):
         self._col_cache[key] = c
         return c
 
+    def _range(self, mode):
+        """Colour scale of a scalar scheme over all points of the Inspection Area: the same in every view, so
+        linked views and their scale bars agree."""
+        key = (mode, len(self.ps))
+        r = self._ranges.get(key) if hasattr(self, "_ranges") else None
+        if r is None:
+            ps = self.ps
+            if mode == "Height":
+                r = render.auto_range(ps.z)
+            elif mode == "Intensity":
+                r = render.auto_range(ps.i.astype(float), (1, 99))
+            elif mode == "Intensity (range normalised)":
+                rr = np.maximum(ps.rng * 0.01, 0.5)
+                r = render.auto_range(ps.i * (rr / 10.0) ** 2, (1, 99))
+            elif mode == "Time":
+                r = render.auto_range(ps.t, (0, 100))
+            else:
+                r = render.auto_range(ps.rng * 0.01, (1, 99))
+            if not hasattr(self, "_ranges") or len(self._ranges) > 40:
+                self._ranges = {}
+            self._ranges[key] = r
+        return r
+
+    def _mode(self, key):
+        """Colour scheme of a view, following its link (and the link's link)."""
+        seen = set()
+        while self.links.get(key) and key not in seen:
+            seen.add(key)
+            key = self.links[key]
+        return self.panes[key].colour.currentText()
+
+    def _set_link(self, key, target):
+        t = target
+        while t:                                   # no loops: a view cannot follow one that follows it
+            if t == key:
+                self.status("That would link the views in a circle; %s keeps its own colours" % key.title(), 6000)
+                pane = self.panes[key]
+                pane.link.blockSignals(True)
+                pane.link.setCurrentIndex(0)
+                pane.link.blockSignals(False)
+                target = ""
+                break
+            t = self.links.get(t, "")
+        self.links[key] = target
+        self.panes[key].set_linked(target, self._mode(key))
+        self.refresh_views(which=(key,))
+
     def _view_colour(self, view, mode):
-        self.refresh_views(which=(view,))
+        which = [view]
+        for k in self.panes:                       # views linked to this one (directly or through another)
+            if k != view and self.links[k] and self._mode(k) == mode:
+                self.panes[k].set_linked(self.links[k], mode)
+                which.append(k)
+        self.refresh_views(which=tuple(which))
+
+    def _legend_info(self, mode):
+        if len(self.ps) == 0:
+            return None
+        o = self._origin()
+        info = {"title": mode}
+        if mode in ("Height", "Intensity", "Intensity (range normalised)", "Time", "Range"):
+            lo, hi = self._range(mode)
+            info.update(kind="ramp", lo=lo, hi=hi, lut=self.lut)
+            if mode == "Height":
+                info["fmt"] = lambda v: "%.2f m" % (v + o[2])
+            elif mode.startswith("Intensity"):
+                info["lut"] = "Grey" if self.lut == "Rainbow" else self.lut
+                info["fmt"] = lambda v: "%.0f" % v
+            elif mode == "Time":
+                info["lut"] = "Viridis"
+                info["fmt"] = lambda v: _dt.datetime.fromtimestamp(v, _dt.timezone.utc).strftime("%H:%M:%S UTC")
+            else:
+                info["fmt"] = lambda v: "%.1f m" % v
+        elif mode == "Channel":
+            info.update(kind="ramp", lo=1, hi=32, lut="Rainbow", fmt=lambda v: "laser %d" % round(v))
+        elif mode == "Classification":
+            cls = self.preview.cls if self.preview is not None else self.ps.cls
+            u, c = np.unique(cls, return_counts=True)
+            info.update(kind="swatches", items=[(tuple(render.CLASS_COLOURS[int(k)]), "%d %s  %s" % (
+                k, F.ASPRS.get(int(k), ""), "{:,}".format(int(n)))) for k, n in zip(u, c)])
+        elif mode == "Line":
+            ids = set(np.unique(self.ps.line).tolist())
+            info.update(kind="swatches", items=[(render.hex_rgb(l.get("colour", "#00e5aa")), "L%d %s" % (
+                l["id"] + 1, l.get("name", ""))) for l in self.project.lines if l["id"] in ids])
+        elif mode == "File":
+            names = {r["gid"]: os.path.basename(r["path"]) for r in self.file_table()}
+            info.update(kind="swatches", items=[(tuple(FILE_COLOURS[g % len(FILE_COLOURS)]), names.get(int(g), "?"))
+                                                for g in np.unique(self.file_idx)])
+        elif mode == "Return":
+            info.update(kind="swatches", items=[((0, 229, 170), "Last / single"), ((245, 166, 35), "Strongest")])
+        extra = []
+        if self.preview is not None:
+            extra += [(render.PREVIEW_REJECT_RGB, "Rejected by the preview"), ((120, 255, 120), "Re-accepted by the preview")]
+        if self.show_rejected and self.ps.rejected.any():
+            extra.append((render.REJECT_RGB, "Rejected"))
+        if self.selected is not None and self.selected.any():
+            extra.append((render.SELECT_RGB, "Selected"))
+        info["extra"] = extra
+        return info
+
+    def _set_legend(self, key, view):
+        pane = self.panes[key]
+        view.legend = self._legend_info(self._mode(key)) if pane.legend_btn.isChecked() else None
 
     def _grid_attr(self, a):
         self.plan.attr = a
         self.plan.invalidate()
+
+    def _cell(self, v):
+        c = self.plan.set_cell(v)
+        if abs(c - v) > 1e-6:
+            self.sp_cell.blockSignals(True)
+            self.sp_cell.setValue(c)
+            self.sp_cell.blockSignals(False)
 
     def _lut(self, m):
         self.lut = m
@@ -1308,30 +1530,33 @@ class MainWindow(QtWidgets.QMainWindow):
             sm = vis & (np.abs(u - pos) <= th / 2)
         if "plan" in which:
             idx = np.flatnonzero(vis)
-            col = self._colours(self.plan_pane.colour.currentText())
+            col = self._colours(self._mode("plan"))
+            self._set_legend("plan", self.plan)
             self.plan.a_offset, self.plan.b_offset = o[0], o[1]
             self.plan.set_points(ps.x[idx], ps.y[idx], z[idx], col[idx], idx, fit=False)
             self.plan_pane.title.setText("PLAN  %s pts" % "{:,}".format(len(idx)))
         if "slice" in which:
             idx = np.flatnonzero(sm)
-            col = self._colours(self.slice_pane.colour.currentText())
+            col = self._colours(self._mode("slice"))
+            self._set_legend("slice", self.slice)
             self.slice.b_offset = o[2]
             if along:
                 self.slice.kind = "profile"
                 self.slice.a_offset = b["length"] / 2
                 self.slice.set_points(u[idx], z[idx], v[idx], col[idx], idx, fit=fit or len(self.slice.a) == 0)
                 self.slice_pane.lbl.setText("offset %+.2f m" % pos if not full else "full width")
-                self.slice_pane.title.setText("SLICE · PROFILE  %s pts" % "{:,}".format(len(idx)))
+                self.slice_pane.title.setText("SLICE  %s pts" % "{:,}".format(len(idx)))
             else:
                 self.slice.kind = "section"
                 self.slice.a_offset = 0.0
                 self.slice.set_points(v[idx], z[idx], -u[idx], col[idx], idx, fit=fit or len(self.slice.a) == 0)
                 self.slice_pane.lbl.setText("chainage %.2f m" % (pos + b["length"] / 2))
-                self.slice_pane.title.setText("SLICE · CROSS-SECTION  %s pts" % "{:,}".format(len(idx)))
+                self.slice_pane.title.setText("SLICE  %s pts" % "{:,}".format(len(idx)))
         if "3d" in which:
             m = sm if self.v3d_pane.what.currentText() == "Slice" else vis
             idx = np.flatnonzero(m)
-            col = self._colours(self.v3d_pane.colour.currentText())
+            col = self._colours(self._mode("3d"))
+            self._set_legend("3d", self.v3d)
             P = np.column_stack([ps.x[idx], ps.y[idx], z[idx]])
             self.v3d.set_points(P, col[idx], idx, fit=fit or len(self.v3d.P) == 0)
             self.v3d_pane.title.setText("3D  %s pts" % "{:,}".format(len(idx)))
@@ -1641,6 +1866,66 @@ class MainWindow(QtWidgets.QMainWindow):
         if along:
             return np.ones(len(ps), bool) if full else np.abs(v - pos) <= th / 2
         return np.abs(u - pos) <= th / 2
+
+    def tune_filters(self):
+        """Measure the noise of the loaded points, combine it with the XT-32 / Certus error budget and the
+        trajectory's own standard deviations, and set the filters' tolerances from it."""
+        from ..core import precision as PR
+        if len(self.ps) < 1000:
+            theme.msg_info(self, "CloudPro", "Load an Inspection Area with points (ideally on a road seen by two or more "
+                           "passes) first: the noise is measured on its ground.")
+            return
+        p = self.project
+        smr = None
+        if p.dcs is not None:
+            try:
+                from dcs_core import handover
+                doc = handover.read(p.dcs, "pospro", required=False)
+                smr = (doc or {}).get("paths", {}).get("smrmsg")
+            except Exception:       # noqa: BLE001
+                smr = None
+        cls = self.preview.cls if self.preview is not None else None
+        pr = PR.assess(self.ps, (p.data.get("inputs") or {}).get("trajectory"), smr, cls)
+        groups = [F.FilterGroup.from_dict(g.to_dict()) for g in self.filters.groups]
+        changes = PR.tune(groups, pr)
+        d = QtWidgets.QDialog(self)
+        d.setWindowTitle("Tune the filters to the sensor precision")
+        theme.polish_dialog(d)
+        lay = QtWidgets.QVBoxLayout(d)
+        t = QtWidgets.QTextBrowser()
+        t.setHtml("<h3 style='color:%s'>Precision of this data</h3>%s<p style='color:%s'>Measured on the ground of the "
+                  "Inspection Area; the larger of measurement and specification is used. Feature settings that "
+                  "describe the objects (paint contrast, curb height, rail shape) are only raised above the noise, "
+                  "never lowered.</p>" % (theme.ACCENT, PR.report_html(pr, changes), theme.DIM))
+        t.setMinimumSize(900, 520)
+        lay.addWidget(t)
+        bb = QtWidgets.QHBoxLayout()
+        b_cur = QtWidgets.QPushButton("Apply to this group")
+        b_all = QtWidgets.QPushButton("Apply to all groups")
+        b_all.setObjectName("ppPrimary")
+        b_no = QtWidgets.QPushButton("Close")
+        for b in (b_cur, b_all, b_no):
+            bb.addWidget(b)
+        lay.addLayout(bb)
+        res = {"which": None}
+        b_cur.clicked.connect(lambda: (res.update(which="one"), d.accept()))
+        b_all.clicked.connect(lambda: (res.update(which="all"), d.accept()))
+        b_no.clicked.connect(d.reject)
+        b_cur.setEnabled(bool(changes))
+        b_all.setEnabled(bool(changes))
+        if exec_(d) != QtWidgets.QDialog.DialogCode.Accepted or not res["which"]:
+            return
+        cur = self.filters.group
+        targets = [cur] if res["which"] == "one" else list(self.filters.groups)
+        n = len(PR.tune(targets, pr))
+        p.data["precision"] = {k: pr[k] for k in ("s_pass", "s_between", "s_all", "s_horiz", "measured_pass",
+                                                  "measured_between", "road_intensity_median", "road_intensity_sd")}
+        p.data["precision"]["trajectory"] = pr["traj"]
+        p.save()
+        self.filters.save()
+        self.filters.refresh_values()
+        p.run_log("tune", ["%s / %s: %s %s -> %s (%s)" % c for c in changes])
+        self.status("%d filter settings tuned to the data" % n, 8000)
 
     def run_preview(self):
         if self.edits is None or len(self.ps) == 0 or self.filters.group is None:
@@ -1981,6 +2266,8 @@ EDITING
   Delete rejects them, Ctrl+D clears.  H shows / hides rejected points.  Ctrl+Z / Ctrl+Y.
 
 3D
+  Arrows top left: click an arrow head to turn the cloud that way (blue up / down, red left / right,
+  green clockwise / anticlockwise on the screen); hold to keep turning.  The presets reset the turn.
   Left drag: orbit.  Shift+left or middle drag: pan.  Wheel: zoom, Ctrl+wheel: Z scale.
   Right drag: lasso / rectangle edit.  Double click: new centre.  W/S/A/D/Q/E: fly by the step.
   1 top, 2 along, 3 across, 4 oblique, O orthographic, 0 fit.

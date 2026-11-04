@@ -10,7 +10,7 @@ R = QtCore.QRectF
 NAMES = ("hand", "rect", "poly", "lasso", "brush", "above", "below", "ruler", "info", "undo", "redo", "eye",
          "eye_off", "reject", "accept", "select", "classify", "filter", "inside", "outside", "menu", "props",
          "help", "prev", "next", "rotate", "full", "zoomall", "top", "along", "across", "iso", "plus", "minus",
-         "copy", "up", "down", "edl", "map", "lines", "cross")
+         "copy", "up", "down", "edl", "map", "lines", "cross", "legend", "link")
 
 
 def paint(p, name, r, col, width=1.6):
@@ -349,6 +349,25 @@ def _lines(p, c):
     p.drawPolyline(QtGui.QPolygonF([P(3, 13), P(8, 8), P(15, 10), P(21, 3)]))
 
 
+def _legend(p, c):
+    g = QtGui.QLinearGradient(0, 4, 0, 20)
+    for t, col in ((0, "#e84855"), (0.35, "#f5d742"), (0.65, "#00e5aa"), (1, "#3ab4f2")):
+        g.setColorAt(t, QtGui.QColor(col))
+    p.save()
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(g)
+    p.drawRect(R(4, 4, 6, 16))
+    p.restore()
+    p.drawRect(R(4, 4, 6, 16))
+    for y in (5, 12, 19):
+        p.drawLine(P(12, y), P(20, y))
+
+
+def _link(p, c):
+    p.drawRoundedRect(R(2, 8, 11, 8), 4, 4)
+    p.drawRoundedRect(R(11, 8, 11, 8), 4, 4)
+
+
 def _cross(p, c):
     p.drawLine(P(12, 3), P(12, 21))
     p.drawLine(P(3, 12), P(21, 12))
@@ -361,4 +380,5 @@ _ICONS = {"hand": _hand, "rect": _rect, "poly": _poly, "lasso": _lasso, "brush":
           "filter": _filter, "inside": _inside, "outside": _outside, "menu": _menu, "props": _props, "prev": _prev,
           "next": _next, "rotate": _rotate, "full": _full, "zoomall": _zoomall, "top": _top, "along": _along,
           "across": _across, "iso": _iso, "plus": _plus, "minus": _minus, "copy": _copy, "up": _up, "down": _down,
-          "edl": _edl, "map": _map, "lines": _lines, "cross": _cross}
+          "edl": _edl, "map": _map, "lines": _lines, "cross": _cross,
+          "legend": _legend, "link": _link}

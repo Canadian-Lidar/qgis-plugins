@@ -2191,6 +2191,8 @@ class PosProDock(QDockWidget):
         mm.addAction("Save the QGIS project in the project folder", self.save_qgis_project)
         mm.addAction("Show the log", self.show_log)
         mm.addAction("Engine version", self.engine_info)
+        mm.addSeparator()
+        mm.addAction("User guide (this version)", self.open_guide)
         self.pbox.setMenu(mm)
         head.addWidget(self.pbox)
         # window placement: maximise, float, dock left or right
@@ -2209,6 +2211,13 @@ class PosProDock(QDockWidget):
         wm.aboutToShow.connect(self._win_menu_text)
         self.wbtn.setMenu(wm)
         head.addWidget(self.wbtn)
+        self.helpbtn = QToolButton()
+        self.helpbtn.setObjectName("ppWinBtn")
+        self.helpbtn.setText("?")
+        self.helpbtn.setToolTip("User guide for this version of PosPro (PDF)")
+        self.helpbtn.setFixedSize(34, 34)
+        self.helpbtn.clicked.connect(self.open_guide)
+        head.addWidget(self.helpbtn)
         self.pname = self.pbox
         self._set_pname("No project")
         outer.addWidget(hw)
@@ -2347,6 +2356,13 @@ class PosProDock(QDockWidget):
         lay.addWidget(bb)
         d.resize(780, 480)
         d.exec()
+
+    def open_guide(self):
+        from ..plugin import guide_path, open_guide
+        if not guide_path():
+            theme.msg_warn(self, "PosPro", "The user guide is missing from this installation; reinstall PosPro.")
+            return
+        open_guide()
 
     def engine_info(self):
         v, r = engine.version()

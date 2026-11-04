@@ -61,6 +61,7 @@ class FilterPanel(QtWidgets.QWidget):
     previewOff = Signal()
     acceptRequested = Signal()
     runRequested = Signal(str)
+    tuneRequested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -217,6 +218,8 @@ class FilterPanel(QtWidgets.QWidget):
 
     def _group_menu(self):
         m = QtWidgets.QMenu(self)
+        m.addAction("Tune the filters to the sensor precision and this data...", self.tuneRequested.emit)
+        m.addSeparator()
         m.addAction("New empty group", self.new_group)
         m.addAction("Duplicate this group", self.clone_group)
         dm = m.addMenu("Add a ready-made group")
@@ -240,6 +243,10 @@ class FilterPanel(QtWidgets.QWidget):
             theme.dark_menu(x)
         m.exec(self.btn_gmenu.mapToGlobal(self.btn_gmenu.rect().bottomLeft())) if hasattr(m, "exec") else \
             m.exec_(self.btn_gmenu.mapToGlobal(self.btn_gmenu.rect().bottomLeft()))
+
+    def refresh_values(self):
+        """Show the settings again after they were changed from outside (tuning)."""
+        self._fill_filters(max(0, self.cmb_f.currentIndex()))
 
     def _add_group(self, g):
         self.groups.append(g)
@@ -312,12 +319,18 @@ class FilterPanel(QtWidgets.QWidget):
                 pass
         self._fill_groups()
 
+    def save_quiet(self):
+        if self.folder:
+            os.makedirs(self.folder, exist_ok=True)
+            tmp = os.path.join(self.folder, "groups.json.tmp")
+            with open(tmp, "w") as f:
+                json.dump([g.to_dict() for g in self.groups], f, indent=1)
+            os.replace(tmp, os.path.join(self.folder, "groups.json"))
+
     def save(self):
         if not self.folder:
             return
-        os.makedirs(self.folder, exist_ok=True)
-        with open(os.path.join(self.folder, "groups.json"), "w") as f:
-            json.dump([g.to_dict() for g in self.groups], f, indent=1)
+        self.save_quiet()                   # written to a temporary file, then renamed (no half-written file)
         self.set_status("Filter groups saved")
 
     # ------------------------------------------------------------- filters

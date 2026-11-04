@@ -326,7 +326,7 @@ class InstallPage(Page):
         for s in self.lever:
             s.valueChanged.connect(self._draw)
         self.lay.addWidget(g)
-        self.lay.addWidget(_hint("Mounting angles use the mapper's convention (navaq_hesai): M = Rz(h) Ry(p) Rx(−r) "
+        self.lay.addWidget(_hint("Mounting angles use the mapper's own convention: M = Rz(h) Ry(p) Rx(−r) "
                                  "Z0; roll + starboard down, pitch + bow up, heading + clockwise."))
         b_rev = QPushButton("Revert to recorded")
         b_rev.clicked.connect(self.revert)

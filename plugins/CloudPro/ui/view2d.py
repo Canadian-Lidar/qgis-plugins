@@ -10,6 +10,7 @@ Selection tools hand a boolean mask of the shown points to the main window,
 which applies the active edit (reject / accept / classify).
 """
 import math
+import time
 
 import numpy as np
 
@@ -138,9 +139,12 @@ class CloudView2D(QtWidgets.QWidget):
         if self._interacting and n > self.lod_max:
             m = self.lod_max
         a, b, key, col = self.a[:m], self.b[:m], self.key[:m], self.col[:m]
+        t0 = time.perf_counter()
         sx, sy = self.to_screen(a, b)
         buf = render.rasterise(sx, sy, key, col, W, H, self.point_size,
                                bg=0x00000000 if self.transparent else 0xFF09100F)
+        if m > 200_000:              # budget while panning / zooming: ~30 frames/s on this machine
+            self.lod_max = int(min(8e6, max(250_000, m / max(time.perf_counter() - t0, 1e-3) * 0.033)))
         self._buf = np.ascontiguousarray(buf)
         self._img = QtGui.QImage(self._buf.data, W, H, 4 * W, QtGui.QImage.Format.Format_ARGB32)
         if m == n:
@@ -170,6 +174,9 @@ class CloudView2D(QtWidgets.QWidget):
                 pass
         self._draw_tool(p)
         self._draw_title(p)
+        if getattr(self, "legend", None):
+            from . import legend
+            legend.paint(p, self, self.legend, x=50, y=10)
         p.end()
 
     def underlay(self, p):

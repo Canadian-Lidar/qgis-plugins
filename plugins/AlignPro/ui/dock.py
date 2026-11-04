@@ -106,6 +106,8 @@ class AlignProDock(QDockWidget):
         self.a_qgz = mm.addAction("Save the QGIS project in the project folder", self.save_qgis_project)
         self.a_reset = mm.addAction("Reset AlignPro to the recorded values\u2026", self.reset_project)
         mm.addAction("Show the log", self.show_log)
+        mm.addSeparator()
+        self.a_guide = mm.addAction("User guide (this version)", self.open_guide)
         self.pbox.setMenu(mm)
         head.addWidget(self.pbox)
         self.wbtn = QToolButton()
@@ -124,6 +126,13 @@ class AlignProDock(QDockWidget):
         wm.addAction("Open the Data View", lambda: self.show_dataview("float"))
         wm.aboutToShow.connect(self._win_menu_text)
         self.wbtn.setMenu(wm)
+        self.hbtn = QToolButton()
+        self.hbtn.setObjectName("ppWinBtn")
+        self.hbtn.setText("?")
+        self.hbtn.setToolTip("AlignPro user guide (PDF for this version)")
+        self.hbtn.setFixedSize(34, 34)
+        self.hbtn.clicked.connect(self.open_guide)
+        head.addWidget(self.hbtn)
         head.addWidget(self.wbtn)
         self._set_pname("No project")
         outer.addWidget(hw)
@@ -338,6 +347,11 @@ class AlignProDock(QDockWidget):
             self.iface.messageBar().pushMessage("AlignPro", txt, Qgis.MessageLevel.Warning if level == "warning"
                                                 else Qgis.MessageLevel.Critical, 8)
         self.status.setText(txt if len(txt) < 200 else txt[:200] + "\u2026")
+
+    def open_guide(self, *_):
+        """The user guide PDF for the installed AlignPro version."""
+        from ..guide import open_guide
+        return open_guide(self.iface, self)
 
     def show_log(self):
         d = QDialog(self)

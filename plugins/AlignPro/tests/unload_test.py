@@ -30,6 +30,11 @@ class Iface:
 
     def mainWindow(self): return self.mw
     def pluginMenu(self): return self.menu
+    def pluginHelpMenu(self):
+        if not hasattr(self, "_help"):
+            from qgis.PyQt.QtWidgets import QMenu as _M
+            self._help = _M("Plugins help")
+        return self._help
     def mapCanvas(self): return self.canvas
     def messageBar(self): return self.bar
     def addToolBarIcon(self, a): self.tb.addAction(a)

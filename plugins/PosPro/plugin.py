@@ -14,6 +14,30 @@ except ImportError:          # QGIS 3 / Qt5
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
+def guide_path():
+    """The user guide installed with this version of the plugin."""
+    import glob
+    ver = ""
+    try:
+        with open(os.path.join(HERE, "metadata.txt"), encoding="utf-8") as fh:
+            ver = next((ln.split("=", 1)[1].strip() for ln in fh if ln.startswith("version=")), "")
+    except OSError:
+        pass
+    exact = os.path.join(HERE, "docs", "PosPro_User_Guide_%s.pdf" % ver)
+    if os.path.exists(exact):
+        return exact
+    found = sorted(glob.glob(os.path.join(HERE, "docs", "PosPro_User_Guide_*.pdf")))
+    return found[-1] if found else None
+
+
+def open_guide():
+    from qgis.PyQt.QtCore import QUrl
+    from qgis.PyQt.QtGui import QDesktopServices
+    p = guide_path()
+    if p:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(p))
+
+
 class PosProPlugin:
     def __init__(self, iface):
         self.iface = iface
@@ -31,8 +55,18 @@ class PosProPlugin:
         from dcs_core import menu, registry
         menu.add(self.iface, self.action)
         registry.register("pospro", self.open_project)
+        self.help_action = QAction("PosPro user guide", self.iface.mainWindow())
+        self.help_action.triggered.connect(open_guide)
+        try:
+            self.iface.pluginHelpMenu().addAction(self.help_action)
+        except Exception:       # noqa: BLE001
+            pass
 
     def unload(self):
+        try:
+            self.iface.pluginHelpMenu().removeAction(self.help_action)
+        except Exception:       # noqa: BLE001
+            pass
         try:
             from .ui import theme
             theme.remove_guard()

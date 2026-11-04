@@ -36,3 +36,14 @@ CloudPro's automatic filters cover the classic cell-statistics, clip and cluster
 - **Moving objects.** Rays are sampled every half voxel rather than traversed exactly with 3-D DDA. A pass protects the 26 voxels around its own returns, so rays that pass through tree crowns are not counted as free space. Using sensor positions from the trajectory makes this practical for a mobile mapper.
 - **Feature extraction.** All seven classify by default and need ground: without a ground class they use a robust minimum surface and say so. *Poles* ignore voxels with fewer than 3 points when testing isolation, because one snowflake beside a pole otherwise breaks it; stacks that end in a large crown are left as tree trunks. *Power lines* replace per-point linearity with a free-space test (nothing within 1 m above or below the voxel column), because parallel conductors 0.6 m apart make neighbourhoods planar, and need 3 points per voxel so snow in the air does not chain the clusters together. *Guardrails* add an empty-above test that rejects walls and vehicles in the same height band. *Road markings and manholes* keep to the ground class when there is one.
 - **DROR α** must match the azimuth step of the data. That is 0.18° for the XT-32 at 600 rpm with all packets kept. Multiply it by N when importing with "keep every Nth packet".
+
+## Sensor figures used by "Tune to the sensor precision"
+
+- Hesai XT32 product page (range precision 0.5 cm 1σ, accuracy ±1 cm, 0.18° / 1° resolution): https://hesaitech.com/product/xt32
+- Advanced Navigation Certus Evo (RTK 0.01 m H / 0.015 m V; roll/pitch 0.03°, heading 0.05° dual antenna; post-processed 0.01°): https://www.advancednavigation.com/product/certus-evo
+
+## Large point cloud handling (ideas taken from TopoDOT / Bentley practice)
+
+- Display budget per view with progressive refinement, TopoDOT 2024.1 release notes: https://blog.topodot.com/1043-topodot-version-2024-1-release-highlights/
+- Density and "limit incoming points" settings, Ohio DOT survey point cloud training guide: https://ftp.dot.state.oh.us/pub/cadd/caddsync/ODOTcadd/Standards/ODOT/Training/Guides/ODOT_Survey_Point_Cloud_Training_Guide.pdf
+- Stepping stations with [ and ] along a guideline (same guide); splitting long jobs (TopoDOT QA article): https://blog.topodot.com/establishing-requirements-extracting-metrics-and-evaluating-quality-of-lidar-data/

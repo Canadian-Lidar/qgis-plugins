@@ -38,6 +38,9 @@ def _title(text):
 
 class _Pane(QtWidgets.QWidget):
     colourChanged = Signal(str)
+    legendToggled = Signal(bool)
+    linkChanged = Signal(str)            # "" = own colours, else "plan" / "slice" / "3d"
+    KEY = ""
 
     def __init__(self, title, parent=None):
         super().__init__(parent)
@@ -60,9 +63,37 @@ class _Pane(QtWidgets.QWidget):
     def add_colour(self):
         self.hl.addWidget(chrome.label("COLOUR"))
         self.hl.addWidget(self.colour)
+        self.legend_btn = chrome.IconButton("legend", "Colour scale bar of this view on / off", checkable=True, size=28)
+        self.legend_btn.setChecked(True)
+        self.legend_btn.toggled.connect(self.legendToggled.emit)
+        self.hl.addWidget(self.legend_btn)
+        self.link = QtWidgets.QComboBox()
+        self.link.setToolTip("Link this view's colours (scheme and scale) to another view")
+        self.link.addItem("Own", "")
+        for k, n in (("plan", "= Plan"), ("slice", "= Slice"), ("3d", "= 3D")):
+            if k != self.KEY:
+                self.link.addItem(n, k)
+        self.link.setFixedWidth(84)
+        self.link.currentIndexChanged.connect(lambda _i: self.linkChanged.emit(self.link.currentData() or ""))
+        self.hl.addWidget(icons_label())
+        self.hl.addWidget(self.link)
+
+    def set_linked(self, key, mode=None):
+        """Follow another view's colour scheme (the combo is greyed out while linked)."""
+        self.colour.setEnabled(not key)
+        if mode is not None and self.colour.currentText() != mode:
+            self.colour.blockSignals(True)
+            self.colour.setCurrentText(mode)
+            self.colour.blockSignals(False)
+
+
+def icons_label():
+    return chrome.label("LINK")
 
 
 class PlanPane(_Pane):
+    KEY = "plan"
+
     def __init__(self, parent=None):
         super().__init__("PLAN", parent)
         self.view = PlanView()
@@ -76,6 +107,7 @@ class PlanPane(_Pane):
 
 class SlicePane(_Pane):
     """Slice view: a thin slab of the Inspection Area seen from the side."""
+    KEY = "slice"
     sliceChanged = Signal()
     stepRequested = Signal(int)        # -1 previous, +1 next
 
@@ -164,6 +196,7 @@ class SlicePane(_Pane):
 
 
 class View3DPane(_Pane):
+    KEY = "3d"
     def __init__(self, parent=None):
         super().__init__("3D", parent)
         self.view = CloudView3D()

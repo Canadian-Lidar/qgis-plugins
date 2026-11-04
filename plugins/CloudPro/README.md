@@ -1,4 +1,4 @@
-# CloudPro 1.2 – point cloud processing, stage 03 of the DCS chain
+# CloudPro 1.2.3 – point cloud processing, stage 03 of the DCS chain
 
 **Plugins ▸ Canadian Lidar ▸ Data Collection Systems ▸ CloudPro**
 
@@ -13,6 +13,10 @@ JobFolder/  (mapper captures, never changed)
 ```
 
 CloudPro opens the job's shared project and reads the .clraw captures recorded in it. It georeferences every Lidar return at its own firing time, using the trajectory PosPro published and the mounting, lever arm and latency AlignPro published. It then gives fast manual and automatic cleaning, and publishes the delivered cloud with `cloud.json`.
+
+## User guide
+
+The full user guide ships with the plugin as `docs/CloudPro_User_Guide_<version>.pdf`. Open it with the **?** at the top right of the window, the project button ▸ *User guide (this version)* (also in MENU, Shift+F1), or QGIS **Help ▸ Plugins ▸ CloudPro user guide**.
 
 ## Install
 
@@ -50,7 +54,7 @@ Older stand-alone projects (`<name>.cloudpro.json`) still open, without the chai
 ## The window
 
 ```
- logo · MENU · PROJECT · PROPERTIES ..................... chain bar · inputs · Update
+ logo · MENU · 01 PosPro → 02 AlignPro → 03 CloudPro ....... PROJECT ....... inputs · Update
  tools: hand · selection shape · above/below line · ruler · i | action · inside/outside · class · line | undo · redo · rejected · zoom
  ┌──────────── PLAN ────────────┬───────────── 3D ──────────────┐
  │ project grid, drive lines,   │ orbit, pan, fly, eye-dome     │
@@ -61,20 +65,20 @@ Older stand-alone projects (`<name>.cloudpro.json`) still open, without the chai
  └──────────────────────────────┴───────────────────────────────┘
 ```
 
-- **MENU:** Georeference / update, Publish, Export, Save, Pick the Inspection Area on the QGIS map, add the drive lines and Inspection Area to QGIS, add other .clraw files, remove all points, keys and mouse.
-- **PROPERTIES** opens a window that can stay open (or be minimised) while you work:
+- **MENU:** Project properties (Ctrl+R), Georeference / update, Publish, Export, Save, Pick the Inspection Area on the QGIS map, add the drive lines and Inspection Area to QGIS, add other .clraw files, memory limit, remove all points, keys and mouse.
+- **Project properties** (MENU or the project button) opens a window that can stay open (or be minimised) while you work:
   - *Project information:* files and folders, created / saved, survey start, end, time recording, number of lines, survey length, points, extent, centre in latitude / longitude.
   - *Geodetics:* horizontal CRS (Select…), trajectory frame and epoch, ellipsoidal or orthometric heights with a geoid grid; optionally the job's shared CRS. Applying re-georeferences and keeps every edit; the raw captures are never touched.
   - *Survey configuration:* the hardware recorded in the captures (Lidar, Certus, connections, lever arm, mounting), PosPro's trajectory and AlignPro's calibration, and the values CloudPro georeferences with. Source can be the chain default (AlignPro if published, else the recorded mounting), the recorded mounting, or values you enter (mounting, Lidar lever arm, latency), all kept in the project, apart from the raw files.
   - *Project files:* one row per .clraw file with Points and Track tick boxes (show the file's points in the views, show its drive line in the Plan). Clicking a row selects that file's points and highlights its drive line.
-- **Tool bar.** Drag the grip to move it or float it. Hover any icon for its name and key. The selection button cycles rectangle → polygon → lasso → brush when clicked (right click to choose); the line button cycles above / below a drawn line. The action button sets what the shape does: Reject, Accept, Select, Classify (with the class next to it) or Filter (runs the current filter group on the shape); the button next to it switches between the points *inside* or *outside* the shape.
-- **Colours** are set per view (Height, Intensity, Classification, Line, **File**, Return, Laser, Time, Range…). Rejected points are red; in a preview, orange = will be rejected and green = re-accepted; selected points are white.
+- **Tool bar.** Drag the grip to move it or float it. Hover any icon for its name and key. The selection button cycles rectangle → polygon → lasso → brush when clicked; its bottom-right corner arrow (or a right click) opens the list; the line button cycles above / below a drawn line. The action button sets what the shape does: Reject, Accept, Select, Classify (with the class next to it) or Filter (runs the current filter group on the shape); the button next to it switches between the points *inside* or *outside* the shape.
+- **Colours** are set per view (Height, Intensity, Classification, Line, **File**, Return, Laser, Time, Range…). Each view has its own **colour scale bar** (the bar icon turns it on or off): a ramp with values for height, intensity, time and range, or the classes / lines / files present with their counts, plus rejected, preview and selected points. **LINK** makes a view follow another view's colours, scheme and scale (a view cannot follow one that follows it). Scalar scales are computed over the whole Inspection Area, so linked views agree. **CELL** on the tool bar sets the cell of the Plan's project grid (0.5 to 25 m). Rejected points are red; in a preview, orange = will be rejected and green = re-accepted; selected points are white.
 
 | View | What it shows |
 | --- | --- |
 | **Plan** | The whole project as a grid (mean, max, min height, span, hits, rejects, intensity, or none) with hill shading, the drive lines with direction arrows, and the points of the Inspection Area on top. With the Pan tool, drag the area's edge to move it, a corner to resize it, the round handle to rotate it; Shift+drag draws a new one. Right click: place the Inspection Area here, **Inspection Area properties…** (exact centre, size, bearing, steps, overlap, follow a line, go to E/N), place the slice here, align with the nearest line, zoom to the area or the project. |
 | **Slice** | A cross-section across the Inspection Area or a profile along it (the across / along button, or rotate 90°), with an exact thickness and step, previous / next, a position slider and *whole area* for a profile of the full width. When a cross-section walks off the end of the area the area moves on with it, so a corridor can be walked one slice at a time. Drive-line positions are marked. |
-| **3D** | The Inspection Area or just the slice, with top / along / across / oblique views and eye-dome lighting. |
+| **3D** | The Inspection Area or just the slice, with top / along / across / oblique views and eye-dome lighting. The arrows in the top left turn the cloud: click a blue head to tip it up or down, a red head to turn it left or right, a green head to turn the picture clockwise or anticlockwise (10° per click; hold to keep turning). |
 
 ## Navigation (precise moves)
 
@@ -125,6 +129,34 @@ Each filter can be limited to some classes and lines. Mode *Individually* filter
 On the same street without these objects (walls, parked cars, trees, snow) they found nothing. Run a ground filter first (the ready-made group starts with SMRF).
 
 Default groups: *Mobile mapping – standard clean*, *Snow and rain*, *Ground and vegetation classes*, *Moving objects (multi-pass)*, *Feature extraction (road and street furniture)* and *Road surface QA*. Projects from earlier versions get the new ready-made groups added. Groups are saved with the project (`filters/groups.json`) and can be exported and imported as JSON to share between projects.
+
+### Tune to the sensor precision
+
+☰ (filter group menu) ▸ *Tune the filters to the sensor precision and this data…* measures the noise of the loaded Inspection Area and combines it with the hardware error budget:
+
+- **Hesai XT32:** range precision 0.5 cm (1σ), accuracy ±1 cm, 0.18° × 1°.
+- **Certus Evo:** RTK 0.01 m H / 0.015 m V, roll/pitch 0.03°, heading 0.05° (dual antenna); post-processed roll/pitch/heading 0.01°.
+- **The trajectory actually used:** PosPro's SMRMSG standard deviations when published.
+
+What it computes:
+- Vertical noise within a pass = √(σ_range² + (range·σ_tilt)²) at the points' own ranges.
+- Horizontal noise from heading in the same way.
+- Pass-to-pass noise from the position.
+- The noise measured on the ground (plane residuals per line per 1 m cell, and differences between lines over the same cells).
+
+The larger of specification and measurement is used, except between passes, where a measured spread wins (passes minutes apart share most of their GNSS error). The window lists every number and every setting that would change (old → new, and why). Apply it to the current group or to all groups.
+
+- **Height and distance tolerances** follow the noise: 95 % level, surface fit, slope, mean height, reference surface, low points, SMRF / PMF / CSF thresholds, wall thickness, radius outlier, moving-object margin.
+- **Feature settings** that describe the objects (paint contrast, curb height, rail and wire shape, sign intensity) are only raised above the noise or the recorded intensities, never lowered.
+
+On the simulated street, the tuned standard group halved the ground filter's Type II error (3.4 → 1.8 %) with the same noise removal.
+
+## Large jobs
+
+- **Point budgets from this computer's own speed.** While panning, zooming or orbiting, each view draws only as many points as keep it near 30 frames/s, measured from its own frame times. A still 3D frame is capped at about 0.3 s ("showing N %" in the corner). The points are loaded in random order, so the subset is an even sample. Picking and selecting always use every point.
+- **Memory check.** Before an Inspection Area is loaded, its size is estimated from the project grids, without reading any tile (within 0.1 % on the test data). Above the limit (15 M points by default; MENU ▸ Memory limit) CloudPro asks first.
+- **Autosave** every 2 minutes flushes the point store and saves the project. Filter groups are written to a temporary file and renamed, so a crash cannot leave a half-written file.
+- **Tiles.** Only 50 m tiles that touch the Inspection Area are opened, and at most 256 stay mapped. The raw captures are never touched, and `work/` can always be rebuilt.
 
 ## Batch processing (no GUI)
 

@@ -40,7 +40,7 @@ def ascii_report(project, header=True):
     L.append("Lever arm    : F %.3f  S %.3f  D %.3f m  (Certus reference point to Lidar optical centre)"
              % tuple(c["lever"]))
     L.append("Latency      : %.2f ms" % c["latency_ms"])
-    L.append("Convention   : mapper (navaq_hesai), M = Rz(h) Ry(p) Rx(-r) Z0; roll + stbd down, "
+    L.append("Convention   : mapper, M = Rz(h) Ry(p) Rx(-r) Z0; roll + stbd down, "
              "pitch + bow up, heading + clockwise")
     L.append("")
     L.append("Lidar mounting angles (deg)        Roll       Pitch     Heading")
@@ -137,7 +137,7 @@ def html_report(project, images=()):
             rows.append((k.capitalize(), c["report"][k]))
     rows.append(("Trajectory", project.traj.source if project.traj else ""))
     rows.append(("Lever arm (F, S, D)", "%.3f, %.3f, %.3f m" % tuple(c["lever"])))
-    rows.append(("Convention", "mapper (navaq_hesai): M = Rz(h) Ry(p) Rx(&minus;r) Z0; roll + stbd down, pitch + bow up, "
+    rows.append(("Convention", "mapper: M = Rz(h) Ry(p) Rx(&minus;r) Z0; roll + stbd down, pitch + bow up, "
                                "heading + clockwise"))
     for k, v in rows:
         h.append("<tr><th class=l>%s</th><td class=l>%s</td></tr>" % (e(k), v if k == "Convention" else e(str(v))))

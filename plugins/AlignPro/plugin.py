@@ -32,6 +32,7 @@ class AlignProPlugin:
         self.dock = None
         self.action = None
         self.core = None
+        self.help_action = None
 
     def initGui(self):  # noqa: N802
         self.action = QAction(QIcon(os.path.join(HERE, "icons", "alignpro.svg")), "AlignPro", self.iface.mainWindow())
@@ -40,6 +41,12 @@ class AlignProPlugin:
         self.action.setCheckable(True)
         self.action.triggered.connect(self.toggle)
         self.iface.addToolBarIcon(self.action)
+        from .guide import MENU_TEXT
+        self.help_action = QAction(QIcon(os.path.join(HERE, "icons", "alignpro.svg")), MENU_TEXT,
+                                   self.iface.mainWindow())
+        self.help_action.setObjectName("mAlignProGuideAction")
+        self.help_action.triggered.connect(self.open_guide)
+        self.iface.pluginHelpMenu().addAction(self.help_action)
         self.core, why = _core()
         if self.core is None:
             self.iface.addPluginToMenu("&Canadian Lidar", self.action)
@@ -50,6 +57,13 @@ class AlignProPlugin:
         registry.register("alignpro", self.open_project)
 
     def unload(self):
+        if self.help_action is not None:
+            try:
+                self.iface.pluginHelpMenu().removeAction(self.help_action)
+                self.help_action.deleteLater()
+            except RuntimeError:
+                pass
+            self.help_action = None
         if self.action:
             self.iface.removeToolBarIcon(self.action)
             if self.core is not None:
@@ -85,6 +99,11 @@ class AlignProPlugin:
         self.dock.setVisible(bool(on) or not self.dock.isVisible())
         if self.dock.isVisible():
             self.dock.raise_()
+
+    def open_guide(self, *_):
+        """The user guide PDF for the installed version (Help > Plugins > AlignPro user guide)."""
+        from .guide import open_guide
+        return open_guide(self.iface, self.iface.mainWindow())
 
     def open_project(self, path):
         """Show AlignPro on a DCS project (called from another plugin's chain bar)."""

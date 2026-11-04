@@ -9,6 +9,7 @@ Q/E down/up by the navigation step; 1 top, 2 along, 3 across, 4 oblique,
 0/Home = fit; Esc cancels a selection.
 """
 import math
+import time
 
 import numpy as np
 
@@ -33,6 +34,11 @@ class CloudView3D(QtWidgets.QWidget):
         self.dist = 50.0
         self.yaw = math.radians(30)        # camera azimuth (clockwise from north)
         self.pitch = math.radians(35)      # elevation above horizon
+        self.roll = 0.0                    # rotation of the picture about the viewing direction
+        self.nav_step = 10.0               # degrees per click on the navigation arrows
+        self._nav_hot = None
+        self._nav_timer = QtCore.QTimer(self)
+        self._nav_timer.timeout.connect(self._nav_repeat)
         self.fov = math.radians(50)
         self.ortho = False
         self.zscale = 1.0
@@ -82,6 +88,7 @@ class CloudView3D(QtWidgets.QWidget):
 
     def preset(self, name):
         b = math.radians(self.box_bearing)
+        self.roll = 0.0
         if name == "top":
             self.pitch = math.radians(89.9)
             self.yaw = b + math.pi
@@ -109,7 +116,105 @@ class CloudView3D(QtWidgets.QWidget):
         nr = np.linalg.norm(right)
         right = right / nr if nr > 1e-9 else np.array([math.cos(self.yaw), -math.sin(self.yaw), 0])
         up = np.cross(right, fwd)
+        if self.roll:
+            c, s_ = math.cos(self.roll), math.sin(self.roll)
+            right, up = right * c + up * s_, up * c - right * s_
         return eye_dir, fwd, right, up
+
+    # ------------------------------------------------------------ navigation arrows (top left)
+    NAV = 104                              # size of the control in pixels
+
+    def _nav_geom(self):
+        """Centre and the click spots of the arrow heads: key -> (centre point, radius)."""
+        n = self.NAV
+        ox, oy = 8, 8
+        c = QtCore.QPointF(ox + n / 2, oy + n / 2)
+        a = n * 0.40
+        r = n * 0.33
+        return c, a, r, {
+            "up": (QtCore.QPointF(c.x(), c.y() - a), 13), "down": (QtCore.QPointF(c.x(), c.y() + a), 13),
+            "left": (QtCore.QPointF(c.x() - a, c.y()), 13), "right": (QtCore.QPointF(c.x() + a, c.y()), 13),
+            "cw": (QtCore.QPointF(c.x() + (r + 8) * math.cos(math.radians(20)),
+                                  c.y() - (r + 8) * math.sin(math.radians(20))), 14),
+            "ccw": (QtCore.QPointF(c.x() + (r + 8) * math.cos(math.radians(240)),
+                                   c.y() - (r + 8) * math.sin(math.radians(240))), 14)}
+
+    def _nav_hit(self, pos):
+        _, _, _, spots = self._nav_geom()
+        for k, (pt, rad) in spots.items():
+            if (pos.x() - pt.x()) ** 2 + (pos.y() - pt.y()) ** 2 <= rad * rad:
+                return k
+        return None
+
+    def nav_rotate(self, key, deg=None):
+        """Turn the cloud the way the arrow points: up / down (into the page), left / right, cw / ccw on screen."""
+        d = math.radians(self.nav_step if deg is None else deg)
+        if key == "up":
+            self.pitch = max(-math.radians(89.9), self.pitch - d)
+        elif key == "down":
+            self.pitch = min(math.radians(89.9), self.pitch + d)
+        elif key == "right":
+            self.yaw -= d
+        elif key == "left":
+            self.yaw += d
+        elif key == "cw":
+            self.roll += d
+        elif key == "ccw":
+            self.roll -= d
+        self._changed()
+
+    def _nav_repeat(self):
+        if self._nav_hot and self._nav_timer.property("held"):
+            self._nav_timer.setInterval(40)
+            self.nav_rotate(self._nav_hot, self.nav_step * 0.25)
+
+    def _draw_nav(self, p):
+        c, a, r, spots = self._nav_geom()
+        p.save()
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QtGui.QColor(10, 20, 18, 150))
+        p.drawEllipse(c, self.NAV / 2, self.NAV / 2)
+
+        def col(base, key):
+            q = QtGui.QColor(base)
+            return q.lighter(150) if key == self._nav_hot else q
+
+        def head(tip, ux, uy, colour, size=11):
+            px, py = -uy, ux
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(colour)
+            p.drawPolygon(QtGui.QPolygonF([tip, QtCore.QPointF(tip.x() - ux * size + px * size * 0.65,
+                                                               tip.y() - uy * size + py * size * 0.65),
+                                           QtCore.QPointF(tip.x() - ux * size - px * size * 0.65,
+                                                          tip.y() - uy * size - py * size * 0.65)]))
+        blue, red, green = "#3d5afe", "#e84855", "#3ddc5a"
+        # blue: up / down
+        for key, sgn in (("up", -1), ("down", 1)):
+            q = col(blue, key)
+            p.setPen(QtGui.QPen(q, 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+            p.drawLine(QtCore.QPointF(c.x(), c.y() + sgn * 5), QtCore.QPointF(c.x(), c.y() + sgn * (a - 9)))
+            head(QtCore.QPointF(c.x(), c.y() + sgn * (a + 3)), 0, sgn, q)
+        for key, sgn in (("left", -1), ("right", 1)):
+            q = col(red, key)
+            p.setPen(QtGui.QPen(q, 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+            p.drawLine(QtCore.QPointF(c.x() + sgn * 5, c.y()), QtCore.QPointF(c.x() + sgn * (a - 9), c.y()))
+            head(QtCore.QPointF(c.x() + sgn * (a + 3), c.y()), sgn, 0, q)
+        # green arcs: top right clockwise (12 -> 3 o'clock), bottom left anticlockwise (9 -> 6 o'clock)
+        rect = QtCore.QRectF(c.x() - r - 8, c.y() - r - 8, 2 * r + 16, 2 * r + 16)
+        for key, start, span, tip_ang in (("cw", 85, -70, 10), ("ccw", 175, 70, 250)):
+            q = col(green, key)
+            p.setPen(QtGui.QPen(q, 3.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawArc(rect, int(start * 16), int(span * 16))
+            t = math.radians(tip_ang)
+            tip = QtCore.QPointF(c.x() + (r + 8) * math.cos(t), c.y() - (r + 8) * math.sin(t))
+            ux, uy = (math.sin(t), math.cos(t)) if key == "cw" else (-math.sin(t), -math.cos(t))
+            head(tip, ux, uy, q, 10)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QtGui.QColor(theme.SURF))
+        p.drawEllipse(c, 4, 4)
+        p.restore()
 
     def project(self, P):
         """World points -> screen x, y and camera depth."""
@@ -140,7 +245,11 @@ class CloudView3D(QtWidgets.QWidget):
         if n == 0:
             self._img = None
             return
-        m = min(n, self.lod_max) if self._interacting else n
+        # point budgets measured from this machine's own frame times (the points are in random order, so
+        # the first m are an even sample): about 30 frames/s while moving, at most ~0.3 s for a still frame
+        rest_max = getattr(self, "rest_max", 12_000_000)
+        m = min(n, self.lod_max) if self._interacting else min(n, rest_max)
+        t0 = time.perf_counter()
         sx, sy, zc = self.project(self.P[:m])
         ok = zc > 0.05
         if not ok.all():
@@ -152,6 +261,12 @@ class CloudView3D(QtWidgets.QWidget):
                                dval=zc.astype(np.float32))
         if self.edl and not self._interacting:
             buf = render.eye_dome(buf, depth, self.edl_strength)
+        dt = max(time.perf_counter() - t0, 1e-3)
+        if m > 200_000:
+            rate = m / dt
+            self.lod_max = int(min(8e6, max(250_000, rate * 0.033)))
+            self.rest_max = int(min(40e6, max(2_000_000, rate * 0.3)))
+        self.shown = m
         self._buf = np.ascontiguousarray(buf)
         self._depth = depth.reshape(H, W)
         self._img = QtGui.QImage(self._buf.data, W, H, 4 * W, QtGui.QImage.Format.Format_ARGB32)
@@ -180,6 +295,7 @@ class CloudView3D(QtWidgets.QWidget):
                 if zc[i] > 0.05 and zc[i + 1] > 0.05:
                     p.drawLine(QtCore.QPointF(sx[i], sy[i]), QtCore.QPointF(sx[i + 1], sy[i + 1]))
         self._draw_axes(p)
+        self._draw_nav(p)
         if self._poly:
             p.setPen(QtGui.QPen(QtGui.QColor(theme.ACCENT), 1.5, Qt.PenStyle.DashLine))
             p.setBrush(QtGui.QColor(0, 229, 170, 30))
@@ -189,11 +305,19 @@ class CloudView3D(QtWidgets.QWidget):
             else:
                 p.drawPolygon(QtGui.QPolygonF(pts))
         p.setFont(theme.ui_font(12))
-        txt = self.title + ("  ortho" if self.ortho else "") + ("  Z x%.1f" % self.zscale if self.zscale != 1 else "")
-        w = p.fontMetrics().horizontalAdvance(txt) + 14
-        p.fillRect(QtCore.QRectF(6, 6, w, 20), QtGui.QColor(14, 26, 24, 210))
-        p.setPen(QtGui.QColor(theme.ACCENT))
-        p.drawText(QtCore.QRectF(6, 6, w, 20), Qt.AlignmentFlag.AlignCenter, txt)
+        thin = getattr(self, "shown", len(self.P)) < len(self.P)
+        txt = self.title + ("  ortho" if self.ortho else "") + \
+            ("  showing %d %%" % (100 * self.shown / max(1, len(self.P))) if thin else "") + ("  Z x%.1f" % self.zscale if self.zscale != 1 else "")
+        txt = txt.strip()
+        if txt:
+            w = p.fontMetrics().horizontalAdvance(txt) + 14
+            x0 = self.NAV + 16
+            p.fillRect(QtCore.QRectF(x0, 6, w, 20), QtGui.QColor(14, 26, 24, 210))
+            p.setPen(QtGui.QColor(theme.ACCENT))
+            p.drawText(QtCore.QRectF(x0, 6, w, 20), Qt.AlignmentFlag.AlignCenter, txt)
+        if getattr(self, "legend", None):
+            from . import legend
+            legend.paint(p, self, self.legend, x=10, y=self.NAV + 16)
         p.end()
 
     def _draw_axes(self, p):
@@ -237,6 +361,14 @@ class CloudView3D(QtWidgets.QWidget):
     def mousePressEvent(self, e):
         pos = evpos(e)
         self.setFocus()
+        if e.button() == Qt.MouseButton.LeftButton:
+            k = self._nav_hit(pos)
+            if k:
+                self._nav_hot = k
+                self.nav_rotate(k)
+                self._nav_timer.setProperty("held", True)
+                self._nav_timer.start(350)          # hold to keep turning
+                return
         sh, ct, _ = mods(e)
         if e.button() == Qt.MouseButton.RightButton:
             self._poly = [(pos.x(), pos.y())]
@@ -249,6 +381,15 @@ class CloudView3D(QtWidgets.QWidget):
     def mouseMoveEvent(self, e):
         pos = evpos(e)
         if not self._drag:
+            hot = self._nav_hit(pos)
+            if hot != self._nav_hot and not self._nav_timer.isActive():
+                self._nav_hot = hot
+                self.setCursor(Qt.CursorShape.PointingHandCursor if hot else Qt.CursorShape.ArrowCursor)
+                self.setToolTip({"up": "Turn the cloud up (hold to keep turning)", "down": "Turn the cloud down",
+                                 "left": "Turn the cloud left", "right": "Turn the cloud right",
+                                 "cw": "Turn the picture clockwise", "ccw": "Turn the picture anticlockwise"}
+                                .get(hot, ""))
+                self.update()
             return
         k = self._drag[0]
         if k == "orbit":
@@ -275,6 +416,10 @@ class CloudView3D(QtWidgets.QWidget):
             self.update()
 
     def mouseReleaseEvent(self, e):
+        if self._nav_timer.isActive():
+            self._nav_timer.stop()
+            self._nav_timer.setProperty("held", False)
+            return
         if not self._drag:
             return
         k = self._drag[0]

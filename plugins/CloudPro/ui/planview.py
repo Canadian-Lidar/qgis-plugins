@@ -93,9 +93,36 @@ class PlanView(CloudView2D):
             self.zoom_project()
 
     # ------------------------------------------------------------------ grid underlay
+    CELL_CHOICES = (0.5, 1.0, 2.0, 2.5, 5.0, 10.0, 12.5, 25.0)
+
+    def set_cell(self, cell):
+        """Display cell of the project grid: the stored 0.5 m grid aggregated by a whole factor."""
+        cell = min(self.CELL_CHOICES, key=lambda c: abs(c - cell))
+        if cell != getattr(self, "cell", GRID_CELL):
+            self.cell = cell
+            self.invalidate()
+        return cell
+
+    def _aggregate(self, g):
+        f = int(round(getattr(self, "cell", GRID_CELL) / GRID_CELL))
+        if f <= 1 or "count" not in g:
+            return g
+        n = g["count"].shape[0] // f
+
+        def blk(a):
+            return a[:n * f, :n * f].reshape(n, f, n, f)
+        cnt = blk(g["count"].astype(float)).sum(axis=(1, 3))
+        with np.errstate(invalid="ignore", divide="ignore"):
+            out = {"count": cnt, "rej": blk(g["rej"].astype(float)).sum(axis=(1, 3)),
+                   "zmean": np.nansum(blk(np.nan_to_num(g["zmean"]) * g["count"]), axis=(1, 3)) / cnt,
+                   "imean": np.nansum(blk(np.nan_to_num(g["imean"]) * g["count"]), axis=(1, 3)) / cnt,
+                   "zmax": blk(g["zmax"]).max(axis=(1, 3)), "zmin": blk(g["zmin"]).min(axis=(1, 3))}
+        return out
+
     def _attr_grid(self, g):
         if "count" not in g:
             return None
+        g = self._aggregate(g)
         a = self.attr
         with np.errstate(invalid="ignore"):
             if a == "Mean height":
@@ -142,7 +169,7 @@ class PlanView(CloudView2D):
         rgb = render.scalar_colours(np.nan_to_num(v, nan=lo), lo, hi, self.lut).astype(np.float32)
         if self.shade and "height" in self.attr.lower():
             z = np.where(ok, v, np.nanmean(v) if ok.any() else 0)
-            gy, gx = np.gradient(z, GRID_CELL)
+            gy, gx = np.gradient(z, getattr(self, "cell", GRID_CELL))
             az, alt = math.radians(315), math.radians(45)
             slope = np.arctan(np.hypot(gx, gy))
             aspect = np.arctan2(-gx, gy)

@@ -144,20 +144,34 @@ class IconButton(QtWidgets.QAbstractButton):
     def _update_tip(self):
         o = self.options[self.index]
         names = "  ·  ".join(x[2].split(":")[0] for x in self.options)
-        self.setToolTip("%s\n\nClick again to switch: %s\nRight click: choose" % (o[2], names))
+        self.setToolTip("%s\n\nClick again to switch: %s\nCorner arrow or right click: choose from a list"
+                        % (o[2], names))
+
+    def corner_rect(self):
+        """The bottom-right corner that opens the option list (a third of the button, at least 12 px)."""
+        c = max(12, self.height() // 3 + 2)
+        return QtCore.QRect(self.width() - c, self.height() - c, c, c)
+
+    def show_options(self, pos=None):
+        m = QtWidgets.QMenu(self)
+        for i, o in enumerate(self.options):
+            a = m.addAction(icons.icon(o[1], 18, o[3] if len(o) > 3 and o[3] else theme.TEXT), o[2].split(":")[0])
+            a.setCheckable(True)
+            a.setChecked(i == self.index)
+            a.triggered.connect(lambda _=False, i=i: self._pick(i))
+        theme.dark_menu(m)
+        pos = pos or self.mapToGlobal(self.rect().bottomLeft())
+        m.exec(pos) if hasattr(m, "exec") else m.exec_(pos)
 
     def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.RightButton and self.options:
-            m = QtWidgets.QMenu(self)
-            for i, o in enumerate(self.options):
-                a = m.addAction(icons.icon(o[1], 18, o[3] if len(o) > 3 and o[3] else theme.TEXT), o[2].split(":")[0])
-                a.setCheckable(True)
-                a.setChecked(i == self.index)
-                a.triggered.connect(lambda _=False, i=i: self._pick(i))
-            theme.dark_menu(m)
-            m.exec(e.globalPosition().toPoint() if hasattr(e, "globalPosition") else e.globalPos()) \
-                if hasattr(m, "exec") else m.exec_(e.globalPos())
-            return
+        if self.options and len(self.options) > 1:
+            pt = e.position().toPoint() if hasattr(e, "position") else e.pos()
+            if e.button() == Qt.MouseButton.RightButton:
+                self.show_options(e.globalPosition().toPoint() if hasattr(e, "globalPosition") else e.globalPos())
+                return
+            if e.button() == Qt.MouseButton.LeftButton and self.corner_rect().contains(pt):
+                self.show_options()
+                return
         super().mousePressEvent(e)
 
     def _pick(self, i):
@@ -190,7 +204,8 @@ class IconButton(QtWidgets.QAbstractButton):
             p.setPen(QtGui.QPen(QtGui.QColor(theme.DIM), 1))
         else:
             p.setBrush(Qt.BrushStyle.NoBrush)
-            p.setPen(Qt.PenStyle.NoPen)
+            # text buttons (MENU) keep a thin outline so they read as buttons
+            p.setPen(QtGui.QPen(QtGui.QColor(theme.BORDER), 1) if self.text_label else Qt.PenStyle.NoPen)
         p.drawRoundedRect(r, 3, 3)
         name = self.name
         col = QtGui.QColor(theme.BRIGHT if (on or self.hover) else theme.TEXT)
@@ -215,8 +230,10 @@ class IconButton(QtWidgets.QAbstractButton):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QtGui.QColor(theme.DIM if not on else theme.ACCENT))
             w = self.width()
-            p.drawPolygon(QtGui.QPolygonF([QtCore.QPointF(w - 3, h - 9), QtCore.QPointF(w - 3, h - 3),
-                                           QtCore.QPointF(w - 9, h - 3)]))
+            if self.hover:
+                p.setBrush(QtGui.QColor(theme.BRIGHT))
+            p.drawPolygon(QtGui.QPolygonF([QtCore.QPointF(w - 2, h - 11), QtCore.QPointF(w - 2, h - 2),
+                                           QtCore.QPointF(w - 11, h - 2)]))
         p.end()
 
 

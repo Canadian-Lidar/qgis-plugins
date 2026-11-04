@@ -28,6 +28,7 @@ class CloudProPlugin:
         self.maptool = None
         self.core = None
         self._why = ""
+        self.help_action = None
 
     def initGui(self):  # noqa: N802
         a = QAction(QtGui.QIcon(os.path.join(HERE, "icons", "cloudpro.svg")), "CloudPro", self.iface.mainWindow())
@@ -36,6 +37,14 @@ class CloudProPlugin:
         a.triggered.connect(self.show)
         self.actions = [a]
         self.iface.addToolBarIcon(a)
+        # QGIS Help > Plugins > CloudPro user guide
+        self.help_action = QAction("CloudPro user guide", self.iface.mainWindow())
+        self.help_action.setObjectName("mCloudProGuideAction")
+        self.help_action.triggered.connect(self.open_guide)
+        try:
+            self.iface.pluginHelpMenu().addAction(self.help_action)
+        except Exception:       # noqa: BLE001
+            pass
         self.core, self._why = _core()
         if self.core is None:
             for x in self.actions:
@@ -46,7 +55,18 @@ class CloudProPlugin:
             menu.add(self.iface, x)
         registry.register("cloudpro", self.open_project)
 
+    def open_guide(self):
+        from . import guide
+        return guide.open_guide(self.win if self.win is not None else self.iface.mainWindow())
+
     def unload(self):
+        if getattr(self, "help_action", None) is not None:
+            try:
+                self.iface.pluginHelpMenu().removeAction(self.help_action)
+            except Exception:       # noqa: BLE001
+                pass
+            self.help_action.deleteLater()
+            self.help_action = None
         if self.actions:
             self.iface.removeToolBarIcon(self.actions[0])
             for x in self.actions:
