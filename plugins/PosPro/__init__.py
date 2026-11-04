@@ -1,6 +1,6 @@
 """PosPro: GNSS/INS post-processing for mobile mapping (QGIS plugin).
 Needs the DCS Core plugin (shared project, look and menu)."""
-DCS_API = 1
+DCS_API = 2
 
 
 def classFactory(iface):  # noqa: N802 - QGIS API

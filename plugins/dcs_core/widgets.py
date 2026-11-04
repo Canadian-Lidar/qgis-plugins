@@ -11,12 +11,15 @@ from qgis.PyQt.QtWidgets import (QAbstractButton, QFrame, QGridLayout, QLabel, Q
 from . import theme
 
 
-def _af(f):
+def align_flags(f):
     """Alignment flags as int for QPainter.drawText (PyQt5 and PyQt6)."""
     try:
         return int(f)
     except TypeError:
         return f.value
+
+
+_af = align_flags          # old private name, kept for plugins built on DCS Core 1.0
 
 
 ACCENT = QColor(theme.ACCENT)

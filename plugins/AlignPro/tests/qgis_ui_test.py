@@ -87,8 +87,8 @@ other = QAction("PosPro", iface.mw)
 cl_menu.add(iface, other)
 print("MENU:", menu_path(iface.menu))
 assert registry.has("alignpro"), "AlignPro not registered with DCS Core"
-assert menu_path(iface.menu) == ["Canadian Lidar > CLAM TidalCal", "Canadian Lidar > Data Collection Systems > AlignPro",
-                                 "Canadian Lidar > Data Collection Systems > PosPro"], menu_path(iface.menu)
+assert menu_path(iface.menu) == ["Canadian Lidar > CLAM TidalCal", "Canadian Lidar > Data Systems > AlignPro",
+                                 "Canadian Lidar > Data Systems > PosPro"], menu_path(iface.menu)
 plug.toggle(True)
 dock = plug.dock
 iface.mw.show()

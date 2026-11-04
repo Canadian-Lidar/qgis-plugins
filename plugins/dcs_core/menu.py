@@ -1,4 +1,7 @@
-"""The shared Plugins > Canadian Lidar > Data Collection Systems menu.
+"""The shared Plugins > TOP > GROUP menu (Canadian Lidar > Data Systems).
+
+Plugins read TOP and GROUP for any title text that names the menu, so a
+rename here reaches every plugin.
 
 Every DCS plugin calls add(iface, action) / remove(iface, action). A menu is
 found by either of the object names the earlier helpers used (CloudPro's

@@ -9,19 +9,14 @@ True heading = platform heading - wander angle.  UTC = GPS week start + SOW
 """
 import datetime as _dt
 import os
-import re
 
 import numpy as np
+from dcs_core import sbet
 
-SBET = np.dtype([("t", "<f8"), ("lat", "<f8"), ("lon", "<f8"), ("h", "<f8"),
-                 ("vx", "<f8"), ("vy", "<f8"), ("vz", "<f8"),
-                 ("roll", "<f8"), ("pitch", "<f8"), ("heading", "<f8"), ("wander", "<f8"),
-                 ("ax", "<f8"), ("ay", "<f8"), ("az", "<f8"), ("wx", "<f8"), ("wy", "<f8"), ("wz", "<f8")])
-SMRMSG = np.dtype([("t", "<f8"), ("sd_n", "<f8"), ("sd_e", "<f8"), ("sd_d", "<f8"),
-                   ("sd_vn", "<f8"), ("sd_ve", "<f8"), ("sd_vd", "<f8"),
-                   ("sd_roll", "<f8"), ("sd_pitch", "<f8"), ("sd_heading", "<f8")])
+
 GPS_EPOCH = _dt.datetime(1980, 1, 6, tzinfo=_dt.timezone.utc)
-LEAP = 18
+LEAP = sbet.LEAP
+SBET, SMRMSG = sbet.SBET, sbet.SMRMSG
 
 
 class Trajectory:
@@ -76,59 +71,35 @@ class Trajectory:
 
 def gps_week_start_from_name(path):
     """sbet_YYYYMMDD.out -> UTC Unix time of that GPS week's start (Sunday 00:00 GPS)."""
-    m = re.search(r"(\d{4})(\d{2})(\d{2})", os.path.basename(path))
-    if not m:
-        return None
-    d = _dt.datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=_dt.timezone.utc)
-    return week_start_for(d.timestamp())
+    d = sbet.date_from_name(path)
+    return sbet.week_start_for_date(d) if d else None
 
 
 def week_start_for(unix_t):
     """GPS-week start (as UTC Unix seconds of the GPS-time instant, i.e. the
     value to which SOW is added before removing leap seconds)."""
-    gps = unix_t - GPS_EPOCH.timestamp() + LEAP
-    week = int(gps // 604800)
-    return GPS_EPOCH.timestamp() + week * 604800
+    return float(sbet.week_start_for(unix_t, LEAP))
 
 
 def read_sbet(path, week_start=None, leap=LEAP, smrmsg=None):
-    a = np.fromfile(path, SBET)
-    if len(a) == 0:
-        raise ValueError("%s: empty SBET" % path)
-    if week_start is None:
-        week_start = gps_week_start_from_name(path)
-    if week_start is None:
-        raise ValueError("SBET start date unknown: name it sbet_YYYYMMDD.out or give the date")
-    t = week_start + a["t"] - leap
-    # week rollover inside the file
-    jumps = np.nonzero(np.diff(a["t"]) < -302400)[0]
-    for j in jumps:
-        t[j + 1:] += 604800
+    """SBET read by dcs_core.sbet (week from week_start, else the file name; week rollover handled),
+    with the SMRMSG (given, or beside it) for the horizontal and vertical SD."""
+    t, a, ws = sbet.read(path, leap, start=week_start)
     sd_h = sd_v = None
     if smrmsg is None:
-        cand = re.sub(r"sbet", "smrmsg", path, flags=re.I)
-        if cand != path and os.path.exists(cand):
-            smrmsg = cand
+        smrmsg = sbet.smrmsg_path(path)
     if smrmsg and os.path.exists(smrmsg):
-        m = np.fromfile(smrmsg, SMRMSG)
+        tm, m = sbet.read_smrmsg(smrmsg, ws, leap)
         if len(m):
-            tm = week_start + m["t"] - leap
             sd_h = np.interp(t, tm, np.hypot(m["sd_n"], m["sd_e"]))
             sd_v = np.interp(t, tm, m["sd_d"])
-    return Trajectory(t, a["lat"], a["lon"], a["h"], a["roll"], a["pitch"], a["heading"] - a["wander"],
+    return Trajectory(t, a["lat"], a["lon"], a["h"], a["roll"], a["pitch"], sbet.true_heading(a),
                       sd_h, sd_v, source="SBET " + os.path.basename(path))
 
 
 def write_sbet(path, traj, week_start=None, leap=LEAP):
     """Write a Trajectory as SBET (used by the simulator and for exports)."""
-    if week_start is None:
-        week_start = week_start_for(traj.t[0])
-    a = np.zeros(len(traj), SBET)
-    a["t"] = traj.t - week_start + leap
-    a["lat"], a["lon"], a["h"] = traj.lat, traj.lon, traj.h
-    a["roll"], a["pitch"] = traj.roll, traj.pitch
-    a["heading"] = np.mod(traj.heading + np.pi, 2 * np.pi) - np.pi
-    a.tofile(path)
+    sbet.write(path, traj.t, traj.lat, traj.lon, traj.h, traj.roll, traj.pitch, traj.heading, leap, week_start)
 
 
 def from_nav_states(states, t):

@@ -4,10 +4,10 @@ qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 supportsQt6=True
 description=Lidar boresight calibration (patch test) for the Canadian Lidar mobile mapper: stage 02 of the Data Collection Systems chain (PosPro, AlignPro, CloudPro).
-about=AlignPro calibrates the Lidar mounting angles of the mobile mapper from its .clraw captures. It opens the job's shared processing project, uses the trajectory PosPro published, pairs the passes, finds planar surfaces seen by several passes and solves roll, pitch and heading with a point-to-plane adjustment; leaving each line out in turn gives the SDEV. A Data View shows plan, profile and section of the points live while roll, pitch, heading, lever arm and latency are adjusted by hand. The applied values are published for CloudPro (alignment.json) and given in the mapper's mounting convention, ready for Settings > Hardware > Survey sensor. Quality control, sweeps, PDF and text reports and calibration history. Needs the DCS Core plugin. Menu: Plugins > Canadian Lidar > Data Collection Systems.
-version=1.1.3
+about=AlignPro calibrates the Lidar mounting angles of the mobile mapper from its .clraw captures. It opens the job's shared processing project, uses the trajectory PosPro published, pairs the passes, finds planar surfaces seen by several passes and solves roll, pitch and heading with a point-to-plane adjustment; leaving each line out in turn gives the SDEV. A Data View shows plan, profile and section of the points live while roll, pitch, heading, lever arm and latency are adjusted by hand. The applied values are published for CloudPro (alignment.json) and given in the mapper's mounting convention, ready for Settings > Hardware > Survey sensor. Quality control, sweeps, PDF and text reports and calibration history. Needs the DCS Core plugin. Menu: Plugins > Canadian Lidar > Data Systems.
+version=1.2.0
 author=Canadian Lidar
-email=
+email=seantobrien@gmail.com
 category=Plugins
 tags=lidar,boresight,patch test,calibration,mobile mapping,clraw,dcs
 icon=icons/alignpro.svg
@@ -15,7 +15,8 @@ experimental=False
 deprecated=False
 hasProcessingProvider=no
 plugin_dependencies=DCS Core
-changelog=1.1.3 User guide in the plugin (docs/AlignPro_User_Guide_1.1.3.pdf), opened from the ? button at the top right of the panel, the project box menu (User guide (this version)) and Help > Plugins > AlignPro user guide. The guide matching the installed version opens; the newest one in docs/ otherwise.
+changelog=1.2.0 Needs DCS Core 1.1.0: .clraw reading, Lidar and INS packet decoding, SBET and LAS now come from DCS Core, shared with CloudPro. Channels in a .clraw file are found by topic. Without a calibration in the capture, the measured default table is used instead of a nominal one. SBET reading handles a GPS week rollover inside the file. The panel header shows the menu name from DCS Core.
+    1.1.3 User guide in the plugin (docs/AlignPro_User_Guide_1.1.3.pdf), opened from the ? button at the top right of the panel, the project box menu (User guide (this version)) and Help > Plugins > AlignPro user guide. The guide matching the installed version opens; the newest one in docs/ otherwise.
     1.1.2 Panels no longer dock when moved: dragging the AlignPro panel or the Data View only moves it. Docking happens only on request: right-click the panel title for Dock right / left / bottom / top, Float, Float as a window, Maximise, Close (the window button keeps its options). Double-click floats a docked panel and never re-docks a floating one; the title's float button opens the same menu on a floating panel.
     1.1.1 Fixed QGIS 4 closing with an access violation when the AlignPro panel or the Data View had been floated as a window or maximised: panels are released safely on unload and get their normal panel flags back before docking again; timers, running jobs and map tools are stopped on unload.
     1.1.0 Part of the DCS chain: needs the DCS Core plugin. Opens the job's shared project (Processing/<Name>/<Name>.dcsproj) and works in 02_AlignPro (work/, out/, log/); uses the captures recorded in the project and PosPro's published trajectory (trajectory.json) instead of choosing an SBET; starts from the Lidar mounting in the shared hardware record; publishes alignment.json for CloudPro when values are applied (stage lock while running; out of date when PosPro is re-run or the mounting is edited); chain bar PosPro / AlignPro / CloudPro; relocate a moved job folder; save the QGIS project in the project folder; older .alignpro.json projects still open. Look, menus, menu entry and title bars from DCS Core. "Lidar" spelling throughout.

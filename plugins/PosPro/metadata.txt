@@ -3,9 +3,9 @@ name=PosPro GNSS/INS
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Post-processing of GNSS/INS trajectories for mobile mapping: tightly and loosely coupled (both antennas), PPK and PPP, base-station PPP and NRCan CSRS-PPP, antenna lever-arm solver, SBET/SMRMSG and text export.
-version=1.3.1
+version=1.3.2
 author=Canadian Lidar
-email=
+email=seantobrien@gmail.com
 about=PosPro processes Advanced Navigation Certus logs (.anpp) and mapper captures (.clraw) directly. It extracts the raw IMU and raw GNSS observations, downloads ephemeris, precise products and base-station data, computes base positions by PPP or CSRS-PPP, and runs a tightly or loosely coupled GNSS/INS filter forward and backward with a combined (smoothed) result. Quality is shown on the map and in plots, and the trajectory is exported as SBET/SMRMSG or text. A calibration step solves the antenna lever arms from the drive. Styled like the Mobile Mapper dashboard. Processing runs in a separate engine process (RTKLIB-EX inside), so a fault never closes QGIS.
 tracker=
 repository=
@@ -16,7 +16,8 @@ deprecated=False
 hasProcessingProvider=no
 plugin_dependencies=DCS Core
 tags=gnss,ins,imu,ppk,ppp,trajectory,mobile mapping,lidar,sbet,rtklib,advanced navigation,certus
-changelog=1.3.1 The user guide for this version is installed with the plugin: ? button on the panel, project menu, Help > Plugins > PosPro user guide.
+changelog=1.3.2 Needs DCS Core 1.1.0. The panel header shows the menu name from DCS Core; plot text alignment uses DCS Core's align_flags.
+    1.3.1 The user guide for this version is installed with the plugin: ? button on the panel, project menu, Help > Plugins > PosPro user guide.
     1.3.0 Trajectory Review step (between Quality and Calibration): find anomalies against your limits (solution type, horizontal/vertical sigma, forward/backward separation, IMU-only time, heading sigma, widened before/after), see them on the map and in the plots, select parts by rectangle, polygon, lasso or plot view, and decide: exclude GNSS and process again, mark poor (sigma floor carried into SMRMSG and the handover), accept, or interpolate (GNSS-only and real-time trajectories); undo, reset to original, edit log. New real-time mode (the Certus solution, no base station). GPX export.
     1.2.1 "Lidar" spelling throughout.
     1.2.0 Part of the DCS chain: needs the DCS Core plugin. New projects are created in the job folder (Processing/<Name>/, PosPro in 01_PosPro) and found captures are offered as rover files; the raw data is never changed. Processing publishes the trajectory for AlignPro and CloudPro (trajectory.json + SBET/SMRMSG at the IMU centre); a chain bar shows PosPro/AlignPro/CloudPro status and out-of-date results; relocate a moved job folder; save the QGIS project in the project folder. Older .pospro.json projects still open.

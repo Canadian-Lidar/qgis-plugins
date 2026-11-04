@@ -3,10 +3,10 @@ name=DCS Core
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Shared base of the Canadian Lidar Data Collection Systems plugins (PosPro, AlignPro, CloudPro): one project per job, handover files between stages, stale-result detection, shared menu and look. Menu: Plugins > CLAM > Data Systems.
-version=1.0.1
+version=1.1.0
 author=Canadian Lidar
 email=seantobrien@gmail.com
-about=Install this before PosPro, AlignPro and CloudPro. It keeps one project per job in Processing/<Name>/ beside the captures, records what each stage published and what it was built from, flags results that are out of date when an earlier stage is re-run, and gives every plugin the same menu, look and chain bar. It has no window of its own.
+about=Install this before PosPro, AlignPro and CloudPro. It keeps one project per job in Processing/<Name>/ beside the captures, records what each stage published and what it was built from, flags results that are out of date when an earlier stage is re-run, and gives every plugin the same menu, look, chain bar and readers for the mapper's .clraw captures, SBET trajectories and LAS. It has no window of its own.
 tracker=
 repository=
 category=Analysis
@@ -15,5 +15,6 @@ experimental=False
 deprecated=False
 hasProcessingProvider=no
 tags=canadian lidar,mobile mapping,dcs
-changelog=1.0.1 "Lidar" spelling throughout.
+changelog=1.1.0 Shared readers for every plugin (API 2): .clraw recordings, Lidar and INS packet decoding, SBET/SMRMSG and LAS, with the Zstandard decoder bundled, so AlignPro and CloudPro use one copy. SBET reading handles a GPS week rollover inside the file. A missing Zstandard decoder is reported instead of every chunk counting as damaged. Plugins can read the menu titles (menu.TOP, menu.GROUP) and use widgets.align_flags.
+    1.0.1 "Lidar" spelling throughout.
     1.0.0 First release: shared project (.dcsproj), handover files, staleness, locks, relocation, menu, theme (from PosPro 1.1.4), chain bar.

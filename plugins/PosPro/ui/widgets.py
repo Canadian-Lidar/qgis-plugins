@@ -8,7 +8,7 @@ from qgis.PyQt.QtGui import QColor, QPainter, QPen, QPolygonF
 from qgis.PyQt.QtWidgets import QWidget
 
 from dcs_core.widgets import (ACCENT, BAD, KV, MUTED, OK, STATE_LEVEL, WARN, Card, DockTitle, Logo,  # noqa: F401
-                              Section, StepButton, Toast, _af)
+                              Section, StepButton, Toast, align_flags as _af)
 
 from . import theme
 

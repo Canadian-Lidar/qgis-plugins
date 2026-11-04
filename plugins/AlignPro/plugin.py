@@ -1,4 +1,4 @@
-"""AlignPro QGIS plugin entry: Plugins > Canadian Lidar > Data Collection Systems > AlignPro.
+"""AlignPro QGIS plugin entry: Plugins > Canadian Lidar > Data Systems > AlignPro.
 
 AlignPro is stage 02 of the DCS chain and needs the DCS Core plugin (shared project, handover
 files, menu and look). Without it a message bar says so instead of failing."""
@@ -13,7 +13,7 @@ except ImportError:          # QGIS 3 / Qt5
     from qgis.PyQt.QtWidgets import QAction
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CORE_API = 1
+CORE_API = 2
 
 
 def _core():

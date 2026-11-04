@@ -16,12 +16,7 @@ from ..core import geo
 from . import theme
 
 
-def _af(f):
-    """Alignment flags as int for QPainter.drawText (PyQt5 and PyQt6)."""
-    try:
-        return int(f)
-    except TypeError:
-        return f.value
+from dcs_core.widgets import align_flags as _af  # noqa: E402
 
 AXIS = QColor("#5d857c")
 GRID = QColor(29, 51, 48, 200)

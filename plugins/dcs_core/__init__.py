@@ -6,12 +6,17 @@ plugins (PosPro, AlignPro, CloudPro).
   files     atomic writes, fingerprints, portable paths
   locks     one writer per stage
   timeutil  GPS / UTC
-  menu      Plugins > Canadian Lidar > Data Collection Systems
+  clraw     the mapper's .clraw recordings (files, survey lines, events)
+  hesai     Lidar point packets -> points;  anpp  INS packets -> navigation states
+  sbet      SBET / SMRMSG trajectories;  las  LAS 1.4 and 1.2 writers, reader
+  mcap, zstd  the container and its decompression (zstandard bundled in ext/)
+  menu      Plugins > Canadian Lidar > Data Systems (menu.TOP, menu.GROUP)
   theme, widgets, stepbar, dialogs, registry   the shared look and UI
 
 The plugins import it as `dcs_core`; it has no window of its own."""
-__version__ = "1.0.1"
-API = 1
+__version__ = "1.1.0"
+# API 2 (1.1.0): adds clraw, hesai, anpp, sbet, las, mcap, zstd and widgets.align_flags.
+API = 2
 
 
 def classFactory(iface):  # noqa: N802 - QGIS API

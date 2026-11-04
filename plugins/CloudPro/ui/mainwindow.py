@@ -51,7 +51,8 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__(parent)
         self.iface = iface
         self.map_pick = None
-        self.setWindowTitle("CloudPro  -  Canadian Lidar  -  Data Collection Systems")
+        from dcs_core import menu as _dcs_menu
+        self.setWindowTitle("CloudPro  -  %s  -  %s" % (_dcs_menu.TOP, _dcs_menu.GROUP))
         self.resize(1680, 1000)
         self.project = None
         self.edits = None

@@ -2168,7 +2168,8 @@ class PosProDock(QDockWidget):
         head.addWidget(Logo(42))
         brand = QVBoxLayout()
         brand.setSpacing(1)
-        t1 = QLabel("Data Collection Systems")
+        from dcs_core import menu as _dcs_menu
+        t1 = QLabel(_dcs_menu.GROUP)
         t1.setObjectName("ppBrandTitle")
         t2 = QLabel("PosPro \u00b7 Positioning & Motion Post-Processing")
         t2.setObjectName("ppBrandSub")
