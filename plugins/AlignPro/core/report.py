@@ -32,7 +32,7 @@ def ascii_report(project, header=True):
                 L.append("%-13s: %s" % (k.capitalize(), c["report"][k]))
     t0 = min((l.window[0] for l in project.lines), default=None)
     if t0:
-        L.append("Data date    : %s UTC" % dt.datetime.utcfromtimestamp(t0).strftime("%Y-%m-%d %H:%M:%S"))
+        L.append("Data date    : %s UTC" % dt.datetime.fromtimestamp(t0, dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
     L.append("Trajectory   : %s" % (project.traj.source if project.traj else c["trajectory"].get("type")))
     ti = getattr(project, "traj_info", {}) or {}
     if ti.get("handover_id"):

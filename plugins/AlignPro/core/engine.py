@@ -1,6 +1,7 @@
 """AlignPro calibration engine: passes, georeferencing, pairs, planar patches, boresight solve,
 combinations, analyze sweeps, grids and slices. Pure numpy; no QGIS imports."""
 import math
+import warnings
 
 import numpy as np
 
@@ -575,7 +576,8 @@ def grid_stats(lines, cell, max_pts=300000, rng=None):
         k = np.bincount(c[mm], minlength=N)
         s = np.bincount(c[mm], x[mm, 2], N)
         lm[i] = np.where(k >= 3, s / np.maximum(k, 1), np.nan)
-    with np.errstate(all="ignore"):
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)       # cells seen by no line are all-NaN: expected
         sep = np.nanmax(lm, 0) - np.nanmin(lm, 0)
         nlines = np.sum(np.isfinite(lm), 0)
     sep[nlines < 2] = np.nan

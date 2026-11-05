@@ -212,7 +212,7 @@ class DataPage(Page):
             return
         t0 = min(l.window[0] for l in p.lines)
         t1 = max(l.window[1] for l in p.lines)
-        u = lambda t: dt.datetime.utcfromtimestamp(t).strftime("%Y-%m-%d %H:%M:%S")  # noqa: E731
+        u = lambda t: dt.datetime.fromtimestamp(t, dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")  # noqa: E731
         self.kv.set("Recording", "%s  to  %s UTC" % (u(t0), u(t1)[11:]))
         caps = len({l.info["capture"] for l in p.lines})
         self.kv.set("Lines", "%d passes from %d capture(s), %d used" % (len(p.lines), caps,
