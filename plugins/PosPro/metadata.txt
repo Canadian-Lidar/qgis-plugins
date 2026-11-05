@@ -11,11 +11,11 @@ tracker=
 repository=
 category=Analysis
 icon=icon.svg
-experimental=True
+experimental=False
 deprecated=False
 hasProcessingProvider=no
 plugin_dependencies=DCS Core
-tags=gnss,ins,imu,ppk,ppp,trajectory,mobile mapping,lidar,sbet,rtklib,advanced navigation,certus
+tags=gnss,ins,imu,ppk,ppp,trajectory,mobile mapping,lidar,sbet,rtklib,advanced navigation,certus,dcs
 changelog=1.5.1 Mapper 2.10 projects: a new project offers the navigation recordings (nav/, recommended: the whole time the project was open, one trajectory for every line) or the survey lines; files are read in recording order (old and new names mixed); a navigation recording's hardware record is completed from a survey line (vehicle, rear axle, coordinate system); captures are found deeper in the job folder. Needs DCS Core 1.4.0.
     1.5.0 The same header as the other DCS plugins: logo, plugin name as written, the workflow boxes beside it, the project box on the right, then the Window button and the user guide button. The window title is just the plugin name. Rewritten user guide with screenshots of this version. The vehicles are the mapper's (Van, Truck, Car, as in its Settings > Hardware) and set the wheel constraints (van and car 0.10 m/s, truck 0.15 m/s); the separate Motion constraints list (car/van, truck, rail, boat, other) is gone. Older projects keep what they processed with: boat and other keep the wheeled-vehicle constraint off (boat also zero-velocity updates), rail keeps 0.05 m/s. The vehicle's constraint value is now used (it was fixed at 0.10 m/s, so a truck now gets 0.15 m/s). Fixes: captures without raw IMU take their time span from the real-time solution (Data page, export file names, GPS week in trajectory.json); a real-time trajectory is published with the frame of the Certus RTK corrections and its measured rate, and the export note says so; the separation card shows – for single-pass results instead of nan; the Data step is not red in the real-time mode; the Export step turns done after an export; deciding on a window inside a decided window no longer removes the larger window's decision; Interpolate at the ends of the trajectory says why it cannot apply; engine warnings are reported once; the export folder button reads Browse. Needs DCS Core 1.3.0.
     1.4.0 Named just PosPro. The quality plots open in the same standard window. Opens in DCS Core's standard window: floating the first time, docked left, right, top or bottom only when you choose it from the Window menu (the header button or a right-click on the title bar); dragging never docks it. It comes back as you left it, also after QGIS restarts; Reset window returns to the default. Neutral graphite look, with lighter view backgrounds so points and lines stand out. Needs DCS Core 1.2.0.
