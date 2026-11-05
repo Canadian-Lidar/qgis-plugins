@@ -156,6 +156,9 @@ class AlignProDock(PluginWindow):
         content = QVBoxLayout()
         content.setContentsMargins(10, 4, 10, 4)
         content.addWidget(self.stack, 1)
+        from dcs_core.stepnav import StepNav
+        self.nav = StepNav(STEPS, self.goto_page, optional={"Analyze"}, stage="alignpro")
+        content.addWidget(self.nav)
         body.addLayout(content, 1)
         outer.addLayout(body, 1)
 
@@ -214,6 +217,7 @@ class AlignProDock(PluginWindow):
         if self.isVisible() and self.p is not None and self.p.dcs is not None and self.job is None:
             self.chain.refresh()
             self.pg_cal.refresh_publish()
+            self.update_nav()
 
     def show_dataview(self, how="open"):
         """open: where it was left (floating the first time); float, max, or dock (at the bottom)."""
@@ -252,6 +256,7 @@ class AlignProDock(PluginWindow):
         self.a_reset.setEnabled(loaded and not busy)
         self.b_view.setEnabled(loaded and not busy)
         self.dv.setEnabled(loaded and (not busy or getattr(self, "_fine_job", False)))
+        self.update_nav()
 
     def goto_page(self, k):
         self.stack.setCurrentIndex(k)
@@ -261,6 +266,7 @@ class AlignProDock(PluginWindow):
                 self.pages[k].refresh()
             except Exception as e:  # noqa: BLE001
                 log("page refresh: %s" % e)
+        self.update_nav()
 
     def update_steps(self):
         for pg, sb in zip(self.pages, self.step_buttons):
@@ -269,6 +275,52 @@ class AlignProDock(PluginWindow):
             except Exception:  # noqa: BLE001
                 st, sub = "todo", ""
             sb.set_state(st, sub)
+        self.update_nav()
+
+    def update_nav(self):
+        """Back / Next under the pages: is the current step done, what is next."""
+        if not hasattr(self, "nav"):
+            return
+        k = self.stack.currentIndex()
+        if self.p is None or k >= len(self.pages):
+            self.nav.setVisible(False)             # the welcome page: open or create a project first
+            return
+        self.nav.setVisible(True)
+        try:
+            st, sub = self.pages[k].state()
+        except Exception:           # noqa: BLE001
+            st, sub = "todo", ""
+        if self.job is not None:
+            st = "running"
+        todo = None
+        if k == 0 and not self.p.lines:
+            st, sub = "todo", sub or "add .clraw captures"
+            todo = "add the survey lines' .clraw (ADD FILES\u2026 or ADD FOLDER\u2026), then READ FILES"
+        elif k == 3:
+            todo = "the lines need more overlap: drive each line both ways (see the patch-test procedure)"
+        elif k == 4:
+            todo = "press AUTO CALIBRATE, then APPLY ADVISED to publish the result for CloudPro"
+        elif k == 5:
+            todo = "ANALYZE latency, lever arm and angles, or skip"
+        elif k == 6:
+            todo = "CREATE REPORT (PDF, ASCII), or skip"
+        if k == 4 and st == "warn" and "apply" in sub.lower():
+            sub = "press APPLY ADVISED (or PUBLISH THE APPLIED VALUES) for CloudPro"
+        self.nav.update(k, st, sub, todo=todo)
+        dcs = self.p.dcs
+        if dcs is None:
+            self.nav.set_continue("cloudpro", False, "This older stand-alone project is not part of a job.")
+            return
+        try:
+            pst, why = dcs.state("alignpro")
+        except Exception:           # noqa: BLE001
+            pst, why = "none", []
+        if pst == "done":
+            self.nav.set_continue("cloudpro", True, "", dcs.path)
+        elif pst == "stale":
+            self.nav.set_continue("cloudpro", False, "Out of date (%s): calibrate again and Apply." % "; ".join(why))
+        else:
+            self.nav.set_continue("cloudpro", False, "Apply the calibration (step 5: APPLY ADVISED) to publish it for CloudPro.")
 
     def _set_pname(self, name):
         self.header.set_project_name(name)

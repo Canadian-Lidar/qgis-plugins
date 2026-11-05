@@ -10,6 +10,10 @@
 When the header is narrower than WRAP_WIDTH (a docked window), the workflow boxes move to a
 second row under it so nothing is squeezed.
 """
+import configparser
+import os
+import sys
+
 from qgis.PyQt.QtCore import QRectF, Qt
 from qgis.PyQt.QtGui import QColor, QFont, QLinearGradient, QPainter, QPen
 from qgis.PyQt.QtWidgets import QHBoxLayout, QLabel, QMenu, QToolButton, QVBoxLayout, QWidget
@@ -23,13 +27,34 @@ WRAP_WIDTH = 1080
 CHAIN_WIDTH = 480          # the same in every plugin
 
 
+def plugin_version(path):
+    """The version in the metadata.txt of the plugin that holds path (a module file), or ""."""
+    d = os.path.dirname(os.path.abspath(path)) if path else ""
+    for _ in range(4):
+        md = os.path.join(d, "metadata.txt")
+        if os.path.isfile(md):
+            cp = configparser.ConfigParser(interpolation=None)
+            try:
+                cp.read(md, encoding="utf-8")
+                return cp.get("general", "version", fallback="").strip()
+            except (configparser.Error, OSError, UnicodeDecodeError):
+                return ""
+        up = os.path.dirname(d)
+        if not d or up == d:
+            break
+        d = up
+    return ""
+
+
 class PluginHeader(QWidget):
     """key: the plugin's stage key ("pospro", ...); name: its name as written; window: its
     dcs_core.window.PluginWindow (for the Window button); guide: called by the "?" button;
     window_extras: [(label, callable)] added to the Window menu."""
 
-    def __init__(self, key, name, window=None, guide=None, window_extras=(), parent=None):
+    def __init__(self, key, name, window=None, guide=None, window_extras=(), parent=None, version=None):
         super().__init__(parent)
+        if version is None:
+            version = plugin_version(sys._getframe(1).f_globals.get("__file__"))
         self.setObjectName("ppHeaderBar")
         self.key = key
         self.name = name
@@ -51,8 +76,18 @@ class PluginHeader(QWidget):
         f = self.name_label.font()
         f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 104)
         self.name_label.setFont(f)
+        self.version = version or ""
+        self.version_label = QLabel(("v" + self.version) if self.version else "")
+        self.version_label.setObjectName("ppBrandVersion")
+        self.version_label.setToolTip("%s version %s" % (name, self.version) if self.version else "")
+        self.version_label.setVisible(bool(self.version))
+        name_row = QHBoxLayout()
+        name_row.setSpacing(6)
+        name_row.addWidget(self.name_label)
+        name_row.addWidget(self.version_label, 0, Qt.AlignmentFlag.AlignBaseline)
+        name_row.addStretch(1)
         brand.addWidget(self.group_label)
-        brand.addWidget(self.name_label)
+        brand.addLayout(name_row)
         row.addLayout(brand)
         row.addSpacing(10)
         self.chain = StepBar(key)

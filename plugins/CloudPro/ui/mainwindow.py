@@ -171,6 +171,12 @@ class MainWindow(QtWidgets.QMainWindow):
         hl = QtWidgets.QVBoxLayout(host)
         hl.setContentsMargins(0, 0, 0, 0)
         hl.setSpacing(0)
+        from .workflow import WorkflowStrip
+        self.workflow = WorkflowStrip({"georef": self.georeference,
+                                       "clean": lambda: self.tabs.setCurrentWidget(self.filters),
+                                       "publish": self._publish_or_export})
+        self.workflow.hide()                    # shown when a project is open
+        hl.addWidget(self.workflow)
         hl.addWidget(self.outer, 1)
         hl.addWidget(self._status_strip())
         self.setCentralWidget(host)
@@ -684,6 +690,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_inputs.style().unpolish(self.lbl_inputs)
         self.lbl_inputs.style().polish(self.lbl_inputs)
         self.btn_update.setVisible(bool(why) and p.dcs is not None)
+        self.refresh_workflow()
+
+    def refresh_workflow(self):
+        """The guided strip under the header: Georeference, Clean & classify, Publish."""
+        p = self.project
+        if p is None or not hasattr(self, "workflow"):
+            return
+        from .workflow import states
+        hist = p.data.get("history", [])
+        n_edits = len(p.data.get("filter_runs", [])) + sum(1 for h in hist if str(h.get("text", "")).endswith(
+            "points)") and not str(h.get("text", "")).startswith(("Undo", "Redo")))
+        self.workflow.show_states(states(p, n_edits, self.workflow.visited_clean, chain.quick_state))
+        self.workflow.show()
+
+    def _publish_or_export(self):
+        if self.project is not None and self.project.dcs is None:
+            self.export()
+        else:
+            self.publish_dialog()
+        self.refresh_workflow()
 
     # ------------------------------------------------------------------ properties windows
     def show_properties(self):
@@ -1791,6 +1817,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for h in self.project.data.get("history", [])[-400:]:
             self.history.addItem("%s  %s" % (h["utc"], h["text"]))
         self.history.scrollToBottom()
+        self.refresh_workflow()
 
     # ================================================================== info
     def show_point(self, j):

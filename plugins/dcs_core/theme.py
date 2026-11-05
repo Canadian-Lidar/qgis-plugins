@@ -116,6 +116,7 @@ QWidget#ppHeader {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #
                     border-bottom: 1px solid {BORDER}; }}
 QLabel#ppBrandTitle {{ font-family: '{UI}'; font-size: 16px; font-weight: 700; color: #ffffff; }}
 QLabel#ppBrandSub {{ font-family: '{UI}'; font-size: 14px; font-weight: 700; color: {ACCENT}; }}
+QLabel#ppBrandVersion {{ font-family: '{MONO}'; font-size: 11px; font-weight: 400; color: {DIM}; }}
 QToolButton#ppProject {{ background: rgba(0,229,170,13); border: 1.5px solid {GREEN}; border-radius: 3px;
                          padding: 5px 14px; font-family: '{UI}'; font-size: 14px; font-weight: 700; color: {GREEN}; }}
 QToolButton#ppProject:hover {{ background: rgba(0,229,170,30); }}

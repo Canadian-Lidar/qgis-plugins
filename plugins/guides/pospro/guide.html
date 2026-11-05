@@ -65,6 +65,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <h2>What's new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>1.6.0</b></td><td>Guided steps: a <span class="ui">‹ Back</span> / <span class="ui">Next ›</span> bar under the pages says whether each step is done and what to press, and <span class="ui">Continue in AlignPro ›</span> on the last step once the trajectory is published (see <i>The PosPro window</i>). The version number is shown after the plugin name in the header. Fix (DCS Core 1.5.1): QGIS 4 on Windows no longer closes when you click in a floating window. Needs DCS Core 1.6.0.</td></tr>
 <tr><td><b>1.5.3</b></td><td>Fixes from the first real field test: a cycle slip on a signal that returns after a short dropout is caught (it could pull a fixed solution metres off); short losses of IMU data are bridged and the Data step reports how much is missing; the offset between the vehicle and the IMU's aligned frame is estimated while driving and reported; tightly coupled passes start from the fixed GNSS-only position. On the test drive: under 35&nbsp;% fixed before, 99.8&nbsp;% now. New: <a href="#rec">Recording settings</a>.</td></tr>
 <tr><td><b>1.5.2</b></td><td>Fix: no more "unclosed file" warnings in the QGIS log after processing.</td></tr>
 <tr><td><b>1.5.1</b></td><td>Mapper 2.10 projects: a new project offers the navigation recordings (recommended) or the survey lines; rover files are read in recording order; a navigation recording's hardware record is completed from a survey line. Needs DCS Core 1.4.0.</td></tr>
