@@ -129,6 +129,8 @@ static void index_epochs(const obs_t *obs, int **idx, int **cnt, double **t, int
     *n = k;
 }
 
+static void tc_free(tcctx_t *tc);
+
 tcctx_t *tc_open(const cfg_t *cfg, char *err, int errn)
 {
     tcctx_t *tc = calloc(1, sizeof(tcctx_t));
@@ -242,6 +244,12 @@ tcctx_t *tc_open(const cfg_t *cfg, char *err, int errn)
         tc->ei = malloc(sizeof(int) * tot); tc->en = malloc(sizeof(int) * tot);
         tc->rt = malloc(sizeof(double) * tot); tc->ev_rx = malloc(sizeof(int) * tot);
         tc->ne = tot;
+        if (!tc->ei || !tc->en || !tc->rt || !tc->ev_rx) {
+            for (r = 0; r < tc->nrx; r++) { free(ei[r]); free(en[r]); free(rt[r]); }
+            snprintf(err, errn, "out of memory indexing %d GNSS epochs", tot);
+            tc_free(tc);
+            return NULL;
+        }
         for (q = 0, r = 0; r < tc->nrx; r++) {
             for (i = 0; i < ne[r]; i++, q++) {
                 tc->ei[q] = ei[r][i]; tc->en[q] = en[r][i]; tc->rt[q] = rt[r][i]; tc->ev_rx[q] = r;
@@ -251,6 +259,11 @@ tcctx_t *tc_open(const cfg_t *cfg, char *err, int errn)
     }
     tc->et = malloc(sizeof(double) * tc->ne);
     tc->spp = calloc(tc->ne, sizeof(*tc->spp));
+    if (!tc->et || !tc->spp) {
+        snprintf(err, errn, "out of memory for %d GNSS epochs", tc->ne);
+        tc_free(tc);
+        return NULL;
+    }
 
     /* base arcs (slips from LLI, geometry-free jumps and gaps) */
     tc->barc = calloc((size_t)tc->bobs.n * MAXF, sizeof(int));
@@ -296,26 +309,48 @@ tcctx_t *tc_open(const cfg_t *cfg, char *err, int errn)
             if ((i & 1023) == 0) pp_progress(0.02 * i / tc->ne, "reading GNSS observations");
         }
     }
-    /* events in true-time order (a stable insertion sort: the two receivers
-     * are already in order each, so this is a merge) */
-    for (i = 1; i < tc->ne; i++) {
-        int e1 = tc->ei[i], n1 = tc->en[i], x1 = tc->ev_rx[i];
-        double r1 = tc->rt[i], t1v = tc->et[i], sp[7];
-        memcpy(sp, tc->spp[i], sizeof(sp));
-        j = i - 1;
-        while (j >= 0 && tc->et[j] > t1v) {
-            tc->ei[j + 1] = tc->ei[j]; tc->en[j + 1] = tc->en[j]; tc->ev_rx[j + 1] = tc->ev_rx[j];
-            tc->rt[j + 1] = tc->rt[j]; tc->et[j + 1] = tc->et[j];
-            memcpy(tc->spp[j + 1], tc->spp[j], sizeof(sp));
-            j--;
+    /* events in true-time order: a stable merge sort of an index (the same order the earlier insertion
+     * sort gave, but O(n log n): the receivers' events are appended one receiver after another, which made
+     * the insertion sort quadratic on dual-antenna jobs) */
+    if (tc->ne > 1) {
+        int *ix = malloc(sizeof(int) * tc->ne), *tmp = malloc(sizeof(int) * tc->ne);
+        int *ei2 = malloc(sizeof(int) * tc->ne), *en2 = malloc(sizeof(int) * tc->ne);
+        int *rx2 = malloc(sizeof(int) * tc->ne);
+        double *rt2 = malloc(sizeof(double) * tc->ne), *et2 = malloc(sizeof(double) * tc->ne);
+        double (*sp2)[7] = malloc(sizeof(*sp2) * tc->ne);
+        int w, lo, k;
+        if (!ix || !tmp || !ei2 || !en2 || !rx2 || !rt2 || !et2 || !sp2) {
+            free(ix); free(tmp); free(ei2); free(en2); free(rx2); free(rt2); free(et2); free(sp2);
+            snprintf(err, errn, "out of memory sorting %d GNSS epochs", tc->ne);
+            tc_free(tc);
+            return NULL;
         }
-        tc->ei[j + 1] = e1; tc->en[j + 1] = n1; tc->ev_rx[j + 1] = x1;
-        tc->rt[j + 1] = r1; tc->et[j + 1] = t1v; memcpy(tc->spp[j + 1], sp, sizeof(sp));
+        for (i = 0; i < tc->ne; i++) ix[i] = i;
+        for (w = 1; w < tc->ne; w *= 2) {            /* bottom-up, left run first on ties (stable) */
+            for (lo = 0; lo < tc->ne; lo += 2 * w) {
+                int mid = lo + w < tc->ne ? lo + w : tc->ne, hi = lo + 2 * w < tc->ne ? lo + 2 * w : tc->ne;
+                int p = lo, q = mid;
+                k = lo;
+                while (p < mid && q < hi) tmp[k++] = tc->et[ix[q]] < tc->et[ix[p]] ? ix[q++] : ix[p++];
+                while (p < mid) tmp[k++] = ix[p++];
+                while (q < hi) tmp[k++] = ix[q++];
+            }
+            memcpy(ix, tmp, sizeof(int) * tc->ne);
+        }
+        for (i = 0; i < tc->ne; i++) {
+            k = ix[i];
+            ei2[i] = tc->ei[k]; en2[i] = tc->en[k]; rx2[i] = tc->ev_rx[k];
+            rt2[i] = tc->rt[k]; et2[i] = tc->et[k]; memcpy(sp2[i], tc->spp[k], sizeof(sp2[i]));
+        }
+        free(tc->ei); free(tc->en); free(tc->ev_rx); free(tc->rt); free(tc->et); free(tc->spp);
+        tc->ei = ei2; tc->en = en2; tc->ev_rx = rx2; tc->rt = rt2; tc->et = et2; tc->spp = sp2;
+        free(ix); free(tmp);
     }
     for (i = 0; i < BCACHE; i++) tc->cache[i].j = -1;
     pp_info("tightly coupled: %d rover epochs from %d antenna(s), %d base epochs", tc->ne, tc->nrx, tc->nb);
     return tc;
 }
+
 
 void tc_close(tcctx_t *tc)
 {
@@ -343,6 +378,13 @@ void tc_close(tcctx_t *tc)
     }
     pp_result("tc_iono_estimated", "%d", tc->iono_on);
     pp_result("tc_tropo_estimated", "%d", tc->trop_on);
+    tc_free(tc);
+}
+
+/* release the memory only (also used when opening fails part way, without reporting results) */
+static void tc_free(tcctx_t *tc)
+{
+    if (!tc) return;
     free(tc->robs[0].data); free(tc->robs[1].data); free(tc->bobs.data); free(tc->ev_rx);
     freenav(&tc->nav, 0xFF);
     free(tc->ei); free(tc->en); free(tc->et); free(tc->rt); free(tc->spp);
@@ -939,8 +981,12 @@ int tc_update(tcctx_t *tc, int ie, insstate_t *s, kf_t *kf, const insopt_t *o,
             af = calloc(nb, sizeof(double));
             Q = calloc((size_t)nb * nb, sizeof(double));
             F2 = calloc((size_t)nb * 2, sizeof(double));
-            PND = calloc((size_t)kf->namb * nb, sizeof(double));
+            PND = NULL;
             DPa = NULL;
+            if (!D || !af || !Q || !F2) {
+                free(D); free(af); free(Q); free(F2);
+                break;
+            }
             for (a = 0, b = 0; a < nsel; a++) {
                 int r0 = refk[grp[a]];
                 if (r0 == a) continue;
@@ -949,16 +995,24 @@ int tc_update(tcctx_t *tc, int ie, insstate_t *s, kf_t *kf, const insopt_t *o,
                 af[b] = kf->amb[sel[a]] - kf->amb[sel[r0]];
                 b++;
             }
-            /* Q = D Pnn D' */
-            for (a = 0; a < kf->namb; a++) for (b = 0; b < nb; b++) {
-                double v = 0; int q2;
-                for (q2 = 0; q2 < kf->namb; q2++) if (D[b * kf->namb + q2] != 0) v += PP_(kf, NC + a, NC + q2) * D[b * kf->namb + q2];
-                PND[a * nb + b] = v;
-            }
-            for (a = 0; a < nb; a++) for (b = 0; b < nb; b++) {
-                double v = 0; int q2;
-                for (q2 = 0; q2 < kf->namb; q2++) if (D[a * kf->namb + q2] != 0) v += D[a * kf->namb + q2] * PND[q2 * nb + b];
-                Q[a * nb + b] = v;
+            /* Q = D Pnn D'. Each row of D is +1 at a satellite's ambiguity and -1 at its group's reference,
+             * so Q[a][b] = (P[sa,sb] - P[sa,rb]) - (P[ra,sb] - P[ra,rb]); grouped like this it is bit-for-bit
+             * the full product, at O(nb^2) instead of O(namb^2 nb) */
+            {
+                int *ds = malloc(sizeof(int) * nb), *dr = malloc(sizeof(int) * nb);
+                if (!ds || !dr || !D || !af || !Q || !F2) {
+                    free(ds); free(dr); free(D); free(af); free(Q); free(F2); free(PND);
+                    break;
+                }
+                for (a = 0, b = 0; a < nsel; a++) {
+                    int r0 = refk[grp[a]];
+                    if (r0 == a) continue;
+                    ds[b] = NC + sel[a]; dr[b] = NC + sel[r0]; b++;
+                }
+                for (a = 0; a < nb; a++) for (b = 0; b < nb; b++)
+                    Q[a * nb + b] = (PP_(kf, ds[a], ds[b]) - PP_(kf, ds[a], dr[b]))
+                                  - (PP_(kf, dr[a], ds[b]) - PP_(kf, dr[a], dr[b]));
+                free(ds); free(dr);
             }
             if (!lambda(nb, 2, af, Q, F2, s2) && s2[0] > 0) {
                 double ratio = s2[1] / s2[0];

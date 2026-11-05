@@ -36,10 +36,17 @@ int kf_find_amb(const kf_t *kf, int sat, int f)
     return -1;
 }
 
+static long n_amb_full;    /* states refused because the state table was full */
+
 int kf_add_amb(kf_t *kf, int sat, int f, double value, double var, double lam)
 {
     int k = kf->namb, i, idx;
-    if (k >= MAXAMB) return -1;
+    if (k >= MAXAMB) {
+        if (n_amb_full++ == 0)
+            pp_warn("the filter's state table is full (%d ambiguity/atmosphere states); further satellites "
+                    "are used with code only until states free up", MAXAMB);
+        return -1;
+    }
     idx = NC + k;
     for (i = 0; i < NMAX; i++) { PP(idx, i) = 0; PP(i, idx) = 0; }
     PP(idx, idx) = var;
@@ -85,6 +92,10 @@ int kf_update(kf_t *kf, const double *H, const double *y, const double *R, int m
     inno = malloc(sizeof(double) * m);
     nzc = malloc(sizeof(int) * m * n);
     nzn = calloc(m, sizeof(int));
+    if (!PHt || !S || !Si || !K || !inno || !nzc || !nzn) {
+        free(PHt); free(S); free(Si); free(K); free(inno); free(nzc); free(nzn);
+        return -1;
+    }
     for (i = 0; i < m; i++)
         for (j = 0; j < n; j++) if (H[i*n + j] != 0.0) nzc[i*n + nzn[i]++] = j;
     /* PHt (n x m) */
@@ -123,6 +134,17 @@ int kf_update(kf_t *kf, const double *H, const double *y, const double *R, int m
         int q;
         for (q = 0; q < nzn[i]; q++) { j = nzc[i*n + q]; s -= H[i*n + j] * kf->x[j]; }
         inno[i] = s;
+    }
+    /* a NaN or infinite gain or innovation (a corrupt observation, a singular S that matinv let through)
+     * would spread through the whole state: refuse the update and leave x and P as they were */
+    {
+        int bad = 0;
+        for (i = 0; i < m && !bad; i++) if (!isfinite(inno[i])) bad = 1;
+        for (i = 0; i < n * m && !bad; i++) if (!isfinite(K[i])) bad = 1;
+        if (bad) {
+            free(PHt); free(S); free(Si); free(K); free(inno); free(nzc); free(nzn);
+            return -1;
+        }
     }
     for (i = 0; i < n; i++) {
         double s = 0;
@@ -197,7 +219,6 @@ static const imu_rec_t *imu_get(imureader_t *ir, long long k)
     if (k < 0 || k >= (long long)ir->h.count) return NULL;
     if (ir->b0 < 0 || k < ir->b0 || k >= ir->b0 + ir->bn) {
         long long s = (k / BLK) * BLK, i;
-        fseek(ir->fp, (long)sizeof(imu_hdr_t), SEEK_SET);
 #ifdef _WIN32
         _fseeki64(ir->fp, (long long)sizeof(imu_hdr_t) + s * (long long)sizeof(imu_rec_t), SEEK_SET);
 #else
@@ -1252,6 +1273,7 @@ int cmd_ins(int argc, char **argv)
     pp_result("gnss_fixed", "%ld", nfix);
     pp_result("zupt_updates", "%ld", nzupt);
     pp_result("imu_short_gaps", "%ld", n_short_gaps);
+    pp_result("filter_states_refused", "%ld", n_amb_full);
     {
         int kp = kf_find_amb(&kf, 0, NHC_MIS_P), ky = kf_find_amb(&kf, 0, NHC_MIS_Y);
         if (kp >= 0 && ky >= 0)

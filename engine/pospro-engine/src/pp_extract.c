@@ -41,6 +41,15 @@ static uint16_t crc16(const uint8_t *p, size_t n)
     return c;
 }
 
+/* Append to a fixed buffer, never past its end (snprintf returns the length it wanted, so a plain
+ * o += snprintf(...) can run o past the buffer and the next size_t wraps). */
+#define APPENDF(buf, o, ...) do { \
+        if ((size_t)(o) < sizeof(buf) - 1) { \
+            int r_ = snprintf((buf) + (o), sizeof(buf) - (size_t)(o), __VA_ARGS__); \
+            if (r_ > 0) (o) += r_; \
+            if ((size_t)(o) > sizeof(buf) - 1) (o) = (int)(sizeof(buf) - 1); \
+        } } while (0)
+
 typedef struct ext_s ext_t;
 static void on_packet(ext_t *x, int id, const uint8_t *p, int n);
 
@@ -253,7 +262,7 @@ static int obsw_close(obsw_t *w, int leap, const double *approx, const int *glo_
             int m = nt - i < 13 ? nt - i : 13, o;
             if (i == 0) o = snprintf(line, sizeof(line), "%c  %3d", SYS_ORDER[k], nt);
             else o = snprintf(line, sizeof(line), "      ");
-            for (j = 0; j < m; j++) o += snprintf(line + o, sizeof(line) - o, " %s", types[i + j]);
+            for (j = 0; j < m; j++) APPENDF(line, o, " %s", types[i + j]);
             hl(fp, line, "SYS / # / OBS TYPES");
         }
     }
@@ -272,7 +281,7 @@ static int obsw_close(obsw_t *w, int leap, const double *approx, const int *glo_
             o = snprintf(line, sizeof(line), "%3d ", ns);
             for (prn = 1; prn <= 32; prn++) {
                 if (glo_fcn[prn] == -99) continue;
-                o += snprintf(line + o, sizeof(line) - o, "R%02d %2d ", prn, glo_fcn[prn]);
+                APPENDF(line, o, "R%02d %2d ", prn, glo_fcn[prn]);
                 if (++cnt % 8 == 0) { hl(fp, line, "GLONASS SLOT / FRQ #"); o = snprintf(line, sizeof(line), "    "); }
             }
             if (cnt % 8) hl(fp, line, "GLONASS SLOT / FRQ #");
@@ -309,24 +318,24 @@ static int obsw_close(obsw_t *w, int leap, const double *approx, const int *glo_
                 const obsent_t *x = NULL;
                 uint32_t q;
                 for (q = a; q < b; q++) if (!memcmp(E[q].code, w->codes[ks][ci], 2)) { x = E + q; break; }
-                if (!x) { o += snprintf(buf + o, sizeof(buf) - o, "%64s", ""); continue; }
+                if (!x) { APPENDF(buf, o, "%64s", ""); continue; }
                 {
                     char ssi[2] = "";
                     int tr = x->track;
                     if ((tr & 0x20) && x->snr > 0) { int v = (int)(x->snr / 6.0); if (v < 1) v = 1; if (v > 9) v = 9; snprintf(ssi, 2, "%d", v); }
                     if ((tr & 0x08) && x->pr != 0.0 && fabs(x->pr) < 1e9)
-                        o += snprintf(buf + o, sizeof(buf) - o, "%14.3f %1s", x->pr, ssi);
-                    else o += snprintf(buf + o, sizeof(buf) - o, "%16s", "");
+                        APPENDF(buf, o, "%14.3f %1s", x->pr, ssi);
+                    else APPENDF(buf, o, "%16s", "");
                     if ((tr & 0x01) && x->cp != 0.0 && fabs(x->cp) < 1e9) {
                         int lli = ((tr & 0x02) ? 1 : 0) | ((tr & 0x04) ? 2 : 0);
                         char ls[2] = "";
                         if (lli) snprintf(ls, 2, "%d", lli);
-                        o += snprintf(buf + o, sizeof(buf) - o, "%14.3f%1s%1s", x->cp, ls, ssi);
-                    } else o += snprintf(buf + o, sizeof(buf) - o, "%16s", "");
-                    if (tr & 0x10) o += snprintf(buf + o, sizeof(buf) - o, "%14.3f  ", (double)x->dop);
-                    else o += snprintf(buf + o, sizeof(buf) - o, "%16s", "");
-                    if (tr & 0x20) o += snprintf(buf + o, sizeof(buf) - o, "%14.3f  ", (double)x->snr);
-                    else o += snprintf(buf + o, sizeof(buf) - o, "%16s", "");
+                        APPENDF(buf, o, "%14.3f%1s%1s", x->cp, ls, ssi);
+                    } else APPENDF(buf, o, "%16s", "");
+                    if (tr & 0x10) APPENDF(buf, o, "%14.3f  ", (double)x->dop);
+                    else APPENDF(buf, o, "%16s", "");
+                    if (tr & 0x20) APPENDF(buf, o, "%14.3f  ", (double)x->snr);
+                    else APPENDF(buf, o, "%16s", "");
                 }
             }
             while (o > 3 && buf[o-1] == ' ') buf[--o] = '\0';
@@ -381,6 +390,7 @@ struct ext_s {
     uint64_t eph_other;
     uint64_t counts[256];
     uint64_t unknown_signals;
+    uint64_t clraw_bad_crc, clraw_skipped;     /* from the .clraw framer (freed at the end of each file) */
     /* extra */
     int clraw_files;
     /* coverage per GPS second (timescale bars): IMU samples, satellites per
@@ -722,9 +732,10 @@ static int on_msg(void *user, const char *topic, uint64_t lt, uint64_t pt,
     static framer_t *fr = NULL;
     ext_t *x = user;
     (void)lt; (void)pt;
-    if (!data) { free(fr); fr = NULL; return 0; }
+    if (!data) { if (fr && x) { x->clraw_bad_crc += fr->bad_crc; x->clraw_skipped += fr->skipped; } free(fr); fr = NULL; return 0; }
     if (strcmp(topic, "/ins/anpp")) return 0;
     if (!fr) fr = calloc(1, sizeof(framer_t));
+    if (!fr) return pp_fail("out of memory"), 1;
     framer_feed(fr, x, data, n);
     return 0;
 }
@@ -851,7 +862,7 @@ int cmd_extract(int argc, char **argv)
             fclose(fp);
         }
     }
-    on_msg(NULL, NULL, 0, 0, NULL, 0);
+    on_msg(x, NULL, 0, 0, NULL, 0);    /* flush: frees the framer and adds its counts */
 
     /* finish IMU */
     lag = pairing_lag(x, &score);
@@ -931,7 +942,7 @@ int cmd_extract(int argc, char **argv)
         {
             char sig[512] = ""; int o = 0, s, c;
             for (s = 0; s < 8; s++) for (c = 0; c < x->obs[rx].ncode[s]; c++)
-                o += snprintf(sig + o, sizeof(sig) - o, "%s%c%s", o ? " " : "", SYS_ORDER[s], x->obs[rx].codes[s][c]);
+                APPENDF(sig, o, "%s%c%s", o ? " " : "", SYS_ORDER[s], x->obs[rx].codes[s][c]);
             snprintf(k, sizeof(k), "obs%d_signals", rx); SUM(k, "%s", sig);
         }
     }
@@ -958,10 +969,10 @@ int cmd_extract(int argc, char **argv)
     SUM("coverage_seconds", "%ld", x->cov_n);
     SUM("gps_ephemerides", "%d", x->neph);
     SUM("unknown_signals", "%.0f", (double)x->unknown_signals);
-    SUM("crc_errors", "%.0f", (double)fr->bad_crc);
+    SUM("crc_errors", "%.0f", (double)(fr->bad_crc + x->clraw_bad_crc));
     {
-        char pc[1024] = ""; int o = 0, k;
-        for (k = 0; k < 256; k++) if (x->counts[k]) o += snprintf(pc + o, sizeof(pc) - o, "%s%d:%.0f", o ? " " : "", k, (double)x->counts[k]);
+        char pc[4096] = ""; int o = 0, k;
+        for (k = 0; k < 256; k++) if (x->counts[k]) APPENDF(pc, o, "%s%d:%.0f", o ? " " : "", k, (double)x->counts[k]);
         SUM("packets", "%s", pc);
     }
     SUM("clraw_files", "%d", x->clraw_files);

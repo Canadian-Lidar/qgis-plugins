@@ -21,7 +21,11 @@ int main(int argc, char **argv)
                 PP_VERSION, argv[0]);
         return 2;
     }
+#ifdef _WIN32
+    setvbuf(stdout, NULL, _IOFBF, 1 << 16);   /* the Windows C library has no line buffering; lines are flushed */
+#else
     setvbuf(stdout, NULL, _IOLBF, 0);
+#endif
 #ifdef _WIN32
     /* RTKLIB splits Windows paths at '\\' only: normalise separators */
     {

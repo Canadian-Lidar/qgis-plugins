@@ -79,8 +79,9 @@ int mcap_read(const char *path, mcap_msg_cb on_msg, mcap_att_cb on_att,
 {
     FILE *fp;
     uint8_t magic[8], hdr[9];
-    uint8_t *rec = NULL, *dec = NULL;
-    size_t recn = 0, decn = 0;
+    uint8_t *buf = NULL, *dec = NULL;
+    size_t bufn = 0, decn = 0;
+    uint64_t fsize = 0, pos = 0;
     chan_t *ch = calloc(MAXCH, sizeof(chan_t));
     int stop = 0;
 
@@ -95,30 +96,60 @@ int mcap_read(const char *path, mcap_msg_cb on_msg, mcap_att_cb on_att,
         free(ch);
         return 0;
     }
+    {   /* the file size bounds every record length (a damaged length must not swallow the rest) */
+#ifdef _WIN32
+        _fseeki64(fp, 0, SEEK_END);
+        fsize = (uint64_t)_ftelli64(fp);
+        _fseeki64(fp, 8, SEEK_SET);
+#else
+        fseeko(fp, 0, SEEK_END);
+        fsize = (uint64_t)ftello(fp);
+        fseeko(fp, 8, SEEK_SET);
+#endif
+        pos = 8;
+    }
     while (!stop && fread(hdr, 1, 9, fp) == 9) {
         uint8_t op = hdr[0];
         uint64_t len = rd64(hdr + 1);
-        if (len > ((uint64_t)1 << 32)) break;            /* damaged */
+        uint8_t *rec;
+        pos += 9;
         if (op == OP_FOOTER || op == OP_DATAEND) break;   /* summary follows */
-        if (len > recn) {
-            uint8_t *t = realloc(rec, (size_t)len);
-            if (!t) break;
-            rec = t;
-            recn = (size_t)len;
+        if (len > fsize - pos) {
+            if (pos + 64 >= fsize)
+                pp_warn("%s ends inside a record (file was not closed); the complete part is used", path);
+            else
+                pp_warn("%s has a damaged record at byte %llu (length %llu, %llu bytes left); "
+                        "the rest of the file (%llu bytes) is skipped", path,
+                        (unsigned long long)(pos - 9), (unsigned long long)len,
+                        (unsigned long long)(fsize - pos), (unsigned long long)(fsize - pos + 9));
+            break;
         }
+        if (len > ((uint64_t)1 << 32)) {
+            pp_warn("%s has a record of %llu bytes, too large to read; the rest of the file is skipped",
+                    path, (unsigned long long)len);
+            break;
+        }
+        if (len + 9 > bufn) {                             /* buffer keeps the 9-byte header in front */
+            uint8_t *t = realloc(buf, (size_t)len + 9);
+            if (!t) {
+                pp_warn("out of memory reading %s (record of %llu bytes); the rest is skipped", path,
+                        (unsigned long long)len);
+                break;
+            }
+            buf = t;
+            bufn = (size_t)len + 9;
+        }
+        memcpy(buf, hdr, 9);
+        rec = buf + 9;
         if (fread(rec, 1, (size_t)len, fp) != (size_t)len) {
             pp_warn("%s ends inside a record (file was not closed); the complete part is used",
                     path);
             break;
         }
+        pos += len;
         if (bytes_done) *bytes_done += 9 + len;
         if (op == OP_CHANNEL || op == OP_MESSAGE) {
-            uint8_t *tmp = malloc((size_t)len + 9);
-            if (!tmp) break;
-            memcpy(tmp, hdr, 9);
-            memcpy(tmp + 9, rec, (size_t)len);
-            stop = records(tmp, (size_t)len + 9, ch, on_msg, user);
-            free(tmp);
+            stop = records(buf, (size_t)len + 9, ch, on_msg, user);
         } else if (op == OP_CHUNK && len >= 32) {
             uint64_t usize = rd64(rec + 16);
             char comp[32];
@@ -137,7 +168,10 @@ int mcap_read(const char *path, mcap_msg_cb on_msg, mcap_att_cb on_att,
                 if (usize > ((uint64_t)1 << 31)) continue;
                 if (usize > decn) {
                     uint8_t *t = realloc(dec, (size_t)usize);
-                    if (!t) break;
+                    if (!t) {
+                        pp_warn("out of memory unpacking a chunk of %s; the rest is skipped", path);
+                        break;
+                    }
                     dec = t;
                     decn = (size_t)usize;
                 }
@@ -167,7 +201,7 @@ int mcap_read(const char *path, mcap_msg_cb on_msg, mcap_att_cb on_att,
         }
     }
     fclose(fp);
-    free(rec);
+    free(buf);
     free(dec);
     free(ch);
     return 1;
