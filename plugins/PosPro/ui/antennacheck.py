@@ -168,8 +168,8 @@ def run(dock, parent):
             if off is not None and abs(abs(off) - 180) < 30:
                 p.cfg["processing"]["align_mode"] = 2
             dock.save()
-            for k in (2, 3):
-                dock.pages[k].refresh()
+            for k in ("install", "process"):
+                dock.page[k].refresh()
             dock.update_steps()
             dock.toast("GPS1 and GPS2 offsets swapped%s: process again" % (
                 ", alignment from motion" if p.cfg["processing"].get("align_mode") == 2 else ""), "warn")

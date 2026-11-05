@@ -98,6 +98,11 @@ tr{break-inside:avoid}
 .toc{columns:2;column-gap:10mm;font-size:9.6pt;margin-bottom:4mm}
 .toc a{color:var(--ink);text-decoration:none}
 .toc div{break-inside:avoid;margin-bottom:1mm}
+.toc .c2{margin:0 0 .6mm 7mm;font-size:8.6pt;color:var(--ink)}
+.index{columns:3;column-gap:7mm;font-size:8.4pt;line-height:1.35}
+.index div{break-inside:avoid;margin-bottom:.8mm}
+.index b{font-weight:600}
+.index a{color:var(--accent-ink);text-decoration:none}
 .toc .n{color:var(--accent-ink);font-family:'Rajdhani',sans-serif;font-weight:700;display:inline-block;width:7mm}
 a{color:var(--accent-ink)}
 """
@@ -152,6 +157,18 @@ def assemble(text, name, key):
             text = text.replace("{%s}" % k, v)
     parts = re.split(r"(?=<h1[\s>])", text)
     out, toc, n = [], [], 0
+    index = {}                                           # term -> [(sort key, label, anchor)]
+
+    def strip(t):
+        return re.sub(r"<[^>]+>", "", t).strip()
+
+    def add_terms(chunk, label, anchor, key):
+        for m in re.finditer(r'<span class="(?:ui|ix)">(.*?)</span>', chunk, re.S):
+            term = html.unescape(strip(m.group(1))).strip(" .:…")
+            if 2 <= len(term) <= 48:
+                refs = index.setdefault(term, [])
+                if all(r[2] != anchor for r in refs):
+                    refs.append((key, label, anchor))
     for part in parts:
         if part.startswith("<h1"):
             n += 1
@@ -165,10 +182,38 @@ def assemble(text, name, key):
                 else:
                     anchor = ident.group(1)
                 title = re.sub(r"<span class=\"num\">.*?</span>", "", hm.group(2))
-                toc.append('<div><span class="n">%d</span><a href="#%s">%s</a></div>' % (n, anchor, title.strip()))
+                toc.append('<div class="c1"><span class="n">%d</span><a href="#%s">%s</a></div>'
+                           % (n, anchor, title.strip()))
+                # sections: numbered anchors, listed under the chapter, and the index terms in each
+                secs = re.split(r"(?=<h2[\s>])", part)
+                done, k = [], 0
+                for sec in secs:
+                    if sec.startswith("<h2"):
+                        k += 1
+                        sm = re.match(r"<h2([^>]*)>(.*?)</h2>", sec, re.S)
+                        sid = re.search(r'id="([^"]+)"', sm.group(1)) if sm else None
+                        sanchor = sid.group(1) if sid else "s%d_%d" % (n, k)
+                        if sm and not sid:
+                            sec = sec.replace("<h2%s>" % sm.group(1), '<h2 id="%s"%s>' % (sanchor, sm.group(1)), 1)
+                        if sm:
+                            toc.append('<div class="c2"><a href="#%s">%s</a></div>' % (sanchor, strip(sm.group(2))))
+                        add_terms(sec, "%d.%d" % (n, k), sanchor, (n, k))
+                    else:
+                        add_terms(sec, "%d" % n, anchor, (n, 0))
+                    done.append(sec)
+                part = "".join(done)
         out.append(part)
     text = "".join(out)
-    return text.replace("<!--#contents-->", '<h2 style="margin-top:0">Contents</h2><div class="toc">%s</div>' % "".join(toc))
+    text = text.replace("<!--#contents-->", '<h2 style="margin-top:0">Contents</h2><div class="toc">%s</div>'
+                        % "".join(toc))
+    if "<!--#index-->" in text:
+        rows = []
+        for term in sorted(index, key=lambda t: t.lower()):
+            refs = sorted(index[term])
+            rows.append('<div><b>%s</b> %s</div>' % (html.escape(term), ", ".join(
+                '<a href="#%s">%s</a>' % (a, lab) for _k, lab, a in refs)))
+        text = text.replace("<!--#index-->", '<div class="index">%s</div>' % "".join(rows))
+    return text
 
 
 def build(key):
