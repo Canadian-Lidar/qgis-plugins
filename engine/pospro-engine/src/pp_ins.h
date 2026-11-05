@@ -44,6 +44,7 @@ typedef struct {
     double nhc_rate;          /* Hz */
     int nhc_mis;              /* estimate the IMU-to-vehicle pitch/yaw offset */
     double nhc_mis_sd;        /* its initial std, rad */
+    double nhc_mis0[2];       /* pitch, yaw offset to start from (or to use when not estimated), rad */
     double zupt_sigma;        /* m/s */
     double zupt_gyro, zupt_acc; /* stationary detection thresholds (std over 1 s) */
     double zupt_speed;        /* max INS speed for a zero-velocity update */

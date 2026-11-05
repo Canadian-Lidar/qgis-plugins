@@ -495,12 +495,15 @@ static int update_lc(insstate_t *s, kf_t *kf, const insopt_t *o, const gsol_t *g
 static void update_nhc(insstate_t *s, kf_t *kf, const insopt_t *o, const double *wb)
 {
     int n, i, j, km[2] = {-1, -1};
-    double H[2 * NMAX], y[2], R[4] = {0}, vb[3], wxl[3], Vx[9], CtVx[9], Lx[9], mis[2] = {0, 0};
+    double H[2 * NMAX], y[2], R[4] = {0}, vb[3], wxl[3], Vx[9], CtVx[9], Lx[9];
+    double mis[2];
+    mis[0] = o->nhc_mis0[0];
+    mis[1] = o->nhc_mis0[1];
     if (o->nhc_mis) {
         int code[2] = {NHC_MIS_P, NHC_MIS_Y};
         for (i = 0; i < 2; i++) {
             if ((km[i] = kf_find_amb(kf, 0, code[i])) < 0)
-                km[i] = kf_add_amb(kf, 0, code[i], 0.0, o->nhc_mis_sd * o->nhc_mis_sd, 0.0);
+                km[i] = kf_add_amb(kf, 0, code[i], o->nhc_mis0[i], o->nhc_mis_sd * o->nhc_mis_sd, 0.0);
             if (km[i] >= 0) mis[i] = kf->amb[km[i]];
         }
     }
@@ -629,6 +632,12 @@ static void read_opts(const cfg_t *c, insopt_t *o)
     o->nhc_rate = cfg_num(c, "nhc.rate_hz", 10);
     o->nhc_mis = cfg_int(c, "nhc.estimate_mount", 1);
     o->nhc_mis_sd = cfg_num(c, "nhc.mount_sd_deg", 3.0) * D2R;
+    {
+        double v[2] = {0, 0};
+        cfg_vec(c, "nhc.mount_deg", v, 2);       /* pitch, yaw of the vehicle against the IMU */
+        o->nhc_mis0[0] = v[0] * D2R;
+        o->nhc_mis0[1] = v[1] * D2R;
+    }
     o->zupt = cfg_int(c, "zupt.enable", 1);
     o->zupt_sigma = cfg_num(c, "zupt.sigma_m_s", 0.01);
     o->zupt_gyro = cfg_num(c, "zupt.gyro_std_deg_s", 0.3) * D2R;
