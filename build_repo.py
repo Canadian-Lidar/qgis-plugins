@@ -8,6 +8,7 @@ Output goes to ./site, which the GitHub Action publishes to GitHub Pages.
 
 Run locally:  python build_repo.py https://<user>.github.io/<repo>
 """
+import ast
 import configparser
 import os
 import shutil
@@ -103,17 +104,79 @@ def xml_entry(folder: Path, md: dict, zip_name: str, today: str) -> str:
     return "\n".join(lines)
 
 
+NOT_PLUGINS = {"guides"}       # folders in ./plugins that are not plugins
+
+
+def check_layout(problems: list) -> None:
+    """Folders a plugin's files can end up in by mistake (e.g. uploaded to 'cloudpro' while the plugin is
+    'CloudPro'): such files never reach the zip, and the plugin crashes on a missing module."""
+    names = {}
+    for d in SRC.iterdir():
+        if d.is_dir() and d.name not in NOT_PLUGINS and not d.name.startswith("."):
+            names.setdefault(d.name.lower(), []).append(d.name)
+            if not (d / "metadata.txt").exists():
+                files = [str(f.relative_to(SRC)) for f in d.rglob("*") if f.is_file()][:5]
+                problems.append(f"plugins/{d.name} has no metadata.txt, so it is not built (files: "
+                                f"{', '.join(files) or 'none'}). Move them into the plugin's own folder.")
+    for low, dirs in names.items():
+        if len(dirs) > 1:
+            problems.append(f"plugins/ has folders differing only in capitals: {', '.join(sorted(dirs))}. "
+                            "Windows sees them as one; the repository builds only the one with metadata.txt.")
+
+
+def _module_exists(mod: Path) -> bool:
+    """A .py file, a package, or a compiled extension (.pyd / .so, any ABI tag)."""
+    if mod.with_suffix(".py").exists() or (mod / "__init__.py").exists():
+        return True
+    return any(mod.parent.glob(mod.name + ".*.pyd")) or any(mod.parent.glob(mod.name + ".*.so")) or \
+        mod.with_suffix(".pyd").exists() or mod.with_suffix(".so").exists()
+
+
+def check_imports(folder: Path, problems: list) -> None:
+    """Every relative import of the plugin (from . / from .. ) must point at a module in the folder.
+    Vendored third-party code in ext/ is left alone (its optional back ends are tried and may be absent)."""
+    for py in folder.rglob("*.py"):
+        if any(part in SKIP_DIRS or part == "ext" for part in py.relative_to(folder).parts):
+            continue
+        try:
+            tree = ast.parse(py.read_text(encoding="utf-8"), str(py))
+        except SyntaxError as e:
+            problems.append(f"{py.relative_to(SRC)}: syntax error on line {e.lineno}.")
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or not node.level:
+                continue
+            base = py.parent
+            for _ in range(node.level - 1):
+                base = base.parent
+            mod = base.joinpath(*node.module.split(".")) if node.module else base
+            if node.module and not _module_exists(mod):
+                problems.append(f"{py.relative_to(SRC)} line {node.lineno}: imports '{'.' * node.level}{node.module}', "
+                                f"but {mod.relative_to(SRC)}.py is not in the plugin.")
+            elif not node.module:
+                for a in node.names:
+                    if not (_module_exists(base / a.name) or (base / "__init__.py").exists()):
+                        problems.append(f"{py.relative_to(SRC)} line {node.lineno}: imports '{a.name}', which is "
+                                        "not in the plugin.")
+
+
 def main() -> None:
     if OUT.exists():
         shutil.rmtree(OUT)
     OUT.mkdir()
     today = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     entries, rows, problems = [], [], []
+    check_layout(problems)
 
     for folder in sorted(p for p in SRC.iterdir() if (p / "metadata.txt").exists()):
         md = read_metadata(folder, problems)
         if md is None:
             continue
+        check_imports(folder, problems)
+        guides = sorted(folder.glob("docs/*_User_Guide_*.pdf"))
+        if guides and not any(g.name.endswith(f"_{md['version']}.pdf") for g in guides):
+            problems.append(f"{folder.name}: no user guide for version {md['version']} in docs/ "
+                            f"(found {', '.join(g.name for g in guides)}).")
         zip_name = f"{folder.name}.{md['version']}.zip"
         make_zip(folder, OUT / zip_name)
         entries.append(xml_entry(folder, md, zip_name, today))
