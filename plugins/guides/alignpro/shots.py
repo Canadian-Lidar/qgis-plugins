@@ -74,6 +74,7 @@ MB.exec = _mb_exec
 MB.exec_ = _mb_exec
 answers = {"open": "", "save": "", "dir": ""}
 QtWidgets.QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (answers["open"], ""))
+QtWidgets.QFileDialog.getOpenFileNames = staticmethod(lambda *a, **k: ([answers["open"]] if answers["open"] else [], ""))
 QtWidgets.QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (answers["save"], ""))
 QtWidgets.QFileDialog.getExistingDirectory = staticmethod(lambda *a, **k: answers["dir"])
 QtGui.QDesktopServices.openUrl = staticmethod(lambda *a: True)
@@ -200,7 +201,7 @@ d.new_project()
 idle()
 pg = d.pg_data
 answers["open"] = SBET
-pg.traj._browse()                                                              # Browse... picks the SBET
+pg.traj._browse()                                                              # Add... picks the SBET
 pg.read()
 idle()
 

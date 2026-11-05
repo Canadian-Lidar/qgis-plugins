@@ -5,9 +5,11 @@ import os
 from qgis.PyQt.QtCore import QDate, QSettings
 from qgis.PyQt.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox,
                                  QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-                                 QLineEdit, QPushButton, QRadioButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
+                                 QListWidget, QPushButton, QRadioButton, QSpinBox, QTabWidget,
+                                 QVBoxLayout, QWidget)
 
 from ..core import engine
+from ..core.project import sbet_paths
 from ..core.trajectory import sbet_date_from_name
 
 RECENT_KEY = "AlignPro/recent"
@@ -38,7 +40,7 @@ class TrajectoryBox(QGroupBox):
         self.pp_state.setObjectName("ppHint")
         self.pp_state.setWordWrap(True)
         self.r_rt = QRadioButton("Certus real-time (packet 20 in the .clraw), quick look")
-        self.r_sb = QRadioButton("Another post-processed SBET file")
+        self.r_sb = QRadioButton("Post-processed SBET file(s): one per capture when each capture has its own")
         g = QButtonGroup(self)
         g.addButton(self.r_pp)
         g.addButton(self.r_rt)
@@ -46,16 +48,27 @@ class TrajectoryBox(QGroupBox):
         f.addRow(self.r_pp)
         f.addRow(self.pp_state)
         f.addRow(self.r_sb)
-        self.path = QLineEdit(cfg.get("path", ""))
-        b = QPushButton("Browse…")
+        self.sbets = QListWidget()
+        self.sbets.setMaximumHeight(84)
+        self.sbets.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.sbets.setToolTip("Each SBET is matched to the captures it covers by its GPS time; captures recorded "
+                              "with separate Start/Stop (and separate SBETs) each use their own")
+        b = QPushButton("Add…")
         b.clicked.connect(self._browse)
+        b_rm = QPushButton("Remove")
+        b_rm.clicked.connect(self._remove)
+        col = QVBoxLayout()
+        col.addWidget(b)
+        col.addWidget(b_rm)
+        col.addStretch(1)
         row = QHBoxLayout()
-        row.addWidget(self.path, 1)
-        row.addWidget(b)
+        row.addWidget(self.sbets, 1)
+        row.addLayout(col)
         w = QWidget()
         w.setLayout(row)
         row.setContentsMargins(0, 0, 0, 0)
-        f.addRow("SBET file", w)
+        f.addRow("SBET files", w)
+        self.set_paths(sbet_paths(cfg))
         self.date = QDateEdit()
         self.date.setCalendarPopup(True)
         self.date.setDisplayFormat("yyyy-MM-dd")
@@ -91,19 +104,37 @@ class TrajectoryBox(QGroupBox):
         self.pp_state.setText(text)
         self.pp_state.setStyleSheet("color: %s;" % ("#00e5aa" if available else "#f5a623"))
 
+    def paths(self):
+        return [self.sbets.item(i).text() for i in range(self.sbets.count())]
+
+    def set_paths(self, paths):
+        self.sbets.clear()
+        for p in paths or []:
+            self.sbets.addItem(p)
+
     def _browse(self):
-        p, _ = QFileDialog.getOpenFileName(self, "SBET", os.path.dirname(self.path.text()),
-                                           "SBET (*.out *.sbet);;All files (*)")
-        if p:
-            self.path.setText(p)
+        cur = self.paths()
+        ps, _ = QFileDialog.getOpenFileNames(self, "SBET files (one per capture)",
+                                             os.path.dirname(cur[-1]) if cur else "",
+                                             "SBET (*.out *.sbet);;All files (*)")
+        for p in ps:
+            if p not in cur:
+                self.sbets.addItem(p)
+        if ps:
             self.r_sb.setChecked(True)
-            d = sbet_date_from_name(p)
-            if d:
+            d = sbet_date_from_name(ps[0])
+            if d and not cur:
                 self.date.setDate(QDate(d.year, d.month, d.day))
 
+    def _remove(self):
+        for it in self.sbets.selectedItems():
+            self.sbets.takeItem(self.sbets.row(it))
+
     def value(self):
-        sb = self.r_sb.isChecked() and bool(self.path.text().strip())
-        return {"type": "pospro" if self.r_pp.isChecked() else ("sbet" if sb else "realtime"), "path": self.path.text().strip(),
+        ps = self.paths()
+        sb = self.r_sb.isChecked() and bool(ps)
+        return {"type": "pospro" if self.r_pp.isChecked() else ("sbet" if sb else "realtime"),
+                "path": ps[0] if ps else "", "paths": ps,
                 "date": "" if self.auto_date.isChecked() else self.date.date().toString("yyyy-MM-dd"),
                 "leap": self.leap.value()}
 

@@ -361,7 +361,7 @@ def georef_points(project, t, p, mount, lever, latency_ms, batch=1000000):
     tr = project.traj
     for s in range(0, len(t), batch):
         tt = t[s:s + batch]
-        ins = (tt >= tr.t[0]) & (tt <= tr.t[-1])
+        ins = tr.inside(tt)
         if not ins.any():
             continue
         ii = np.nonzero(ins)[0]

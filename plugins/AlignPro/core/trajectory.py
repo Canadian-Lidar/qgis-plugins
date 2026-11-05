@@ -25,6 +25,7 @@ class Trajectory:
         self.sd_att = None if sd_att is None else np.asarray(sd_att, float)[sel]
         self.fix = None if fix is None else np.asarray(fix)[sel]
         self.source = source
+        self.segments = None            # [(t0, t1)] when merged from several files: no data between them
 
     def __len__(self):
         return len(self.t)
@@ -34,8 +35,23 @@ class Trajectory:
         return (float(self.t[0]), float(self.t[-1])) if len(self.t) else (0.0, 0.0)
 
     def covers(self, t0, t1):
-        a, b = self.span
-        return len(self.t) > 1 and a <= t0 and b >= t1
+        """True when [t0, t1] lies inside the trajectory (inside one piece of a merged trajectory)."""
+        if len(self.t) < 2:
+            return False
+        for a, b in (getattr(self, "segments", None) or [self.span]):
+            if a <= t0 and b >= t1:
+                return True
+        return False
+
+    def inside(self, t):
+        """Mask of the times that have trajectory data (never the gap between two merged files)."""
+        t = np.asarray(t, float)
+        m = np.zeros(len(t), bool)
+        if len(self.t) < 2:
+            return m
+        for a, b in (getattr(self, "segments", None) or [self.span]):
+            m |= (t >= a) & (t <= b)
+        return m
 
     def rate(self):
         return 1.0 / float(np.median(np.diff(self.t))) if len(self.t) > 2 else 0.0
@@ -55,6 +71,7 @@ class Trajectory:
             v = getattr(self, k)
             setattr(tr, k, None if v is None else v[m])
         tr.source = self.source
+        tr.segments = None
         return tr
 
 
@@ -70,6 +87,38 @@ def from_nav(nav, source="Certus real-time (packet 20)"):
     return Trajectory(nav["t"][ok], nav["lat"][ok], nav["lon"][ok], nav["h"][ok],
                       nav["roll"][ok], nav["pitch"][ok], nav["heading"][ok], source,
                       sd_pos=sd, sd_att=sd_att, fix=nav["fix"][ok])
+
+
+MAX_GAP_S = 1.0     # a gap longer than this inside one file is not bridged either
+
+
+def merge(trajs, source=""):
+    """One trajectory from several (one SBET per capture, as the MapPro format recorded them).
+
+    Pieces are kept in time order; where two overlap, the later one starts where the earlier ends.
+    The time between pieces has no data: segments lists the pieces so the georeferencing never
+    interpolates across a gap (inside(), covers())."""
+    trajs = sorted([t for t in trajs if len(t) > 1], key=lambda t: t.span[0])
+    if not trajs:
+        raise ValueError("No trajectory samples in the SBET files")
+    if len(trajs) == 1:
+        return trajs[0]
+    parts, segs, end = [], [], -np.inf
+    for tr in trajs:
+        m = tr.t > end
+        if m.sum() < 2:
+            continue
+        idx = np.nonzero(m)[0]
+        parts.append((tr, idx))
+        segs.append((float(tr.t[idx[0]]), float(tr.t[idx[-1]])))
+        end = segs[-1][1]
+    cat = lambda k: np.concatenate([getattr(tr, k)[ix] for tr, ix in parts])  # noqa: E731
+    opt = lambda k: None if any(getattr(tr, k) is None for tr, _ in parts) else cat(k)  # noqa: E731
+    out = Trajectory(cat("t"), cat("lat"), cat("lon"), cat("h"), cat("roll"), cat("pitch"), cat("heading"),
+                     source or " + ".join(tr.source for tr, _ in parts),
+                     sd_pos=opt("sd_pos"), sd_att=opt("sd_att"), fix=opt("fix"))
+    out.segments = segs
+    return out
 
 
 def sbet_date_from_name(path):
