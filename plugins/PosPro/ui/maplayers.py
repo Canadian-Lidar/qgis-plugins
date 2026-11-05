@@ -238,7 +238,7 @@ REVIEW_COLOURS = {"open": "232,72,85", "exclude": "58,180,242", "poor": "245,166
 
 def review_layer(project, qc, items):
     """Trajectory Review windows on the map: one line per anomaly or edit,
-    coloured by what was decided (red open, blue GNSS excluded, amber poor,
+    coloured by what was decided (red open, blue bridged with the IMU, amber poor,
     violet interpolated, mint accepted)."""
     import bisect
     from qgis.core import QgsCategorizedSymbolRenderer, QgsRendererCategory
