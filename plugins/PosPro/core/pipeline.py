@@ -730,7 +730,43 @@ def ins(project, ctx):
     for label, r in res.items():
         _check(r, label)
         out[label] = r.results
+    _report_mount(out, ctx)
     return out
+
+
+def mount_offset(results):
+    """Vehicle frame against the IMU's aligned frame, from the passes:
+    (pitch, yaw, pitch_sd, yaw_sd) in degrees, variance-weighted, or None."""
+    vals = []
+    for r in (results or {}).values():
+        try:
+            p_, y_, sp, sy = [float(v) for v in str(r.get("vehicle_mount_offset_deg", "")).split(",")]
+        except (TypeError, ValueError, AttributeError):
+            continue
+        vals.append((p_, y_, max(sp, 1e-3), max(sy, 1e-3)))
+    if not vals:
+        return None
+    out = []
+    for k in (0, 1):
+        w = [1.0 / v[2 + k] ** 2 for v in vals]
+        out.append(sum(wi * v[k] for wi, v in zip(w, vals)) / sum(w))
+    for k in (0, 1):
+        out.append((1.0 / sum(1.0 / v[2 + k] ** 2 for v in vals)) ** 0.5)
+    return tuple(out)
+
+
+def _report_mount(results, ctx):
+    m = mount_offset(results)
+    if not m:
+        return
+    pitch, yaw, sp, sy = m
+    ctx.log("info", "vehicle frame against the IMU: pitch %.2f deg (+/- %.2f), yaw %.2f deg (+/- %.2f), "
+                    "estimated while driving" % (pitch, sp, yaw, sy))
+    if abs(pitch) > 1.5 or (abs(yaw) > 1.5 and sy < 0.3):
+        ctx.log("warning", "the IMU's aligned frame is %.1f deg (pitch) / %.1f deg (yaw) off the vehicle: the "
+                           "INS alignment set in the Certus does not match how it is mounted. PosPro allows for it; "
+                           "correcting the alignment in the Certus improves its real-time solution too." % (pitch, yaw))
+
 
 
 def solve_levers(project, ctx):

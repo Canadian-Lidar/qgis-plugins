@@ -1,3 +1,5 @@
 site/
 __pycache__/
 *.pyc
+engine/*/bin/
+engine/*/obj/
