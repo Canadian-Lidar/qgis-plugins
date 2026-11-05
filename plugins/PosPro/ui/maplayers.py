@@ -53,6 +53,21 @@ def _field(name, kind):
         return QgsField(name, t)
 
 
+def _with_arrows(sym, color, interval_mm=18, size_mm=2.4):
+    """Arrowheads along a line symbol in the direction it was drawn (the direction of travel)."""
+    try:
+        from qgis.core import QgsMarkerLineSymbolLayer
+        ml = QgsMarkerLineSymbolLayer.create({"interval": str(interval_mm), "interval_unit": "MM", "rotate": "1",
+                                              "placements": "Interval", "placement": "interval",
+                                              "offset_along_line": str(interval_mm / 2.0)})
+        ml.setSubSymbol(QgsMarkerSymbol.createSimple({"name": "filled_arrowhead", "color": color,
+                                                       "outline_style": "no", "size": str(size_mm)}))
+        sym.appendSymbolLayer(ml)
+    except Exception:       # noqa: BLE001 - the line still draws without arrows
+        pass
+    return sym
+
+
 def rt_layer(project, rows):
     """Real-time track from packet 20 (what the Certus computed in the field)."""
     crs = _crs(project)
@@ -63,7 +78,7 @@ def rt_layer(project, rows):
         f.setGeometry(QgsGeometry.fromPolylineXY(pts))
         lyr.dataProvider().addFeatures([f])
     sym = QgsLineSymbol.createSimple({"color": "120,120,120,170", "width": "0.5", "line_style": "dash"})
-    lyr.renderer().setSymbol(sym)
+    lyr.renderer().setSymbol(_with_arrows(sym, "120,120,120,220"))
     return _replace(project, lyr, "Real-time track")
 
 
@@ -163,7 +178,8 @@ def trajectory_layers(project, qc, colour_by="status"):
         f = QgsFeature()
         f.setGeometry(QgsGeometry.fromPolylineXY(seg))
         line.dataProvider().addFeatures([f])
-    line.renderer().setSymbol(QgsLineSymbol.createSimple({"color": "60,60,60,140", "width": "0.35"}))
+    line.renderer().setSymbol(_with_arrows(QgsLineSymbol.createSimple({"color": "60,60,60,140", "width": "0.35"}),
+                                           "40,40,40,230"))
     _replace(project, line, "Trajectory line")
     return _replace(project, pts, "Trajectory")
 

@@ -59,10 +59,19 @@ class Track:
         self.status = self.f["status"].astype(int)
         self.state = np.zeros(len(self.t), dtype=np.int8)
         self.speed = np.hypot(self.f["vel"][:, 0], self.f["vel"][:, 1])
+        self.course = np.arctan2(self.f["vel"][:, 1], self.f["vel"][:, 0])
+        att = self.f["att"].astype(float)
+        self.roll, self.pitch, self.heading = att[:, 0], att[:, 1], att[:, 2]
         self.sections = sections(self.t, self.speed)
 
     def _local(self, a):
         return (a["lat"] - self.lat0) * self._k[0], (a["lon"] - self.lon0) * self._k[1]
+
+    def antenna(self, lever):
+        """North, east (m, plan coordinates) of a point at body-frame lever [F, S, D] for every sample."""
+        from .antennas import offsets_ne
+        dn, de = offsets_ne(self.roll, self.pitch, self.heading, [float(x) for x in lever])
+        return self.fn + dn, self.fe + de
 
     def lat_lon_deg(self, i):
         return math.degrees(self.f["lat"][i]), math.degrees(self.f["lon"][i])

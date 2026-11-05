@@ -26,6 +26,7 @@ from .plots import TimePlot
 STATE_COLOURS = {editor.STATE_GOOD: theme.GREEN, editor.STATE_OPEN: theme.RED, editor.STATE_INTERP: theme.VIOLET,
                  editor.STATE_POOR: theme.AMBER, editor.STATE_EXCL: theme.BLUE, editor.STATE_ACCEPT: "#8ef0cf"}
 SEL = QColor("#ffd84d")
+ANT1, ANT2, ANT_MEAS = "#00e5aa", "#3ab4f2", "#ff9a3c"
 HOVER = QColor("#e3e7ea")
 MARK = QColor("#f5a623")
 
@@ -50,6 +51,9 @@ class PlanView(QWidget):
         self.cx = self.cy = 0.0      # centre east, north (m)
         self.scale = 1.0             # pixels per metre
         self.basemap = None          # (QImage, (e0, n0, e1, n1))
+        self.antennas = None         # {"gps1": (n, e), "gps2": (n, e)} from the installation, or None
+        self.measured = None         # (n, e) arrays: GPS2 as measured by the antenna check
+        self.show_dir = True
         self._drag = None
         self._shape = []
         self.setMouseTracking(True)
@@ -129,11 +133,27 @@ class PlanView(QWidget):
             if ch.any():
                 self._dots(p, tr.oe[ch], tr.on[ch], QColor(232, 72, 85, 150), 2.2)
             vals, cols = self.colours()
+            if self.antennas:
+                for key, col in (("gps1", ANT1), ("gps2", ANT2)):
+                    an, ae = self.antennas[key]
+                    self._thin(p, idx, ae, an, QColor(col))
             self._lines(p, idx, vals, cols, tr.fe, tr.fn)
+            if self.show_dir:
+                self._chevrons(p, idx)
+            if self.measured is not None:
+                mn, me = self.measured
+                x0, y0 = self.to_screen(me, mn)
+                ins = (x0 >= 0) & (x0 <= self.width()) & (y0 >= 0) & (y0 <= self.height())
+                if ins.any():
+                    self._dots(p, me[ins], mn[ins], QColor(ANT_MEAS), 3.2)
             if self.sel is not None:
                 s = self.sel & vis
                 if s.any():
                     self._dots(p, tr.fe[s], tr.fn[s], SEL, 4.0)
+        if self.antennas:
+            for i in (self.mark_i, self.hover_i):
+                if 0 <= i < len(tr.t):
+                    self._vehicle(p, i)
         for i, col, r in ((self.mark_i, MARK, 6.0), (self.hover_i, HOVER, 5.0)):
             if 0 <= i < len(tr.t):
                 x, y = self.to_screen(tr.fe[i], tr.fn[i])
@@ -182,6 +202,69 @@ class PlanView(QWidget):
                     else:
                         p.drawPolyline(QPolygonF(pts))
                 start = k
+
+    def _thin(self, p, idx, ex, ny, col):
+        """A thin line through the visible samples (antenna tracks)."""
+        x, y = self.to_screen(ex[idx], ny[idx])
+        if len(idx) < 2:
+            return
+        brk = np.ones(len(idx), dtype=bool)
+        brk[1:] = (np.diff(idx) > 1) | (np.diff(self.track.t[idx]) > 2.0)
+        xi, yi = np.round(x).astype(np.int64), np.round(y).astype(np.int64)
+        keep = np.ones(len(idx), dtype=bool)
+        keep[1:] = (np.diff(xi) != 0) | (np.diff(yi) != 0) | brk[1:]
+        x, y, brk = x[keep], y[keep], brk[keep]
+        p.setPen(QPen(col, 1.2))
+        start = 0
+        for k in range(1, len(x) + 1):
+            if k == len(x) or brk[k]:
+                if k - start > 1:
+                    p.drawPolyline(QPolygonF([QPointF(float(x[j]), float(y[j])) for j in range(start, k)]))
+                start = k
+
+    def _chevrons(self, p, idx, spacing=90.0):
+        """Direction of travel: a chevron every `spacing` pixels along the visible track."""
+        tr = self.track
+        if len(idx) < 3:
+            return
+        x, y = self.to_screen(tr.fe[idx], tr.fn[idx])
+        brk = np.zeros(len(idx), dtype=bool)
+        brk[1:] = (np.diff(idx) > 1) | (np.diff(tr.t[idx]) > 2.0)
+        d = np.hypot(np.diff(x), np.diff(y))
+        d[brk[1:]] = 0.0
+        cum = np.concatenate(([0.0], np.cumsum(d)))
+        marks = np.nonzero(np.diff(np.floor((cum + spacing * 0.5) / spacing)) > 0)[0] + 1
+        if len(marks) > 400:
+            return
+        p.setPen(QPen(QColor(theme.BRIGHT), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+                      Qt.PenJoinStyle.RoundJoin))
+        for k in marks:
+            a, b = max(0, k - 3), min(len(x) - 1, k + 3)
+            dx, dy = x[b] - x[a], y[b] - y[a]
+            L = math.hypot(dx, dy)
+            if L < 1e-6 or brk[a + 1:b + 1].any():
+                continue
+            ux, uy = dx / L, dy / L
+            cx, cy = float(x[k]), float(y[k])
+            s = 6.0
+            p.drawPolyline(QPolygonF([QPointF(cx - s * ux - s * 0.8 * uy, cy - s * uy + s * 0.8 * ux),
+                                      QPointF(cx, cy),
+                                      QPointF(cx - s * ux + s * 0.8 * uy, cy - s * uy - s * 0.8 * ux)]))
+
+    def _vehicle(self, p, i):
+        """At sample i: IMU, GPS1 and GPS2 (as installed) joined, and the direction of travel."""
+        tr = self.track
+        ox, oy = self.to_screen(tr.fe[i], tr.fn[i])
+        for key, col in (("gps1", ANT1), ("gps2", ANT2)):
+            an, ae = self.antennas[key]
+            ax, ay = self.to_screen(ae[i], an[i])
+            p.setPen(QPen(QColor(col), 1.5))
+            p.drawLine(QPointF(ox, oy), QPointF(ax, ay))
+            p.setBrush(QColor(col))
+            p.drawEllipse(QPointF(ax, ay), 4.5, 4.5)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawText(QRectF(ax + 7, ay - 8, 50, 16), _af(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                       "GPS1" if key == "gps1" else "GPS2")
 
     def _dots(self, p, ex, ny, col, r):
         x, y = self.to_screen(ex, ny)
@@ -240,6 +323,10 @@ class PlanView(QWidget):
         else:
             items = [(editor.STATE_LABEL[s], STATE_COLOURS[s]) for s in sorted(STATE_COLOURS)]
         items.append(("As processed (moved)", "#e84855"))
+        if self.antennas:
+            items += [("GPS1 primary (installed)", ANT1), ("GPS2 secondary (installed)", ANT2)]
+        if self.measured is not None:
+            items.append(("GPS2 measured (antenna check)", ANT_MEAS))
         fm = p.fontMetrics()
         w = max(fm.horizontalAdvance(t) for t, _ in items) + 30
         h = fm.height() * len(items) + 8
@@ -532,6 +619,21 @@ class TrajectoryEditor(PluginWindow):
         self.colour.addItem("Solution type", "fix")
         self.colour.currentIndexChanged.connect(self._colour_changed)
         h.addWidget(self.colour)
+        self.c_dir = QCheckBox("Direction")
+        self.c_dir.setChecked(True)
+        self.c_dir.setToolTip("Chevrons along the track pointing the way the vehicle drove")
+        self.c_dir.toggled.connect(self._dir_toggled)
+        h.addWidget(self.c_dir)
+        self.c_ant = QCheckBox("Antennas")
+        self.c_ant.setToolTip("Draw where GPS1 (primary) and GPS2 (secondary) were along the track, from the "
+                              "offsets on the Installation page; hover or click a point to see the vehicle there")
+        self.c_ant.toggled.connect(self._ant_toggled)
+        h.addWidget(self.c_ant)
+        b = QPushButton("Check antennas")
+        b.setToolTip("Measure where GPS2 really was relative to GPS1 while driving straight, and compare with the "
+                     "installation (finds antennas plugged in the wrong way round)")
+        b.clicked.connect(self._check_antennas)
+        h.addWidget(b)
         self.bm = QCheckBox("Map layers underneath")
         self.bm.setToolTip("Draw the layers of the QGIS map (basemap, roads) under the plan view")
         self.bm.toggled.connect(self._bm_toggled)
@@ -658,6 +760,9 @@ class TrajectoryEditor(PluginWindow):
         else:
             QTimer.singleShot(0, self.plan.fit)
         self._apply_selection_windows(self.sel_windows)
+        self._ant_toggled(self.c_ant.isChecked())
+        if getattr(self.dock, "antenna_check", None):
+            self.set_antenna_check(self.dock.antenna_check)
         self.fill_table()
         self._update_buttons()
 
@@ -1006,6 +1111,47 @@ class TrajectoryEditor(PluginWindow):
         self.profile.select_mode = key == "time"
         self.plan.tool = "pan" if key == "time" else key
         self.plan.setCursor(Qt.CursorShape.OpenHandCursor if self.plan.tool == "pan" else Qt.CursorShape.CrossCursor)
+
+    def _dir_toggled(self, on):
+        self.plan.show_dir = bool(on)
+        self.plan.update()
+
+    def _ant_toggled(self, on):
+        tr = self.track
+        if on and tr and tr.ok and self.project:
+            inst = self.project.cfg["installation"]
+            self.plan.antennas = {"gps1": tr.antenna(inst.get("lever_antenna") or [0, 0, 0]),
+                                  "gps2": tr.antenna(inst.get("lever_antenna2") or [0, 0, 0])}
+        else:
+            self.plan.antennas = None
+        self.plan.update()
+
+    def _check_antennas(self):
+        from . import antennacheck
+        antennacheck.run(self.dock, self)
+
+    def set_antenna_check(self, res):
+        """Show GPS2 as measured: GPS1 (installed) + the measured baseline, turned with the direction of
+        travel at each epoch."""
+        tr = self.track
+        pts = res.get("points") or []
+        if not tr or not tr.ok or not pts or res.get("basis") != "course":
+            self.plan.measured = None
+            self.plan.update()
+            return
+        inst = self.project.cfg["installation"]
+        g1n, g1e = tr.antenna(inst.get("lever_antenna") or [0, 0, 0])
+        t = np.array([q[0] for q in pts])
+        fwd = np.array([q[1] for q in pts])
+        stb = np.array([q[2] for q in pts])
+        k = np.clip(np.searchsorted(tr.t, t), 0, len(tr.t) - 1)
+        c = tr.course[k]
+        n = g1n[k] + fwd * np.cos(c) - stb * np.sin(c)
+        e = g1e[k] + fwd * np.sin(c) + stb * np.cos(c)
+        self.plan.measured = (n, e)
+        if not self.c_ant.isChecked():
+            self.c_ant.setChecked(True)
+        self.plan.update()
 
     def _colour_changed(self, *_):
         self.plan.colour_by = self.colour.currentData()
