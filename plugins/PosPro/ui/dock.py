@@ -34,6 +34,7 @@ from dcs_core.header import PluginHeader
 from dcs_core.window import PluginWindow
 
 from .widgets import VEHICLE_PRESETS, Card, CoverageView, Section, StepButton, Toast, VehicleView
+from . import antennacheck
 from .plots import Donut
 
 
@@ -875,9 +876,18 @@ class InstallPage(Page):
         self.b_meas2 = QPushButton("Measure GPS2 from the data")
         self.b_meas2.setToolTip("Carrier-phase baseline from GPS1 to GPS2 in the recorded observations, turned into "
                                 "the vehicle frame with the Certus attitude and added to GPS1. Works parked or "
-                                "driving; needs a few minutes with both antennas in the open.")
+                                "driving; needs a few minutes with both antennas in the open. If the antennas may be "
+                                "plugged in the wrong way round, use Check antennas first: the Certus heading used "
+                                "here is turned 180\u00b0 by swapped antennas, which hides the swap.")
         self.b_meas2.clicked.connect(self.measure_gps2)
         mr.addWidget(self.b_meas2)
+        self.b_antcheck = QPushButton("Check antennas")
+        self.b_antcheck.setToolTip("Where were GPS1 and GPS2 really? Measures the GPS1\u2013GPS2 baseline while "
+                                   "driving straight, using the direction of travel (not the Certus heading, which "
+                                   "comes from the antennas), and compares it with the offsets here. Finds antennas "
+                                   "plugged in the wrong way round.")
+        self.b_antcheck.clicked.connect(lambda: antennacheck.run(self.dock, self))
+        mr.addWidget(self.b_antcheck)
         mr.addStretch(1)
         pl.addLayout(mr)
         self.meas2 = _hint("")

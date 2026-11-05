@@ -239,12 +239,9 @@ def _rt_attitude(path):
     return out
 
 
-def measure_antenna2(project, ctx):
-    """GPS2's offset from the recorded data: the carrier-phase baseline from
-    GPS1 to GPS2 (RTKLIB moving base, fixed epochs only), turned into the
-    vehicle frame with the Certus's attitude and added to GPS1's offset.
-    Works parked as well as driving. Returns {"value", "sd", "length",
-    "epochs", "fixed_pct"}."""
+def baseline_solutions(project, ctx):
+    """GPS1 -> GPS2 carrier-phase baseline from the recorded data (RTKLIB moving base, no base station
+    needed): [(gps time, east, north, up, quality)], quality 1 = fixed. Also the paths of the inputs."""
     ex = os.path.join(project.work_dir, "extract")
     r1, r2, rt = (os.path.join(ex, f) for f in ("rover.obs", "rover_rx2.obs", "rt.bin"))
     for f, what in ((r1, "GPS1 observations"), (r2, "GPS2 observations (Certus receiver 1)"),
@@ -284,6 +281,16 @@ def measure_antenna2(project, ctx):
             sols.append((t, e, n, u, q))
     if not sols:
         raise StepError("no GPS1-GPS2 baseline solutions (are both antennas tracking the same satellites?)")
+    return sols, rt
+
+
+def measure_antenna2(project, ctx):
+    """GPS2's offset from the recorded data: the carrier-phase baseline from
+    GPS1 to GPS2 (RTKLIB moving base, fixed epochs only), turned into the
+    vehicle frame with the Certus's attitude and added to GPS1's offset.
+    Works parked as well as driving. Returns {"value", "sd", "length",
+    "epochs", "fixed_pct"}."""
+    sols, rt = baseline_solutions(project, ctx)
     fixed = [s for s in sols if s[4] == 1]
     if len(fixed) < 20:
         raise StepError("the GPS1-GPS2 baseline did not fix (%d of %d epochs); try a longer recording in the "
