@@ -322,16 +322,22 @@ def measure_antenna2(project, ctx):
 # 2. ephemeris
 # ---------------------------------------------------------------------------
 def nav_files(project, ctx, need_precise=False):
-    files = []
+    """Navigation files for processing. The INS's own ephemeris (rover.nav)
+    and the IGS broadcast product are trusted; every other file (next to the
+    base observations, or added on the Data page) is checked orbit by orbit
+    against them first (engine navcheck) and only the orbits that agree are
+    used."""
+    trusted, screened = [], []
     ex = os.path.join(project.work_dir, "extract", "rover.nav")
+    navdir = project.wpath("nav", "x")[:-2]
     for f in project.cfg.get("nav_files") or []:
         if os.path.exists(f):
-            files.append(rinex.decompress_to(f, project.wpath("nav", "x")[:-2]))
+            screened.append(rinex.decompress_to(f, navdir))
     span = project.rover_span()
     if project.cfg.get("auto_ephemeris", True) and span:
         for day in products.days_between(span[0] - 60, span[1] + 60):
             try:
-                files.append(products.brdc(day, lambda m: ctx.log("info", m)))
+                trusted.append(products.brdc(day, lambda m: ctx.log("info", m)))
             except products.DownloadError as e:
                 ctx.log("warning", "broadcast ephemeris for %s not downloaded (%s); using the files "
                                    "you supplied and the rover's own GPS ephemeris" % (day, str(e).splitlines()[0]))
@@ -346,18 +352,63 @@ def nav_files(project, ctx, need_precise=False):
                 if cand == f or not lc.startswith(stem):
                     continue
                 if lc.endswith(("n", "g", "l", "p")) and lc[-3:-1].isdigit() or "_mn." in lc or lc.endswith("nav"):
-                    files.append(rinex.decompress_to(cand, project.wpath("nav", "x")[:-2]))
+                    screened.append(rinex.decompress_to(cand, navdir))
     if os.path.exists(ex):
-        files.append(ex)
-    seen = set()
-    out = []
+        trusted.insert(0, ex)
+    screened = _unique([f for f in screened if f not in trusted])
+    if screened and trusted:
+        screened = check_nav_files(project, screened, trusted, ctx)
+    out = _unique(trusted + screened)
+    if not out:
+        raise StepError("no navigation (ephemeris) data: connect to the internet or add a RINEX "
+                        "navigation file on the Data page")
+    return out
+
+
+def _unique(files):
+    seen, out = set(), []
     for f in files:
         if f not in seen:
             seen.add(f)
             out.append(f)
-    if not out:
-        raise StepError("no navigation (ephemeris) data: connect to the internet or add a RINEX "
-                        "navigation file on the Data page")
+    return out
+
+
+def check_nav_files(project, files, refs, ctx):
+    """Engine navcheck: each file's orbits against the trusted ones. Returns
+    the checked copies to use (a file that cannot be read is left out)."""
+    odir = project.wpath("nav", "checked", "x")[:-2]
+    os.makedirs(odir, exist_ok=True)
+    args = ["navcheck", "--out", odir]
+    for r in refs:
+        args += ["--ref", r]
+    res = engine.run(args + files, None, ctx.log, ctx.cancelled)
+    if not res.ok():
+        ctx.log("warning", "navigation files could not be checked (%s); they are used as they are"
+                % (res.message() or "engine error"))
+        return files
+    out = []
+    for k, f in enumerate(files):
+        o = res.results.get("nav%d_out" % k)
+        name = os.path.basename(f)
+        if o is None:
+            out.append(f)
+            continue
+        if not o:
+            ctx.log("warning", "navigation file %s could not be read and is not used" % name)
+            continue
+        out.append(o)
+        nd = int(res.results.get("nav%d_dropped" % k, "0") or 0)
+        nc = int(res.results.get("nav%d_checked" % k, "0") or 0)
+        if nd:
+            ctx.log("warning", "navigation file %s: %d orbit%s disagree%s with the INS's own and the IGS "
+                               "broadcast orbits (by up to %s m) and %s left out (%s). If this keeps happening, "
+                               "remove the file from the base folder." %
+                    (name, nd, "" if nd == 1 else "s", "s" if nd == 1 else "", res.results.get("nav%d_worst_m" % k, "?"),
+                     "is" if nd == 1 else "are", res.results.get("nav%d_dropped_sats" % k, "")))
+        else:
+            ctx.log("info", "navigation file %s checked: %d orbit%s agree with the reference orbits"
+                    % (name, nc, "" if nc == 1 else "s"))
     return out
 
 
@@ -856,7 +907,31 @@ def combine(project, ctx):
     if project.cfg["processing"].get("passes", "both") == "both":
         args += ["--bwd", os.path.join(idir, "bwd.bin")]
     r = _check(engine.run(args, ctx.progress, ctx.log, ctx.cancelled), "Combining the passes")
+    check_runaway(r.results, ctx)
     return r.results
+
+
+RUNAWAY_SD_M = 1000.0       # any σ above this: the solution diverged, stop
+LARGE_SD_M = 10.0           # above this: warn
+
+
+def check_runaway(results, ctx):
+    """Stop with a clear error instead of handing over a trajectory whose
+    solution ran away (field test 2026-11-05: σ 540 km from a bad
+    navigation file)."""
+    try:
+        sd = max(float(results.get("max_sd_h_m") or 0), float(results.get("max_sd_v_m") or 0))
+    except ValueError:
+        return
+    if sd > RUNAWAY_SD_M:
+        raise StepError(
+            "the solution ran away: its σ reached %.0f km, so this trajectory cannot be used. The usual "
+            "causes are a bad navigation file next to the base observations (see the warnings above), a "
+            "wrong base position, or IMU data that did not arrive in full. Fix the cause and process "
+            "again; Trajectory Review cannot repair this." % (sd / 1000.0))
+    if sd > LARGE_SD_M:
+        ctx.log("warning", "the largest σ is %.1f m: look at the quality plots before using this "
+                           "trajectory" % sd)
 
 
 def rt_trajectory(project, ctx):
@@ -882,6 +957,19 @@ def _finish_review(project, ctx):
     re-apply its edits (poor, interpolate)."""
     from . import review
     review.snapshot_original(project)
+    # hand selections were drawn on the trajectory before this run: they no longer
+    # match it. Decisions made on them stay (they are edits). The list is found
+    # again on the new trajectory with the same limits.
+    gone = review.remove_selections(project)
+    if gone:
+        ctx.log("info", "Trajectory Review: %d hand selection%s from the previous run taken off the list"
+                % (gone, "" if gone == 1 else "s"))
+    try:
+        found = review.detect(project)
+        ctx.log("info", "Trajectory Review: %d anomal%s against your limits"
+                % (len(found), "y" if len(found) == 1 else "ies"))
+    except Exception as e:      # noqa: BLE001
+        ctx.log("warning", "Trajectory Review: could not look for anomalies (%s)" % e)
     n = review.apply(project)
     if n:
         ctx.log("info", "Trajectory Review edits applied to %d records" % n)

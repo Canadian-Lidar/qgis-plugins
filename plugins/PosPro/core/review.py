@@ -195,14 +195,47 @@ def add_edit(project, t0, t1, action, source="manual", horizontal=True, vertical
 
 def add_selection(project, t0, t1):
     """A part chosen by hand (map shape or plot range): listed like an
-    anomaly, still to be decided."""
+    anomaly, still to be decided. The same window twice is listed once."""
     r = state(project)
+    t1 = max(t1, t0 + 1.0)
+    for a in r["anomalies"]:
+        if a.get("kind") == "manual" and abs(a["t0"] - t0) < 0.5 and abs(a["t1"] - t1) < 0.5:
+            return a
     k = 1 + max([int(a["id"][1:]) for a in r["anomalies"] if a["id"].startswith("S")] + [0])
-    a = {"id": "S%d" % k, "kind": "manual", "t0": float(t0), "t1": float(max(t1, t0 + 1.0)), "max": 0.0}
+    a = {"id": "S%d" % k, "kind": "manual", "t0": float(t0), "t1": float(t1), "max": 0.0}
     r["anomalies"].append(a)
     r["anomalies"].sort(key=lambda x: x["t0"])
     log(project, "selected by hand %s" % _span(a["t0"], a["t1"]))
     return a
+
+
+def merge_windows(runs, join_s=30.0, max_rows=20):
+    """One drawing on the map -> few rows: pieces closer than join_s are one
+    window, and if there are still more than max_rows (a scattered
+    trajectory), the drawing becomes one window from the first to the last
+    piece. runs: [(t0, t1, ...)]."""
+    w = []
+    for r in sorted(runs, key=lambda x: x[0]):
+        if w and r[0] - w[-1][1] <= join_s:
+            w[-1][1] = max(w[-1][1], r[1])
+        else:
+            w.append([r[0], r[1]])
+    if len(w) > max_rows:
+        w = [[w[0][0], max(x[1] for x in w)]]
+    return [tuple(x) for x in w]
+
+
+def remove_selections(project, ids=None):
+    """Take hand selections off the list (all of them when ids is None).
+    Decisions already made on them stay as edits. Returns how many went."""
+    r = state(project)
+    keep, gone = [], []
+    for a in r["anomalies"]:
+        (gone if a.get("kind") == "manual" and (ids is None or a["id"] in ids) else keep).append(a)
+    r["anomalies"] = keep
+    if gone:
+        log(project, "removed %d hand selection%s" % (len(gone), "" if len(gone) == 1 else "s"))
+    return len(gone)
 
 
 def remove_edit(project, eid):

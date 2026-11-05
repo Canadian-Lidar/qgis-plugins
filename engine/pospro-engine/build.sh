@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")"
 DEFS="-DENAGLO -DENAGAL -DENAQZS -DENACMP -DENAIRN -DNFREQ=3 -DNEXOBS=3"
-SRC="src/pp_main.c src/pp_util.c src/pp_mcap.c src/pp_extract.c src/pp_gnss.c src/pp_ins.c src/pp_tc.c src/pp_combine.c src/pp_export.c"
+SRC="src/pp_main.c src/pp_util.c src/pp_mcap.c src/pp_extract.c src/pp_gnss.c src/pp_ins.c src/pp_tc.c src/pp_combine.c src/pp_export.c src/pp_navcheck.c"
 RTK="rtklib/rtkcmn.c rtklib/rinex.c rtklib/ephemeris.c rtklib/preceph.c rtklib/sbas.c rtklib/ionex.c rtklib/rtkpos.c rtklib/ppp.c rtklib/ppp_ar.c rtklib/lambda.c rtklib/pntpos.c rtklib/postpos.c rtklib/options.c rtklib/solution.c rtklib/geoid.c rtklib/tides.c rtklib/datum.c rtklib/convkml.c rtklib/convgpx.c rtklib/rtcm.c rtklib/rtcm2.c rtklib/rtcm3.c rtklib/rtcm3e.c"
 mkdir -p bin
 OUT=${1:-all}

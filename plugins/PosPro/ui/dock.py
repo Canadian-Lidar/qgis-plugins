@@ -1539,7 +1539,12 @@ class ReviewPage(Page):
         self.b_accept.clicked.connect(lambda: self.decide("accept"))
         self.b_clear = QPushButton("Clear decision")
         self.b_clear.clicked.connect(self.clear_decision)
-        for i, b in enumerate((self.b_zoom, self.b_excl, self.b_poor, self.b_interp, self.b_accept, self.b_clear)):
+        self.b_remove = QPushButton("Remove from list")
+        self.b_remove.setToolTip("Take the selected hand selections (S rows) off the list. Rows found by "
+                                 "Find anomalies come back while they still miss the limits.")
+        self.b_remove.clicked.connect(self.remove_rows)
+        for i, b in enumerate((self.b_zoom, self.b_excl, self.b_poor, self.b_interp, self.b_accept, self.b_clear,
+                               self.b_remove)):
             ar.addWidget(b, i // 3, i % 3)
         v.addLayout(ar)
         hr = QHBoxLayout()
@@ -1563,7 +1568,8 @@ class ReviewPage(Page):
         self.b_reproc.clicked.connect(self.dock.run_processing)
         er.addWidget(self.b_reproc)
         er.addStretch(1)
-        for label, fn in (("Undo", self.undo), ("Reset to original", self.reset), ("Edit log", self.show_log)):
+        for label, fn in (("Clear hand selections", self.clear_selections), ("Undo", self.undo),
+                          ("Reset to original", self.reset), ("Edit log", self.show_log)):
             b = QPushButton(label)
             b.clicked.connect(fn)
             er.addWidget(b)
@@ -1675,6 +1681,7 @@ class ReviewPage(Page):
         n = len(self.selected_items())
         for b in (self.b_zoom, self.b_accept, self.b_poor, self.b_clear):
             b.setEnabled(n > 0)
+        self.b_remove.setEnabled(any(str(it["id"]).startswith("S") for it in self.selected_items()))
         mode = self.project.cfg["processing"].get("mode") if self.project else ""
         self.b_excl.setEnabled(n > 0 and mode in ("tc", "lc"))
         self.b_interp.setEnabled(n > 0 and mode in ("gnss", "rt"))
@@ -1724,6 +1731,30 @@ class ReviewPage(Page):
                 review.remove_edit(self.project, it["edit"]["id"])
         self.dock.save()
         self.after_edit(True)
+
+    def remove_rows(self):
+        from ..core import review
+        ids = {it["id"] for it in self.selected_items() if str(it["id"]).startswith("S")}
+        if not ids:
+            return
+        n = review.remove_selections(self.project, ids)
+        self.dock.save()
+        self.fill()
+        self.dock.toast("%d hand selection%s removed" % (n, "" if n == 1 else "s"))
+
+    def clear_selections(self):
+        from ..core import review
+        n = sum(1 for a in review.state(self.project)["anomalies"] if a.get("kind") == "manual")
+        if not n:
+            self.dock.toast("No hand selections on the list")
+            return
+        if theme.msg_question(self, "PosPro", "Take all %d hand selections off the list? Decisions already made "
+                                              "on them stay." % n) != QMessageBox.StandardButton.Yes:
+            return
+        review.remove_selections(self.project)
+        self.dock.save()
+        self.fill()
+        self.dock.toast("%d hand selections removed" % n)
 
     def undo(self):
         from ..core import review
@@ -1807,11 +1838,12 @@ class ReviewPage(Page):
         if not runs:
             self.dock.toast("No part of the trajectory inside the selection", "warn")
             return
-        for a, b, _m in runs:
+        wins = review.merge_windows(runs)
+        for a, b in wins:
             review.add_selection(self.project, max(qc["gps_time"][0], a - 0.5), min(qc["gps_time"][-1], b + 0.5))
         self.dock.save()
         self.fill()
-        self.dock.toast("%d part%s of the trajectory added" % (len(runs), "" if len(runs) == 1 else "s"))
+        self.dock.toast("%d window%s added to the list" % (len(wins), "" if len(wins) == 1 else "s"))
 
     def select_plot_range(self):
         plots = self.dock.plugin.plots
@@ -2583,7 +2615,13 @@ class PosProDock(PluginWindow):
             dst["rover"][k] = src["rover"].get(k)
         dst["results"] = src.get("results") or {}
         dst["frame"] = src.get("frame") or dst.get("frame")
-        dst.setdefault("review", {})["excluded_in_run"] = (src.get("review") or {}).get("excluded_in_run", [])
+        sr, dr = src.get("review") or {}, dst.setdefault("review", {})
+        dr["excluded_in_run"] = sr.get("excluded_in_run", [])
+        if "anomalies" in sr:
+            # found again on the new trajectory; hand selections from before were taken off
+            dr["anomalies"] = sr["anomalies"]
+        old_log = set(dr.get("log") or [])
+        dr["log"] = ((dr.get("log") or []) + [x for x in sr.get("log") or [] if x not in old_log])[-500:]
 
     def cancel(self):
         if self.task:
