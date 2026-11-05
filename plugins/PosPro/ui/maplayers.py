@@ -3,11 +3,10 @@ distance rings, processed trajectory coloured by solution type or accuracy."""
 import math
 
 from qgis.core import (QgsCategorizedSymbolRenderer, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
-                       QgsFeature, QgsField, QgsFields, QgsGeometry, QgsGraduatedSymbolRenderer,
-                       QgsLayerTreeGroup, QgsLineSymbol, QgsMarkerSymbol, QgsPalLayerSettings, QgsPointXY,
-                       QgsProject, QgsRendererCategory, QgsRendererRange, QgsTextFormat,
-                       QgsVectorLayer, QgsVectorLayerSimpleLabeling, QgsFillSymbol, QgsWkbTypes)
-from qgis.PyQt.QtGui import QColor
+                       QgsFeature, QgsField, QgsGeometry, QgsGraduatedSymbolRenderer, QgsLineSymbol,
+                       QgsMarkerSymbol, QgsPalLayerSettings, QgsPointXY, QgsProject, QgsRendererCategory,
+                       QgsRendererRange, QgsTextFormat, QgsVectorLayer, QgsVectorLayerSimpleLabeling,
+                       QgsFillSymbol)
 
 from ..core import geo, results
 from ..core.project import FRAMES
@@ -16,7 +15,7 @@ GROUP_PREFIX = "PosPro: "
 
 
 def _crs(project):
-    fr = FRAMES.get(project.cfg["frame"].get("name"), FRAMES["NAD83(CSRS)"])
+    fr = FRAMES.get(project.trajectory_frame().get("name"), FRAMES["NAD83(CSRS)"])
     return QgsCoordinateReferenceSystem(fr["crs"])
 
 

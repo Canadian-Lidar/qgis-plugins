@@ -7,7 +7,6 @@ import os
 import re
 import shutil
 
-from . import geo
 
 
 def open_text(path):

@@ -7,9 +7,7 @@ available through a subscriber web portal have no download function: the
 finder shows them on the map and opens their portal instead.
 """
 import datetime
-import gzip
 import json
-import math
 import os
 import time
 

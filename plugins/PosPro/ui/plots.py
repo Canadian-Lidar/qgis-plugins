@@ -5,7 +5,6 @@ crosshair with values, click to pick a time, shaded bands (e.g. GNSS gaps)
 and a coloured status strip.
 """
 import bisect
-import datetime
 import math
 
 from qgis.PyQt.QtCore import QPointF, QRectF, Qt, pyqtSignal

@@ -307,8 +307,22 @@ def exclusions_pending(project):
     return now != sorted([round(a, 3), round(b, 3)] for a, b in r.get("excluded_in_run") or [])
 
 
+ENGINE_MAX_EXCLUDE = 256      # windows the engine takes (pp_ins.c); it would drop the rest unseen
+
+
+def fit_windows(wins, limit=ENGINE_MAX_EXCLUDE):
+    """At most limit windows: the two closest neighbours are joined until they fit (a little more is
+    excluded, nothing is lost)."""
+    w = sorted([list(x) for x in wins])
+    while len(w) > limit:
+        k = min(range(len(w) - 1), key=lambda i: w[i + 1][0] - w[i][1])
+        w[k][1] = max(w[k][1], w[k + 1][1])
+        del w[k + 1]
+    return [tuple(x) for x in w]
+
+
 def engine_exclude_value(project):
-    return ";".join("%.3f-%.3f" % w for w in exclusions(project))
+    return ";".join("%.3f-%.3f" % w for w in fit_windows(exclusions(project)))
 
 
 # ---------------------------------------------------------------------------
@@ -509,9 +523,11 @@ def summary(project):
 CERTUS_FIX = {7: 6, 6: 5, 5: 4, 4: 3, 3: 3, 2: 2, 1: 2, 0: 0}
 
 
-def rt_to_pass(rt_path, out_path):
+def rt_to_pass(rt_path, out_path, span=None):
     """The Certus real-time solution (rt.bin, packet 20) as a trajectory pass
-    for the engine's combine step. Returns the record count."""
+    for the engine's combine step, inside span (t0, t1 GPS s) when given (the time crop).
+    Returns the record count."""
+    t_lo, t_hi = (span[0], span[1]) if span else (-1e300, 1e300)
     from .results import RT_FMT
     with open(rt_path, "rb") as fi, open(out_path + ".tmp", "wb") as fo:
         hdr = fi.read(64)
@@ -527,6 +543,8 @@ def rt_to_pass(rt_path, out_path):
             buf = []
             for (t, lat, lon, h, vn, ve, vd, ro, pi, he, sdlat, sdlon, sdh, gx, gy, gz, sysst, filt) in \
                     RT_FMT.iter_unpack(b[:len(b) - len(b) % RT_FMT.size]):
+                if t < t_lo or t > t_hi:
+                    continue
                 fix = (filt >> 4) & 7
                 # filter status: bit 1 navigation initialised, bits 4-6 GNSS fix type (0 = none)
                 st = CERTUS_FIX.get(fix, 0) if fix else (1 if filt & 0x02 else 0)

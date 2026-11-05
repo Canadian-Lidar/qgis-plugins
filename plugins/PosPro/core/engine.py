@@ -77,8 +77,9 @@ def _popen(args, cwd=None):
                             bufsize=1, **kw)
 
 
-def run(args, on_progress=None, on_message=None, is_cancelled=None, cwd=None):
-    """Run one engine command and wait. Returns EngineResult."""
+def run(args, on_progress=None, on_message=None, is_cancelled=None, cwd=None, timeout=None):
+    """Run one engine command and wait. Returns EngineResult. With timeout (s) the engine is stopped
+    when it runs longer."""
     res = EngineResult()
     proc = _popen(args, cwd)
     q = queue.Queue()
@@ -94,12 +95,15 @@ def run(args, on_progress=None, on_message=None, is_cancelled=None, cwd=None):
         t.start()
     done = 0
     err_lines = []
+    t_end = time.time() + timeout if timeout else None
     try:
         while done < 2:
             if is_cancelled and is_cancelled():
                 proc.kill()
                 proc.wait()
                 raise Cancelled()
+            if t_end and time.time() > t_end:
+                raise RuntimeError("the engine did not answer within %d s" % timeout)
             try:
                 tag, line = q.get(timeout=0.2)
             except queue.Empty:
@@ -113,6 +117,13 @@ def run(args, on_progress=None, on_message=None, is_cancelled=None, cwd=None):
             _handle(line, res, on_progress, on_message)
         res.code = proc.wait()
     finally:
+        # a callback that raised (or a timeout) must not leave the engine running on its own
+        if proc.poll() is None:
+            try:
+                proc.kill()
+                proc.wait(5)
+            except Exception:       # noqa: BLE001
+                pass
         # close the engine's pipes (Python otherwise warns "unclosed file" for each one)
         for t in threads:
             t.join(timeout=1.0)
@@ -200,7 +211,7 @@ def run_parallel(jobs, on_progress=None, on_message=None, is_cancelled=None):
 
 def version():
     try:
-        r = run(["version"])
+        r = run(["version"], timeout=15)
         return r.results.get("version"), r.results.get("rtklib")
     except Exception:          # noqa: BLE001
         return None, None

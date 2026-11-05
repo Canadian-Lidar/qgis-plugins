@@ -24,7 +24,9 @@ def leap_seconds(utc):
 
 def gps_to_utc(gps_seconds):
     t = GPS_EPOCH + datetime.timedelta(seconds=gps_seconds)
-    return t - datetime.timedelta(seconds=leap_seconds(t))
+    # the leap-second table is in UTC: look it up at the UTC time (iterated once), not the GPS time
+    u = t - datetime.timedelta(seconds=leap_seconds(t))
+    return t - datetime.timedelta(seconds=leap_seconds(u))
 
 
 def utc_to_gps(utc):

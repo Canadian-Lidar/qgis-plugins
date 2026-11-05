@@ -95,6 +95,20 @@ class SelectTool(QgsMapTool):
         if not g.isEmpty():
             self.selected.emit(g)
 
+    def set_mode(self, mode):
+        self.mode = mode
+        self.pts = []
+        self.dragging = False
+        self.band.reset(POLY)
+
     def deactivate(self):
         self.band.reset(POLY)
         super().deactivate()
+
+    def release(self):
+        """Take the rubber band off the canvas (the tool is not used again)."""
+        try:
+            self.band.reset(POLY)
+            self.canvas.scene().removeItem(self.band)
+        except RuntimeError:
+            pass

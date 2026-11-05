@@ -761,8 +761,7 @@ class TrajectoryEditor(PluginWindow):
             QTimer.singleShot(0, self.plan.fit)
         self._apply_selection_windows(self.sel_windows)
         self._ant_toggled(self.c_ant.isChecked())
-        if getattr(self.dock, "antenna_check", None):
-            self.set_antenna_check(self.dock.antenna_check)
+        self.set_antenna_check(getattr(self.dock, "antenna_check", None))
         self.fill_table()
         self._update_buttons()
 
@@ -1134,7 +1133,7 @@ class TrajectoryEditor(PluginWindow):
         """Show GPS2 as measured: GPS1 (installed) + the measured baseline, turned with the direction of
         travel at each epoch."""
         tr = self.track
-        pts = res.get("points") or []
+        pts = (res or {}).get("points") or []
         if not tr or not tr.ok or not pts or res.get("basis") != "course":
             self.plan.measured = None
             self.plan.update()

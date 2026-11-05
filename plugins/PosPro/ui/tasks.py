@@ -39,7 +39,12 @@ class WorkTask(QgsTask):
         except (pipeline.StepError, engine.EngineError) as e:
             self.error = str(e)
             return False
-        except Exception as e:     # noqa: BLE001 - shown to the user with details
+        except Exception as e:     # noqa: BLE001
+            # download and CSRS-PPP failures are plain messages, not program errors
+            from ..core import csrs, products
+            if isinstance(e, (products.DownloadError, csrs.CsrsError)):
+                self.error = str(e)
+                return False
             self.error = "%s\n\n%s" % (e, traceback.format_exc())
             return False
 
