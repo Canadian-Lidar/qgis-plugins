@@ -17,7 +17,7 @@ plugins (PosPro, AlignPro, CloudPro, RemixPro).
   theme, widgets, stepbar, dialogs, registry   the shared look and UI
 
 The plugins import it as `dcs_core`; it has no window of its own."""
-__version__ = "1.6.0"
+__version__ = "1.6.1"
 # API 2 (1.1.0): adds clraw, hesai, anpp, sbet, las, mcap, zstd and widgets.align_flags.
 # API 3 (1.2.0): adds window.PluginWindow (the standard plugin window) and theme.FAINT, DISABLED, VIEW_BG, GRID.
 # API 4 (1.3.0): adds header.PluginHeader (the same header bar in every plugin).

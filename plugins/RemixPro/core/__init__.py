@@ -8,7 +8,7 @@
   bwxraw, surveyconfig   the writers, taken unchanged from the mapper (2.10.0, 4 Nov 2026)
 """
 NAME = "RemixPro"
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 
 def software():
