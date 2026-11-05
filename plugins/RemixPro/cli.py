@@ -15,10 +15,12 @@ import os
 import sys
 
 if __package__ in (None, ""):                                       # python RemixPro/cli.py
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    __package__ = "RemixPro"                                        # noqa: A001
+    _here = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, os.path.dirname(_here))
+    __package__ = os.path.basename(_here)                           # noqa: A001 - whatever the folder is called
+    __import__(__package__)
 
-from RemixPro.core import __version__, make, sources               # noqa: E402
+from .core import __version__, make, sources                       # noqa: E402
 
 
 def main(argv=None):

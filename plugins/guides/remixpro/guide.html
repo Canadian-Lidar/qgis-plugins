@@ -1,0 +1,155 @@
+<!--#contents-->
+
+<h1><span class="num">{N}</span>Introduction</h1>
+<p>RemixPro makes the files that other programs read from the mapper's recordings, on the office PC, and turns the survey boat's sonar recordings into .clraw for the DCS plugins (chapter <i>Sonar recordings to .clraw</i>):</p>
+<table>
+<tr><th>Output</th><th>Files</th><th>Made from</th></tr>
+<tr><td><b>BeamworX</b></td><td>One <code>.bwxraw</code> per <code>.clraw</code> file, with the same name, and its survey configuration <code>.xml</code> beside it. They open in AutoPatch, AutoClean (Raw Import) and TrajEdit (Create From Raw).</td><td>Survey lines</td></tr>
+<tr><td><b>Inertial Explorer</b></td><td>IMR raw IMU file in Inertial Explorer's axes, RINEX 3.04 observations (<code>.obs</code>, the second receiver as <code>_rx2.obs</code>), GPS ephemeris (<code>.nav</code>), and a setup note with the lever arm.</td><td>Survey lines, navigation recordings, Certus logs</td></tr>
+<tr><td><b>Qinertia</b></td><td>Generic IMU file (<code>_imu.qimu</code>), the same RINEX files, and a setup note.</td><td>Survey lines, navigation recordings, Certus logs</td></tr>
+</table>
+<p>Up to version 2.9.1 the mapper made these files itself. From 2.10 it records only, so the unit spends no time on conversions, and RemixPro makes them. RemixPro uses the mapper's own writers, so its files are the same <b>byte for byte</b> as the ones the mapper made. The only difference is the program name in the IMR header and in the RINEX header, which now says RemixPro.</p>
+<p>RemixPro is a <b>side tool</b> of the Data Collection Systems plugins, not a stage of the PosPro → AlignPro → CloudPro chain. It reads the raw recordings only, publishes nothing to the other plugins, and changes nothing in a DCS project apart from its own output folder. The order in which you use it with the other plugins does not matter.</p>
+<div class="note"><b>Note</b> RemixPro never modifies a recording. It only reads the files and writes its outputs in a separate folder.</div>
+
+<h1><span class="num">{N}</span>Installing and opening RemixPro</h1>
+<h2>Requirements</h2>
+<ul>
+<li>QGIS 3.34 or later, including QGIS 4.</li>
+<li>DCS Core {CORE_VERSION} or later. RemixPro {VERSION} will not start with an older DCS Core: a message bar asks you to update it.</li>
+</ul>
+<h2>Install</h2>
+<ol class="steps">
+<li>In QGIS open <span class="ui">Plugins › Manage and Install Plugins</span>. With the Canadian Lidar repository added (<code>https://canadian-lidar.github.io/qgis-plugins/plugins.xml</code>), install or upgrade <b>DCS Core</b> first and <b>RemixPro</b> after it.</li>
+<li>Without internet access, use <span class="ui">Install from ZIP</span> with <code>dcs_core-{CORE_VERSION}.zip</code> first, then <code>remixpro-{VERSION}.zip</code>.</li>
+<li>Restart QGIS.</li>
+</ol>
+<h2>Opening RemixPro</h2>
+<ul>
+<li><span class="ui">Plugins › Canadian Lidar › Data Systems › RemixPro</span>, or the RemixPro button on the Plugins toolbar.</li>
+<li>This guide: the <span class="ui">?</span> button in the header, <span class="ui">User guide (this version)</span> in the project box, or <span class="ui">Help › Plugins › RemixPro user guide</span>.</li>
+</ul>
+
+<h1><span class="num">{N}</span>The RemixPro window</h1>
+<figure><img src="fig/empty.png" style="max-height:95mm"><figcaption><b>Figure {N}.1</b> RemixPro before anything is open. The list says what can be opened.</figcaption></figure>
+<p>The window has the same header and the same kind of window as the other DCS plugins: logo and name on the left, then the project box, the <span class="ui">⤢</span> Window button and the <span class="ui">?</span> guide button on the right. Because RemixPro is not a stage of the chain, its header has no 01 → 02 → 03 workflow boxes.</p>
+<figure><img src="fig/header.png"><figcaption><b>Figure {N}.2</b> The header.</figcaption></figure>
+<p>RemixPro opens as a floating window. The Window menu (the <span class="ui">⤢</span> button, or a right-click on the title bar) docks it to a side of the QGIS window, maximises it, or resets it. RemixPro remembers how you left it, also after QGIS restarts.</p>
+<p>The window has three parts:</p>
+<ul>
+<li><b>Recordings</b> (left): everything found in what you opened, one row per recording, with the state of each output.</li>
+<li><b>Selected recording</b> (bottom left): the details of the highlighted row.</li>
+<li><b>Make</b> (right): which outputs to make, where to put them, the <span class="ui">Make files</span> button, progress and the log.</li>
+</ul>
+<figure class="small"><img src="fig/project_menu.png" style="max-height:50mm"><figcaption><b>Figure {N}.3</b> The project box menu.</figcaption></figure>
+
+<h1><span class="num">{N}</span>Opening recordings</h1>
+<p>Use <span class="ui">Open folder…</span> (also in the project box) for a folder, or <span class="ui">Add files…</span> for single files. RemixPro looks through the folder and everything inside it. It accepts every form in which the mapper hands recordings over:</p>
+<table>
+<tr><th>What you open</th><th>Example</th></tr>
+<tr><td>A mapper project folder, or any folder inside it</td><td><code>Deck_Test/</code>, <code>Deck_Test/lines/</code>, <code>Deck_Test/nav/</code>, a line folder</td></tr>
+<tr><td>A USB copy</td><td><code>E:\Mapper captures\Deck_Test\</code> or the whole <code>Mapper captures</code> folder</td></tr>
+<tr><td>An unzipped download</td><td>a line (<code>Deck_Test_L003.zip</code>) or a whole project (<code>Deck_Test.zip</code>)</td></tr>
+<tr><td>Captures from before 2.10</td><td><code>20261020_141210_test/</code>, also when grouped into a project's <code>lines/</code></td></tr>
+<tr><td>Single files</td><td>a <code>.clraw</code> or an <code>.anpp</code></td></tr>
+<tr><td>A DCS project</td><td><span class="ui">Open a DCS project…</span> in the project box: the job's recordings, with outputs inside the project (below)</td></tr>
+</table>
+<figure><img src="fig/found.png" style="max-height:95mm"><figcaption><b>Figure {N}.1</b> A mapper 2.10 project opened: an older capture grouped into <code>lines/</code>, the project's navigation recording and two survey lines, in recording order. The first line is split over four <code>.clraw</code> files and is one row.</figcaption></figure>
+<p>Each row is one <b>recording</b>:</p>
+<table>
+<tr><th>Kind</th><th>What it is</th><th>Outputs</th></tr>
+<tr><td>Survey line</td><td>One Start/Stop on the mapper: its <code>.clraw</code> files (Lidar and Certus), however many there are.</td><td>BeamworX, Inertial Explorer, Qinertia</td></tr>
+<tr><td>Navigation</td><td>The whole Certus stream while a project was open (<code>&lt;Project&gt;_NAV_…</code>). It has no Lidar data, so BeamworX shows <i>n/a</i>. It is useful for full-day trajectories that cover every line.</td><td>Inertial Explorer, Qinertia</td></tr>
+<tr><td>Certus log</td><td>An <code>.anpp</code> file with no <code>.clraw</code> beside it, for example a capture from before mapper 2.8.</td><td>Inertial Explorer, Qinertia</td></tr>
+</table>
+<p>Lines are recognised from the information recorded inside each file, never from file names, exactly as in PosPro, AlignPro and CloudPro. So a line split over several files is one row, and old and new folder names can be mixed. Hidden files (<code>.mapper-mirror.json</code>), unfinished files (<code>*.partial</code>), <code>Processing</code> folders and the mapper's own older conversions are skipped.</p>
+<h2>Lines that are not complete</h2>
+<p>The mapper copies lines to a USB drive while it records. A 2.10 line counts as complete once its <code>continuity.json</code> and <code>manifest.sha256</code> are there. A line without them is shown in amber as <i>(incomplete)</i>, is not ticked, and is skipped unless you tick <span class="ui">Include incomplete lines</span>. Then only the files that are already finished are converted. Open the folder again (<span class="ui">Look again</span> in the project box) when the copy has finished.</p>
+<h2>The selected recording</h2>
+<p>The panel under the list shows the details of the highlighted row:</p>
+<ul>
+<li>the folder and the <code>.clraw</code> files;</li>
+<li><b>Certus data</b>: what Inertial Explorer and Qinertia are made from. RemixPro uses the Certus log (<code>.anpp</code>) when it is there, as the mapper did. Otherwise it uses the Certus packets recorded inside the <code>.clraw</code>.</li>
+<li><b>Ephemeris</b>: the ephemerides the mapper already held when the recording began (<code>ephemeris_cache.anpp</code>, <code>&lt;line&gt;_ephemeris.anpp</code> in a download, or <code>&lt;Project&gt;_NAV_…_ephemeris.anpp</code>). Without it the RINEX navigation file has only the ephemerides the Certus sent during the recording.</li>
+<li><b>Primary antenna</b>: the lever arm, from the <code>hardware.json</code> recorded in the <code>.clraw</code>, else from the line's <code>session.json</code>. Amber when no lever arm was recorded (a single <code>.anpp</code>, say).</li>
+<li><b>Survey configuration</b>: <i>recorded</i> when the <code>.clraw</code> carries the BeamworX survey configuration. Every survey line from the mapper does. Otherwise it is built from <code>hardware.json</code>.</li>
+</ul>
+<figure><img src="fig/details_nav.png" style="max-height:48mm"><figcaption><b>Figure {N}.2</b> The details of a navigation recording.</figcaption></figure>
+
+<h1><span class="num">{N}</span>Making the files</h1>
+<figure class="small"><img src="fig/make_panel.png" style="max-height:110mm"><figcaption><b>Figure {N}.1</b> The Make panel.</figcaption></figure>
+<ol class="steps">
+<li>Tick the recordings in the list. <span class="ui">Select</span> ticks all, none, survey lines only, navigation recordings only, or what is not made yet.</li>
+<li>Tick the outputs: <span class="ui">BeamworX</span>, <span class="ui">Inertial Explorer</span>, <span class="ui">Qinertia</span>. Each recording gets what applies to it, so navigation recordings never get BeamworX files.</li>
+<li>Check the <b>output folder</b> (below), and change it with <span class="ui">Choose…</span> if needed.</li>
+<li>Press <span class="ui">Make files</span>. The bar and the line under it show the recording being converted. The log lists what was made and anything to know, for example IMU samples recorded before the Certus knew the time, which are left out and counted.</li>
+</ol>
+<figure><img src="fig/made.png" style="max-height:95mm"><figcaption><b>Figure {N}.2</b> After <span class="ui">Make files</span>: every output is made, and the log lists where.</figcaption></figure>
+<h2>Made once</h2>
+<p>Each output folder holds a small note, <code>.made_from.json</code>, recording what it was made from: the file names and sizes, the lever arm, the ephemeris and the RemixPro version. When those still match, the list shows <b>✓ made</b> and <span class="ui">Make files</span> skips the output straight away. When a recording changed (for example, a line copied in full after a first look) the list shows <b>out of date</b> and the output is made again. <span class="ui">Make again even when up to date</span> remakes everything ticked.</p>
+<h2>Cancel</h2>
+<p><span class="ui">Cancel</span> stops the recording being converted. Each output is written to a work folder and moved into place only when it is complete, so a cancel (or an error) leaves the earlier result, or nothing, and never half a set. Recordings already finished stay finished. If one recording fails, the others still run, and the log says why it failed.</p>
+
+<h1><span class="num">{N}</span>Where the files go</h1>
+<p>The default output folder:</p>
+<ul>
+<li>with a DCS project open: <code>Processing/&lt;Name&gt;/RemixPro/</code>, inside the project, beside <code>01_PosPro</code> and the other stages;</li>
+<li>for recordings inside a mapper project folder (on the drive, a USB copy or a project download): <code>&lt;Project&gt;/Processing/RemixPro/</code>;</li>
+<li>otherwise: a <code>RemixPro</code> folder beside what you opened.</li>
+</ul>
+<p>Inside it there is one folder per recording:</p>
+<pre class="mono">RemixPro/
+  Deck_Test_L001_20261104_124512/
+    beamworx/            Deck_Test_L001_20261104_124512_0001.bwxraw + .xml, _0002 …
+    inertial_explorer/   Deck_Test_L001_20261104_124512.imr, .obs, _rx2.obs, .nav,
+                         README_INERTIAL_EXPLORER.txt
+    qinertia/            Deck_Test_L001_20261104_124512_imu.qimu, .obs, _rx2.obs, .nav,
+                         README_QINERTIA.txt
+  Deck_Test_NAV_20261104_124452/
+    inertial_explorer/  qinertia/</pre>
+<p>RemixPro refuses an output folder that is the folder holding the recording itself. <span class="ui">Open output folder</span> opens it in your file manager.</p>
+
+<h1><span class="num">{N}</span>Using the files</h1>
+<h2>BeamworX</h2>
+<p>Each <code>.bwxraw</code> is laid out as NavAQ writes it: the survey configuration, three seconds of navigation before the file's first Lidar data (run-in), all data, and three seconds of navigation after its end (run-out). Each file can therefore be processed on its own. The survey configuration carries the lever arms, the Lidar mounting angles in the NavAQ convention and the coordinate system recorded on the mapper. Open the files in AutoPatch, AutoClean (Raw Import) or TrajEdit (Create From Raw). A damaged chunk of a <code>.clraw</code> costs that chunk only, about one second, and the log reports it.</p>
+<h2>Inertial Explorer</h2>
+<p>Follow <code>README_INERTIAL_EXPLORER.txt</code>. In short: convert the <code>.obs</code> to GPB (receiver type RINEX), add the rover GPB, the base station and the <code>.imr</code> as the IMU file, and enter the lever arm given in the note in Inertial Explorer's own axes.</p>
+<div class="note"><b>Axes</b> The mapper records lever arms in the vehicle frame: X forward, Y starboard, Z down, from the Certus reference point. Inertial Explorer uses X right, Y forward, Z up. The IMR is already rotated into Inertial Explorer's axes (gravity reads +1 g on Z, body-to-IMU rotations 0, 0, 0), and the lever arm in the note and the IMR header is (Starboard, Forward, −Down). The measured primary antenna (+0.082, +0.495, +0.112) F/S/D becomes (+0.495, +0.082, −0.112) in Inertial Explorer.</div>
+<h2>Qinertia</h2>
+<p>Follow <code>README_QINERTIA.txt</code>: import the <code>_imu.qimu</code> as a Generic IMU file (GPS time), and the RINEX observation and navigation files. Qinertia uses the vehicle frame as it is (X forward, Y right, Z down), so its lever arms are the mapper's values unchanged.</p>
+<h2>Time and ephemeris</h2>
+<ul>
+<li>The Certus stamps everything in UTC. The files use GPS time: GPS = UTC + 18 leap seconds.</li>
+<li>Samples recorded before the Certus knew the time (stamped 2013) are left out and counted. Time tags always increase; samples out of order are left out and counted.</li>
+<li>Raw observations are on whole seconds (every 0.125 s) from mapper 2.8.2 on; older captures are at 0.072 or 0.143 s.</li>
+<li>The RINEX navigation file is GPS only, because the Certus supplies no other ephemeris. Let the processing software download broadcast ephemeris for Galileo and the other systems.</li>
+<li>Signal types RINEX has no code for are skipped, not guessed, and counted in the log.</li>
+</ul>
+
+<h1><span class="num">{N}</span>Sonar recordings to .clraw</h1>
+<p>RemixPro also converts the other way, for the survey boat: SonarView recordings (<code>.svlz</code> or <code>.svlog</code>) and CLAM TidalCal projects become <code>.clraw</code> files (kind <i>sonar</i>) that the DCS plugins read. Nothing is decoded away: every packet SonarView recorded is kept exactly as it was, and each sonar gets its own channel, including its own motion sensor (packets 504 and 505). The vehicle data SonarView recorded (MAVLink, NMEA) and the GNSS receiver's files go in beside them.</p>
+<ol class="steps">
+<li>Open the folder that holds the recordings, or a TidalCal project folder. Each recording is a row of kind <i>Sonar recording</i>; its only output is <span class="ui">.clraw (DCS)</span>.</li>
+<li>Put the measured offsets from the GNSS antenna to each sonar's acoustic centre in <code>sonar_offsets.json</code> beside the recordings (or up to three folders above, or in the TidalCal project): <code>{"1": [F, S, D], "2": [F, S, D]}</code> in metres, Forward, Starboard, Down, by SonarView device id (or <code>"port"</code> / <code>"starboard"</code>). Without it the file records the offsets as not entered; a TidalCal project's vessel table is used when there is no file.</li>
+<li>GNSS files beside the recording are taken in where their times overlap it: Reach RINEX observations (cut to the recording ± 10 minutes), navigation RINEX, the Reach <code>.LLH</code> log and an RTKLIB <code>.pos</code> solution (lines within ± 60 s). From a TidalCal project, the rover and base RINEX, LLH and PPK solution it lists are used.</li>
+<li>Tick <span class="ui">.clraw (DCS)</span> and press <span class="ui">Make files</span>. The files go in <code>&lt;recording&gt;/clraw/</code> inside the output folder, split at 2 GB.</li>
+</ol>
+<div class="note"><b>Times</b> SonarView records no arrival time. Each packet is placed at the best UTC known: the sonar's own NTP time when the sonars are on NTP, else MAVLink SYSTEM_TIME, else an estimate from SonarView's session start plus each sonar's power-up clock (relative timing right, absolute time unknown). The log says which, and the raw times stay in every packet.</div>
+<p>The format, and what PosPro, AlignPro and CloudPro will do with it, is described in the project document <code>dcs/marine-clraw.md</code>. In this version the three plugins do not process sonar recordings yet; they leave them out of their line lists.</p>
+
+<h1><span class="num">{N}</span>From the command line</h1>
+<p>The same conversions run without QGIS, for batches or a scheduled job. From the QGIS plugins folder (the one holding <code>RemixPro</code> and <code>dcs_core</code>), with a Python that has <code>numpy</code> (the one installed with QGIS has it):</p>
+<pre class="mono">python -m RemixPro.cli "E:\Mapper captures\Deck_Test" --list
+python -m RemixPro.cli "E:\Mapper captures\Deck_Test" --ie --qinertia --out D:\Jobs\Deck_Test\Exports</pre>
+<p><code>--clraw</code> converts sonar recordings to .clraw. Without <code>--beamworx</code>, <code>--ie</code>, <code>--qinertia</code> or <code>--clraw</code> everything each recording allows is made. <code>--force</code> makes the outputs again even when they are up to date, and <code>--include-incomplete</code> converts lines that are still being copied. The exit code is 1 when a recording failed.</p>
+
+<h1><span class="num">{N}</span>Questions</h1>
+<table>
+<tr><th>What you see</th><th>What it means</th></tr>
+<tr><td>A recording is missing from the list</td><td>Its files are <code>.partial</code> (still being written), inside a <code>Processing</code> folder, or hidden. A line whose <code>.clraw</code> was not copied shows as a Certus log if its <code>.anpp</code> is there.</td></tr>
+<tr><td><i>(incomplete)</i> in amber</td><td>The line is still being recorded or copied. See <i>Lines that are not complete</i>.</td></tr>
+<tr><td><i>out of date</i></td><td>The recording changed since the output was made. Make it again.</td></tr>
+<tr><td>BeamworX <i>n/a</i></td><td>A navigation recording or a Certus log has no Lidar data.</td></tr>
+<tr><td>“No antenna lever arm recorded”</td><td>The input carries none (a single <code>.anpp</code>, say). Enter the lever arm in the processing software; the measured values are in the note.</td></tr>
+<tr><td>“IMU samples … before the Certus knew the time were left out”</td><td>Normal at power-on: the Certus stamps samples 2013 until it has GNSS time.</td></tr>
+</table>

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build a DCS plugin user guide PDF from its HTML source, the same way for every plugin.
 
-    python guides/build_guide.py pospro        (or alignpro, cloudpro)
+    python guides/build_guide.py pospro        (or alignpro, cloudpro, remixpro)
 
 Reads guides/<plugin>/guide.html (the body: <h1> sections, <figure> images from guides/<plugin>/fig/),
 the plugin's name and version from plugins/<plugin>/metadata.txt (or ../<plugin>/metadata.txt beside
@@ -21,7 +21,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 NAMES = {"pospro": ("PosPro", "GNSS/INS trajectory post-processing", "Stage 01"),
          "alignpro": ("AlignPro", "Lidar boresight calibration (patch test)", "Stage 02"),
-         "cloudpro": ("CloudPro", "Point cloud georeferencing, cleaning, classification and delivery", "Stage 03")}
+         "cloudpro": ("CloudPro", "Point cloud georeferencing, cleaning, classification and delivery", "Stage 03"),
+         "remixpro": ("RemixPro", "Files for BeamworX, Inertial Explorer and Qinertia", "Side tool")}
 
 
 def plugin_dir(key):
