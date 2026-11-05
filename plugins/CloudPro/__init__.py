@@ -2,7 +2,7 @@
 georeferences the mapper's .clraw captures with PosPro's trajectory and
 AlignPro's calibration, cleans (manual editing and automatic filters with
 preview), classifies, exports and publishes cloud.json. Needs DCS Core."""
-__version__ = "1.6.0"
+__version__ = "1.6.1"
 
 
 def classFactory(iface):  # noqa: N802 - QGIS API

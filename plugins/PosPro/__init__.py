@@ -4,11 +4,10 @@ DCS_API = 7
 
 
 def classFactory(iface):  # noqa: N802 - QGIS API
-    try:
-        import dcs_core
-        dcs_core.require(DCS_API)
-    except ImportError as e:
-        return _NeedsCore(iface, str(e))
+    from . import corecheck
+    core, why, _menu = corecheck.load(DCS_API)
+    if core is None:
+        return _NeedsCore(iface, why)
     from .plugin import PosProPlugin
     return PosProPlugin(iface)
 
@@ -22,9 +21,10 @@ class _NeedsCore:
     def initGui(self):  # noqa: N802
         try:
             from qgis.core import Qgis
+            from . import corecheck
             self.iface.messageBar().pushMessage(
-                "PosPro", "PosPro needs the DCS Core plugin (install dcs_core-*.zip from Plugins > Manage and "
-                "Install Plugins > Install from ZIP, then restart QGIS). %s" % self.why, Qgis.MessageLevel.Critical, 0)
+                "PosPro", "PosPro can't start: %s. %s" % (self.why, corecheck.advice(self.why)),
+                Qgis.MessageLevel.Critical, 0)
         except Exception:       # noqa: BLE001
             pass
 

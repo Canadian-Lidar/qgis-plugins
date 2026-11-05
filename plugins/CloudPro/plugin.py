@@ -12,12 +12,9 @@ CORE_API = 7
 
 
 def _core():
-    try:
-        import dcs_core
-        dcs_core.require(CORE_API)
-        return dcs_core, ""
-    except ImportError as e:
-        return None, str(e) or "the DCS Core plugin is not installed"
+    """(dcs_core or None, reason, menu); see corecheck."""
+    from . import corecheck
+    return corecheck.load(CORE_API)
 
 
 class CloudProPlugin:
@@ -46,14 +43,13 @@ class CloudProPlugin:
             self.iface.pluginHelpMenu().addAction(self.help_action)
         except Exception:       # noqa: BLE001
             pass
-        self.core, self._why = _core()
-        if self.core is None:
-            for x in self.actions:
-                self.iface.addPluginToMenu("&Canadian Lidar", x)
-            return
-        from dcs_core import menu, registry
+        from . import corecheck
+        self.core, self._why, self._menu = _core()
         for x in self.actions:
-            menu.add(self.iface, x)
+            corecheck.add_menu(self.iface, x, self._menu)
+        if self.core is None:
+            return
+        from dcs_core import registry
         registry.register("cloudpro", self.open_project)
 
     def open_guide(self):
@@ -70,12 +66,9 @@ class CloudProPlugin:
             self.help_action = None
         if self.actions:
             self.iface.removeToolBarIcon(self.actions[0])
+            from . import corecheck
             for x in self.actions:
-                if self.core is not None:
-                    from dcs_core import menu
-                    menu.remove(self.iface, x)
-                else:
-                    self.iface.removePluginMenu("&Canadian Lidar", x)
+                corecheck.remove_menu(self.iface, x, getattr(self, "_menu", None))
             if self.core is not None:
                 from dcs_core import registry
                 registry.unregister("cloudpro")
@@ -98,9 +91,10 @@ class CloudProPlugin:
         if self.core is not None:
             return True
         from qgis.core import Qgis
+        from . import corecheck
         self.iface.messageBar().pushMessage(
-            "CloudPro", "CloudPro needs the DCS Core plugin (%s). Install DCS Core first (Plugins > Manage and "
-            "Install Plugins > Install from ZIP), then restart QGIS." % self._why, Qgis.MessageLevel.Warning, 15)
+            "CloudPro", "CloudPro can't start: %s. %s" % (self._why, corecheck.advice(self._why)),
+            Qgis.MessageLevel.Warning, 15)
         return False
 
     def show(self):

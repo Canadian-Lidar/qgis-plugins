@@ -16,13 +16,9 @@ CORE_API = 7
 
 
 def _core():
-    """dcs_core when installed and recent enough, else None and the reason."""
-    try:
-        import dcs_core
-        dcs_core.require(CORE_API)
-        return dcs_core, ""
-    except ImportError as e:
-        return None, str(e) or "the DCS Core plugin is not installed"
+    """(dcs_core or None, reason, menu); see corecheck."""
+    from . import corecheck
+    return corecheck.load(CORE_API)
 
 
 class AlignProPlugin:
@@ -46,13 +42,13 @@ class AlignProPlugin:
         self.help_action.setObjectName("mAlignProGuideAction")
         self.help_action.triggered.connect(self.open_guide)
         self.iface.pluginHelpMenu().addAction(self.help_action)
-        self.core, why = _core()
+        from . import corecheck
+        self.core, why, self._menu = _core()
+        corecheck.add_menu(self.iface, self.action, self._menu)
         if self.core is None:
-            self.iface.addPluginToMenu("&Canadian Lidar", self.action)
             self._why = why
             return
-        from dcs_core import menu, registry
-        menu.add(self.iface, self.action)
+        from dcs_core import registry
         registry.register("alignpro", self.open_project)
 
     def unload(self):
@@ -65,12 +61,11 @@ class AlignProPlugin:
             self.help_action = None
         if self.action:
             self.iface.removeToolBarIcon(self.action)
+            from . import corecheck
+            corecheck.remove_menu(self.iface, self.action, getattr(self, "_menu", None))
             if self.core is not None:
-                from dcs_core import menu, registry
-                menu.remove(self.iface, self.action)
+                from dcs_core import registry
                 registry.unregister("alignpro")
-            else:
-                self.iface.removePluginMenu("&Canadian Lidar", self.action)
         if self.dock is not None:
             from .ui import docksafe
             if docksafe.alive(self.dock):
@@ -86,9 +81,10 @@ class AlignProPlugin:
         if self.core is None:
             from qgis.core import Qgis
             self.action.setChecked(False)
+            from . import corecheck
             self.iface.messageBar().pushMessage(
-                "AlignPro", "AlignPro needs the DCS Core plugin (%s). Install DCS Core first (Plugins > Manage and "
-                "Install Plugins > Install from ZIP), then restart QGIS." % self._why, Qgis.MessageLevel.Warning, 15)
+                "AlignPro", "AlignPro can't start: %s. %s" % (self._why, corecheck.advice(self._why)),
+                Qgis.MessageLevel.Warning, 15)
             return
         if self.dock is None:
             from .ui.dock import AlignProDock
