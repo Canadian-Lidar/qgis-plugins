@@ -727,6 +727,12 @@ def ins_conf(project, direction, navs, bobs=None, bxyz=None, base=None, atx=None
             w("lever.estimate = on")
     w("nhc.enable = %d" % (1 if (p.get("nhc", True) and veh["nhc"]) else 0))
     w("nhc.sigma_m_s = %g" % float(p.get("nhc_sigma") or veh["nhc_sigma"]))
+    md = inst.get("mount_deg") or [0.0, 0.0]
+    w("nhc.mount_deg = %.4f, %.4f" % (float(md[0]), float(md[1])))
+    if inst.get("mount_mode") == "fixed":
+        w("nhc.estimate_mount = 0")
+    elif abs(float(md[0])) + abs(float(md[1])) > 0:
+        w("nhc.mount_sd_deg = 1")        # starting from a known value: it may still adjust
     w("zupt.enable = %d" % (1 if (p.get("zupt", True) and veh["zupt"]) else 0))
     w("gnss.systems = %s" % p.get("systems", "GREJ"))
     w("gnss.frequencies = %d" % int(p.get("frequencies", 2)))

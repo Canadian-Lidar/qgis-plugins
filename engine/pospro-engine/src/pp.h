@@ -12,7 +12,7 @@
 #include <stddef.h>
 #include "rtklib.h"
 
-#define PP_VERSION "1.6.1"
+#define PP_VERSION "1.6.2"
 
 /* -------------------------------------------------------------------------
  * Constants

@@ -919,6 +919,41 @@ class InstallPage(Page):
                            "what the constraint allows. Measure it once per vehicle (tape to 5 cm is enough)."))
         v.addWidget(Section("Vehicle", vw, expanded=False))
 
+        # ---- IMU mounting angles (vehicle against the IMU) ----
+        mw = QWidget()
+        ml = QVBoxLayout(mw)
+        ml.setContentsMargins(0, 0, 0, 0)
+        mf = QFormLayout()
+        self.mount_p = _dspin(-45, 45, 3, 0.01, " \u00b0")
+        self.mount_y = _dspin(-45, 45, 3, 0.01, " \u00b0")
+        self.mount_mode = QComboBox()
+        self.mount_mode.addItem("Estimate them from the drive, starting at these values", "estimate")
+        self.mount_mode.addItem("Use these values as they are (do not estimate)", "fixed")
+        for w_ in (self.mount_p, self.mount_y):
+            w_.valueChanged.connect(self.store)
+        self.mount_mode.currentIndexChanged.connect(self.store)
+        mf.addRow("Pitch of the vehicle against the IMU", self.mount_p)
+        mf.addRow("Yaw of the vehicle against the IMU", self.mount_y)
+        mf.addRow("How processing uses them", self.mount_mode)
+        ml.addLayout(mf)
+        mr = QHBoxLayout()
+        self.b_mount_last = QPushButton("Use the values from the last processing")
+        self.b_mount_last.clicked.connect(self.use_last_mount)
+        mr.addWidget(self.b_mount_last)
+        mr.addStretch(1)
+        ml.addLayout(mr)
+        self.mount_last = _hint("")
+        ml.addWidget(self.mount_last)
+        ml.addWidget(_hint("The wheel constraints need to know which way the vehicle points in the IMU's frame. "
+                           "If the Certus alignment set in the unit is a few degrees off the vehicle, every "
+                           "processing estimates that offset again from the drive, and the forward and backward "
+                           "passes can settle on different values (most often the yaw). Enter the offset here: "
+                           "\u201cestimate, starting at these values\u201d lets it still adjust by about 1\u00b0; "
+                           "\u201cuse as they are\u201d holds it fixed. Roll does not matter for the wheel "
+                           "constraints. These angles belong to the captures recorded with the current Certus "
+                           "alignment: once the alignment is corrected in the Certus, new captures need 0\u00b0."))
+        v.addWidget(Section("IMU mounting correction", mw, expanded=True))
+
         br = QHBoxLayout()
         self.b_hw = QPushButton("Use offsets from the capture")
         self.b_hw.clicked.connect(lambda: self.use_hardware(ask=True))
@@ -929,6 +964,39 @@ class InstallPage(Page):
         v.addWidget(self.src)
         v.addStretch(1)
         self._loading = False
+
+    def _last_mount(self):
+        r = (self.project.cfg.get("results") or {}).get("ins") if self.project else None
+        return pipeline.mount_offset(r), r or {}
+
+    def _show_last_mount(self):
+        m, r = self._last_mount()
+        self.b_mount_last.setEnabled(m is not None)
+        if m is None:
+            held = (self.project.cfg["installation"].get("mount_mode") == "fixed" and
+                    bool(self.project.cfg.get("results")))
+            self.mount_last.setText("The last processing held them at the values above." if held else
+                                    "No estimate yet: process with the wheeled-vehicle constraint on (tight or "
+                                    "loose coupling) to get one.")
+            return
+        per = []
+        for name, res in sorted(r.items()):
+            try:
+                p_, y_ = [float(x) for x in str(res.get("vehicle_mount_offset_deg", "")).split(",")[:2]]
+            except (TypeError, ValueError, AttributeError):
+                continue
+            per.append("%s %.2f\u00b0 / %.2f\u00b0" % (name.split()[0].lower(), p_, y_))
+        self.mount_last.setText("Last processing: pitch %.2f \u00b1 %.2f\u00b0, yaw %.2f \u00b1 %.2f\u00b0%s"
+                                % (m[0], m[2], m[1], m[3], (" (%s)" % ", ".join(per)) if per else ""))
+
+    def use_last_mount(self):
+        m, _r = self._last_mount()
+        if m is None:
+            return
+        self.mount_p.setValue(round(m[0], 2))
+        self.mount_y.setValue(round(m[1], 2))
+        self.store()
+        self.dock.toast("Pitch %.2f\u00b0, yaw %.2f\u00b0 set: process again to use them" % (m[0], m[1]))
 
     def _offset_grid(self, rows):
         grid = QGridLayout()
@@ -975,6 +1043,11 @@ class InstallPage(Page):
         self.out_name.setText(inst.get("output_name", ""))
         self.toff.setValue(float(inst.get("time_offset_ms", 0)))
         self.use2.setChecked(bool(inst.get("use_antenna2", True)))
+        md = inst.get("mount_deg") or [0.0, 0.0]
+        self.mount_p.setValue(float(md[0]))
+        self.mount_y.setValue(float(md[1]))
+        self.mount_mode.setCurrentIndex(max(0, self.mount_mode.findData(inst.get("mount_mode", "estimate"))))
+        self._show_last_mount()
         ex = p.cfg["rover"].get("extract") or {}
         self.use2.setEnabled(int(ex.get("obs1_epochs", 0) or 0) > 0 or not ex)
         veh = p.cfg["vehicle"]
@@ -996,6 +1069,8 @@ class InstallPage(Page):
         inst["output_name"] = self.out_name.text().strip() or "Output point"
         inst["time_offset_ms"] = self.toff.value()
         inst["use_antenna2"] = self.use2.isChecked()
+        inst["mount_deg"] = [round(self.mount_p.value(), 3), round(self.mount_y.value(), 3)]
+        inst["mount_mode"] = self.mount_mode.currentData()
         veh = self.project.cfg["vehicle"]
         if self.vtype.currentData() != veh.get("type"):
             veh["type"] = self.vtype.currentData()
@@ -1442,6 +1517,7 @@ class ReviewPage(Page):
         super().__init__(dock)
         self.tool = None
         self.items = []
+        self.all_items = []
         v = QVBoxLayout(self)
         v.addWidget(_title("Trajectory Review"))
         v.addWidget(_hint("Find where the trajectory misses your limits, look at each place on the map and in the "
@@ -1510,6 +1586,20 @@ class ReviewPage(Page):
         br.addWidget(b)
         v.addLayout(br)
         # ---- list ----
+        fr = QHBoxLayout()
+        fl = QLabel("SHOW")
+        fl.setObjectName("ppKey")
+        fr.addWidget(fl)
+        self.show_filter = QComboBox()
+        for label, key in (("All windows", "all"), ("Open (no decision yet)", "open"),
+                           ("Found by the limits (A)", "found"), ("Selected by hand (S)", "manual"),
+                           ("Decided", "decided")):
+            self.show_filter.addItem(label, key)
+        self.show_filter.currentIndexChanged.connect(lambda *_: self.fill())
+        fr.addWidget(self.show_filter, 1)
+        fr.addWidget(_hint("Click a column heading to sort by it; click again to reverse."))
+        v.addLayout(fr)
+        self._sort = (2, False)         # column, descending
         self.table = QTableWidget(0, len(self.COLS))
         self.table.setHorizontalHeaderLabels(self.COLS)
         self.table.verticalHeader().setVisible(False)
@@ -1519,6 +1609,10 @@ class ReviewPage(Page):
         self.table.setMinimumHeight(220)
         self.table.itemSelectionChanged.connect(self.selection_changed)
         self.table.cellDoubleClicked.connect(lambda *_: self.zoom())
+        self.table.horizontalHeader().setSectionsClickable(True)
+        self.table.horizontalHeader().setSortIndicatorShown(True)
+        self.table.horizontalHeader().setSortIndicator(2, Qt.SortOrder.AscendingOrder)
+        self.table.horizontalHeader().sectionClicked.connect(self.sort_by)
         v.addWidget(self.table, 1)
         ar = QGridLayout()
         self.b_zoom = QPushButton("Zoom to")
@@ -1627,14 +1721,16 @@ class ReviewPage(Page):
         for a in r["anomalies"]:
             e = review.edit_for(p, a["t0"], a["t1"])
             items.append({"id": a["id"], "t0": a["t0"], "t1": a["t1"], "what": review.KIND_LABEL.get(a["kind"], a["kind"]),
-                          "worst": review.describe_max(a), "edit": e})
+                          "worst": review.describe_max(a), "maxv": float(a.get("max") or 0), "edit": e})
         # edits that no anomaly covers (map selections, or found before different limits)
         for e in r["edits"]:
             if not any(it["edit"] is e for it in items):
                 items.append({"id": e["id"], "t0": e["t0"], "t1": e["t1"],
                               "what": review.KIND_LABEL.get(e.get("source"), e.get("source", "")), "worst": "",
-                              "edit": e})
+                              "maxv": 0.0, "edit": e})
         items.sort(key=lambda x: x["t0"])
+        self.all_items = items
+        items = self._filtered_sorted(items)
         self.items = items
         self.table.setRowCount(len(items))
         cols = {"exclude": theme.BLUE, "poor": theme.AMBER, "interpolate": theme.VIOLET, "accept": theme.GREEN}
@@ -1649,25 +1745,50 @@ class ReviewPage(Page):
                 self.table.setItem(i, c, ti)
         self.table.resizeColumnsToContents()
         self.table.horizontalHeader().setStretchLastSection(True)
-        n_open = sum(1 for it in items if not it["edit"])
+        n_open = sum(1 for it in self.all_items if not it["edit"])
         msg = []
         if review.exclusions_pending(p):
             msg.append("GNSS exclusions changed since the last processing \u2013 press Process again to apply them.")
             self.pending.setStyleSheet("color: %s;" % theme.AMBER)
         else:
             self.pending.setStyleSheet("")
-        if items:
-            msg.append("%d listed, %d still open." % (len(items), n_open))
+        if self.all_items:
+            shown = "" if len(items) == len(self.all_items) else " (%d shown)" % len(items)
+            msg.append("%d listed%s, %d still open." % (len(self.all_items), shown, n_open))
         self.pending.setText(" ".join(msg))
         self.b_reproc.setVisible(review.exclusions_pending(p))
         self._draw_map()
         self.selection_changed()
 
+    def _filtered_sorted(self, items):
+        f = self.show_filter.currentData() if hasattr(self, "show_filter") else "all"
+        keep = {"all": lambda it: True,
+                "open": lambda it: not it["edit"],
+                "found": lambda it: str(it["id"]).startswith("A"),
+                "manual": lambda it: str(it["id"]).startswith("S"),
+                "decided": lambda it: bool(it["edit"])}.get(f, lambda it: True)
+        items = [it for it in items if keep(it)]
+        col, desc = self._sort
+        key = {0: lambda it: (str(it["id"])[:1], int(str(it["id"])[1:]) if str(it["id"])[1:].isdigit() else 0),
+               1: lambda it: (it["what"], it["t0"]),
+               2: lambda it: it["t0"],
+               3: lambda it: it["t1"] - it["t0"],
+               4: lambda it: it.get("maxv", 0.0),
+               5: lambda it: (it["edit"]["action"] if it["edit"] else "", it["t0"])}.get(col, lambda it: it["t0"])
+        return sorted(items, key=key, reverse=desc)
+
+    def sort_by(self, col):
+        c, desc = self._sort
+        self._sort = (col, (not desc) if c == col else (col in (3, 4)))
+        self.table.horizontalHeader().setSortIndicator(
+            col, Qt.SortOrder.DescendingOrder if self._sort[1] else Qt.SortOrder.AscendingOrder)
+        self.fill()
+
     def _draw_map(self):
         if not self.dock.qc:
             return
         rows = [{"id": it["id"], "t0": it["t0"], "t1": it["t1"], "what": it["what"],
-                 "state": it["edit"]["action"] if it["edit"] else "open"} for it in self.items]
+                 "state": it["edit"]["action"] if it["edit"] else "open"} for it in self.all_items]
         try:
             maplayers.review_layer(self.project, self.dock.qc, rows)
         except Exception as e:      # noqa: BLE001
