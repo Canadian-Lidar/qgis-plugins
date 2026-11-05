@@ -7,10 +7,14 @@ Edits (project.cfg["review"]["edits"]), each a GPS-time window:
   poor         kept, but its standard deviations are raised to at least
                sd_floor_m (SBET/SMRMSG, quality, handover), so later stages
                know not to trust it
-  interpolate  positions replaced by a straight line between the good
-               samples on both sides (horizontal and/or vertical); only for
-               GNSS-only and real-time trajectories, where no IMU solution
-               exists to bridge the gap
+  interpolate  positions replaced between the good samples on both sides
+               (horizontal and/or vertical), in any processing mode:
+                 method "smooth"    a curve that leaves and meets the good
+                                    samples at their own speed and direction
+                 method "straight"  a straight line (the original behaviour)
+               A window at the start or end of the trajectory is carried on
+               from its one good side at that sample's velocity.
+  reject       marked bad, still to be fixed (listed as open)
   accept       the anomaly is looked at and left as it is
 
 Poor and interpolate are applied to results/trajectory.bin and qc.csv from
@@ -51,7 +55,8 @@ KIND_LABEL = {"solution": "Solution type", "sd_h": "Horizontal σ", "sd_v": "Ver
               "sep_h": "Fwd/bwd separation", "imu_only": "IMU only", "heading": "Heading σ",
               "manual": "Selected by hand"}
 ACTION_LABEL = {"exclude": "GNSS excluded", "poor": "Marked poor", "interpolate": "Interpolated",
-                "accept": "Accepted"}
+                "reject": "Rejected", "accept": "Accepted"}
+METHODS = {"smooth": "smooth curve", "straight": "straight line"}
 
 
 def state(project):
@@ -174,7 +179,8 @@ def _push_undo(r):
     r["undo"] = r["undo"][-50:]
 
 
-def add_edit(project, t0, t1, action, source="manual", horizontal=True, vertical=True, sd_floor_m=None):
+def add_edit(project, t0, t1, action, source="manual", horizontal=True, vertical=True, sd_floor_m=None,
+             method="smooth"):
     r = state(project)
     if action not in ACTION_LABEL:
         raise ValueError(action)
@@ -187,9 +193,13 @@ def add_edit(project, t0, t1, action, source="manual", horizontal=True, vertical
          "action": action, "source": source, "horizontal": bool(horizontal), "vertical": bool(vertical),
          "sd_floor_m": float(sd_floor_m if sd_floor_m is not None else r["thresholds"]["poor_sd_m"]),
          "created": time.strftime("%Y-%m-%d %H:%M:%S")}
+    if action == "interpolate":
+        e["method"] = method if method in METHODS else "smooth"
     keep.append(e)
     r["edits"] = sorted(keep, key=lambda x: x["t0"])
-    log(project, "%s %s (%.1f s, %s)" % (ACTION_LABEL[action], _span(t0, t1), t1 - t0, source))
+    how = (", %s%s" % (METHODS[e["method"]], "" if (horizontal and vertical) else
+                       (", horizontal only" if horizontal else ", vertical only"))) if action == "interpolate" else ""
+    log(project, "%s %s (%.1f s, %s%s)" % (ACTION_LABEL[action], _span(t0, t1), t1 - t0, source, how))
     return e
 
 
@@ -281,6 +291,11 @@ def edit_for(project, t0, t1):
     return best if best and cover >= 0.5 * max(t1 - t0, 1e-6) else None
 
 
+def is_open(edit):
+    """True when a window still needs a decision: no edit, or only rejected."""
+    return edit is None or edit.get("action") == "reject"
+
+
 def exclusions(project):
     return [(e["t0"], e["t1"]) for e in state(project)["edits"] if e["action"] == "exclude"]
 
@@ -353,27 +368,17 @@ def apply(project):
             fh.seek(TRJ_HDR + i0 * TRJ.size)
             recs = [list(x) for x in TRJ.iter_unpack(fh.read((i1 - i0) * TRJ.size))]
             if e["action"] == "interpolate":
-                if i0 == 0 or i1 >= n:
-                    continue            # needs a good sample on both sides
-                fh.seek(TRJ_HDR + (i0 - 1) * TRJ.size)
-                a = TRJ.unpack(fh.read(TRJ.size))
-                fh.seek(TRJ_HDR + i1 * TRJ.size)
-                b = TRJ.unpack(fh.read(TRJ.size))
-                span = b[I_T] - a[I_T]
-                for r_ in recs:
-                    f = (r_[I_T] - a[I_T]) / span if span > 0 else 0.0
-                    if e.get("horizontal", True):
-                        r_[I_LAT] = a[I_LAT] + f * (b[I_LAT] - a[I_LAT])
-                        r_[I_LON] = a[I_LON] + f * (b[I_LON] - a[I_LON])
-                    if e.get("vertical", True):
-                        r_[I_H] = a[I_H] + f * (b[I_H] - a[I_H])
-                    dmin = min(r_[I_T] - a[I_T], b[I_T] - r_[I_T])
-                    grow = 0.05 + 0.05 * dmin
-                    for k in range(3):
-                        base = max(a[I_SDP + k], b[I_SDP + k])
-                        if (k < 2 and e.get("horizontal", True)) or (k == 2 and e.get("vertical", True)):
-                            r_[I_SDP + k] = max(base, grow)
-                    r_[I_FLAGS] |= FLAG_INTERP
+                a = b = None
+                if i0 > 0:
+                    fh.seek(TRJ_HDR + (i0 - 1) * TRJ.size)
+                    a = TRJ.unpack(fh.read(TRJ.size))
+                if i1 < n:
+                    fh.seek(TRJ_HDR + i1 * TRJ.size)
+                    b = TRJ.unpack(fh.read(TRJ.size))
+                if a is None and b is None:
+                    continue            # the whole trajectory: nothing good to start from
+                interpolate_records(recs, a, b, e.get("horizontal", True), e.get("vertical", True),
+                                    e.get("method", "straight"))
             else:
                 fl = float(e.get("sd_floor_m") or 0.3)
                 for r_ in recs:
@@ -387,6 +392,77 @@ def apply(project):
     os.replace(out + ".tmp", out)
     _rewrite_qc(qb, outq, changed)
     return len(changed)
+
+
+
+# ---------------------------------------------------------------------------
+# interpolation
+# ---------------------------------------------------------------------------
+_A, _F = 6378137.0, 1 / 298.257222101           # GRS80
+
+
+def _radii(lat):
+    e2 = _F * (2 - _F)
+    w = 1 - e2 * math.sin(lat) ** 2
+    return _A * (1 - e2) / w ** 1.5, _A / math.sqrt(w)     # meridian, prime vertical
+
+
+def _hermite(s):
+    s2, s3 = s * s, s * s * s
+    return ((2 * s3 - 3 * s2 + 1, s3 - 2 * s2 + s, -2 * s3 + 3 * s2, s3 - s2),
+            (6 * s2 - 6 * s, 3 * s2 - 4 * s + 1, -6 * s2 + 6 * s, 3 * s2 - 2 * s))
+
+
+def interpolate_records(recs, a, b, horizontal=True, vertical=True, method="smooth"):
+    """Replace the positions of recs (lists, TRJ fields) between the good records a (before) and b (after).
+    "smooth": cubic curve leaving a and meeting b at their own velocities; "straight": a straight line.
+    With only one good side (a window at the start or end) the trajectory is carried on from it at its
+    velocity. Velocities follow the new path; standard deviations grow away from the good samples."""
+    ref = a if a is not None else b
+    lat0, lon0, h0 = ref[I_LAT], ref[I_LON], ref[I_H]
+    M, N = _radii(lat0)
+    cl = math.cos(lat0)
+
+    def local(r):           # north, east, up (m) of record r from ref
+        return ((r[I_LAT] - lat0) * M, (r[I_LON] - lon0) * N * cl, r[I_H] - h0)
+
+    def vel(r):             # north, east, up (m/s)
+        return (r[I_VEL], r[I_VEL + 1], -r[I_VEL + 2])
+
+    pa, pb = (local(a) if a is not None else None), (local(b) if b is not None else None)
+    va, vb = (vel(a) if a is not None else None), (vel(b) if b is not None else None)
+    span = (b[I_T] - a[I_T]) if (a is not None and b is not None) else 0.0
+    for r_ in recs:
+        t = r_[I_T]
+        if a is not None and b is not None and span > 0:
+            s = min(1.0, max(0.0, (t - a[I_T]) / span))
+            if method == "straight":
+                p = [pa[k] + s * (pb[k] - pa[k]) for k in range(3)]
+                v = [(pb[k] - pa[k]) / span for k in range(3)]
+            else:
+                (h00, h10, h01, h11), (d00, d10, d01, d11) = _hermite(s)
+                p = [h00 * pa[k] + h10 * span * va[k] + h01 * pb[k] + h11 * span * vb[k] for k in range(3)]
+                v = [(d00 * pa[k] + d10 * span * va[k] + d01 * pb[k] + d11 * span * vb[k]) / span for k in range(3)]
+            dmin = min(t - a[I_T], b[I_T] - t)
+        else:
+            g, gp, gv = (a, pa, va) if a is not None else (b, pb, vb)
+            dt = t - g[I_T]
+            p = [gp[k] + gv[k] * dt for k in range(3)]
+            v = list(gv)
+            dmin = abs(dt)
+        if horizontal:
+            r_[I_LAT] = lat0 + p[0] / M
+            r_[I_LON] = lon0 + p[1] / (N * cl)
+            r_[I_VEL], r_[I_VEL + 1] = v[0], v[1]
+        if vertical:
+            r_[I_H] = h0 + p[2]
+            r_[I_VEL + 2] = -v[2]
+        grow = 0.05 + 0.05 * dmin
+        for k in range(3):
+            if (k < 2 and horizontal) or (k == 2 and vertical):
+                good = [x[I_SDP + k] for x in (a, b) if x is not None]
+                r_[I_SDP + k] = max(max(good), grow)
+        r_[I_FLAGS] |= FLAG_INTERP
 
 
 def _rewrite_qc(src, dst, changed):
@@ -420,7 +496,10 @@ def summary(project):
     r = state(project)
     pick = lambda a: [{"t0": e["t0"], "t1": e["t1"], **({"sd_floor_m": e["sd_floor_m"]} if a == "poor" else {})}
                       for e in r["edits"] if e["action"] == a]
-    return {"gnss_excluded": pick("exclude"), "reduced_quality": pick("poor"), "interpolated": pick("interpolate"),
+    interp = [{"t0": e["t0"], "t1": e["t1"], "method": e.get("method", "straight"),
+               "horizontal": e.get("horizontal", True), "vertical": e.get("vertical", True)}
+              for e in r["edits"] if e["action"] == "interpolate"]
+    return {"gnss_excluded": pick("exclude"), "reduced_quality": pick("poor"), "interpolated": interp,
             "accepted": pick("accept"), "thresholds": dict(r["thresholds"])}
 
 

@@ -1520,10 +1520,10 @@ class ReviewPage(Page):
         self.all_items = []
         v = QVBoxLayout(self)
         v.addWidget(_title("Trajectory Review"))
-        v.addWidget(_hint("Find where the trajectory misses your limits, look at each place on the map and in the "
-                          "plots, then decide: exclude the GNSS there and let the IMU carry it (processed again), "
-                          "mark it poor so later stages know, accept it, or \u2013 for real-time and GNSS-only "
-                          "trajectories \u2013 interpolate across it."))
+        v.addWidget(_hint("Find where the trajectory misses your limits, then fix each place: open the Trajectory "
+                          "editor to see it in plan and profile, select the bad points and interpolate across them, "
+                          "bridge them with the IMU (processed again), mark them poor so later stages know, or "
+                          "accept them."))
         # ---- limits ----
         lw = QWidget()
         g = QGridLayout(lw)
@@ -1574,6 +1574,11 @@ class ReviewPage(Page):
         self.b_detect.setObjectName("ppPrimary")
         self.b_detect.clicked.connect(self.detect)
         br.addWidget(self.b_detect)
+        self.b_editor = QPushButton("Open Trajectory editor")
+        self.b_editor.setObjectName("ppPrimary")
+        self.b_editor.setToolTip("Plan view and height profile, linked: select bad points and fix them")
+        self.b_editor.clicked.connect(self.dock.open_editor)
+        br.addWidget(self.b_editor)
         br.addStretch(1)
         for mode, label in (("rectangle", "Rectangle"), ("polygon", "Polygon"), ("lasso", "Lasso")):
             b = QPushButton(label)
@@ -1626,8 +1631,8 @@ class ReviewPage(Page):
                                "later stages know not to trust it.")
         self.b_poor.clicked.connect(lambda: self.decide("poor"))
         self.b_interp = QPushButton("Interpolate")
-        self.b_interp.setToolTip("Straight line between the good samples on both sides. Only for real-time and "
-                                 "GNSS-only trajectories: with the IMU, excluding the GNSS is better.")
+        self.b_interp.setToolTip("Replace the positions between the good samples on both sides (method below). "
+                                 "For longer stretches, Exclude GNSS lets the IMU carry the trajectory instead.")
         self.b_interp.clicked.connect(lambda: self.decide("interpolate"))
         self.b_accept = QPushButton("Accept")
         self.b_accept.clicked.connect(lambda: self.decide("accept"))
@@ -1647,7 +1652,11 @@ class ReviewPage(Page):
         self.interp_h.setChecked(True)
         self.interp_v.setChecked(True)
         self.interp_lab = QLabel("Interpolate:")
+        self.interp_method = QComboBox()
+        self.interp_method.addItem("Smooth curve", "smooth")
+        self.interp_method.addItem("Straight line", "straight")
         hr.addWidget(self.interp_lab)
+        hr.addWidget(self.interp_method)
         hr.addWidget(self.interp_h)
         hr.addWidget(self.interp_v)
         hr.addStretch(1)
@@ -1692,9 +1701,6 @@ class ReviewPage(Page):
         self.poor_sd.setValue(float(th["poor_sd_m"]))
         self._loading = False
         mode = p.cfg["processing"].get("mode")
-        can_interp = mode in ("gnss", "rt")
-        for w in (self.b_interp, self.interp_h, self.interp_v, self.interp_lab):
-            w.setVisible(can_interp)
         self.b_excl.setVisible(mode in ("tc", "lc"))
         self.b_excl.setEnabled(mode in ("tc", "lc"))
         self.fill()
@@ -1733,11 +1739,15 @@ class ReviewPage(Page):
         items = self._filtered_sorted(items)
         self.items = items
         self.table.setRowCount(len(items))
-        cols = {"exclude": theme.BLUE, "poor": theme.AMBER, "interpolate": theme.VIOLET, "accept": theme.GREEN}
+        cols = {"exclude": theme.BLUE, "poor": theme.AMBER, "interpolate": theme.VIOLET, "accept": theme.GREEN,
+                "reject": theme.RED}
         for i, it in enumerate(items):
             e = it["edit"]
+            dec = review.ACTION_LABEL[e["action"]] if e else "open"
+            if e and e["action"] == "interpolate":
+                dec += " (%s)" % review.METHODS.get(e.get("method", "straight"), "")
             vals = [it["id"], it["what"], geo.gps_to_utc(it["t0"]).strftime("%H:%M:%S"), "%.1f s" % (it["t1"] - it["t0"]),
-                    it["worst"], review.ACTION_LABEL[e["action"]] if e else "open"]
+                    it["worst"], dec]
             for c, val in enumerate(vals):
                 ti = QTableWidgetItem(str(val))
                 if c == 5:
@@ -1745,7 +1755,7 @@ class ReviewPage(Page):
                 self.table.setItem(i, c, ti)
         self.table.resizeColumnsToContents()
         self.table.horizontalHeader().setStretchLastSection(True)
-        n_open = sum(1 for it in self.all_items if not it["edit"])
+        n_open = sum(1 for it in self.all_items if review.is_open(it["edit"]))
         msg = []
         if review.exclusions_pending(p):
             msg.append("GNSS exclusions changed since the last processing \u2013 press Process again to apply them.")
@@ -1761,12 +1771,13 @@ class ReviewPage(Page):
         self.selection_changed()
 
     def _filtered_sorted(self, items):
+        from ..core import review
         f = self.show_filter.currentData() if hasattr(self, "show_filter") else "all"
         keep = {"all": lambda it: True,
-                "open": lambda it: not it["edit"],
+                "open": lambda it: review.is_open(it["edit"]),
                 "found": lambda it: str(it["id"]).startswith("A"),
                 "manual": lambda it: str(it["id"]).startswith("S"),
-                "decided": lambda it: bool(it["edit"])}.get(f, lambda it: True)
+                "decided": lambda it: not review.is_open(it["edit"])}.get(f, lambda it: True)
         items = [it for it in items if keep(it)]
         col, desc = self._sort
         key = {0: lambda it: (str(it["id"])[:1], int(str(it["id"])[1:]) if str(it["id"])[1:].isdigit() else 0),
@@ -1805,7 +1816,7 @@ class ReviewPage(Page):
         self.b_remove.setEnabled(any(str(it["id"]).startswith("S") for it in self.selected_items()))
         mode = self.project.cfg["processing"].get("mode") if self.project else ""
         self.b_excl.setEnabled(n > 0 and mode in ("tc", "lc"))
-        self.b_interp.setEnabled(n > 0 and mode in ("gnss", "rt"))
+        self.b_interp.setEnabled(n > 0)
 
     # ------------------------------------------------------------- actions
     def detect(self):
@@ -1832,8 +1843,8 @@ class ReviewPage(Page):
         if action == "interpolate" and self.dock.qc and self.dock.qc.get("gps_time"):
             t = self.dock.qc["gps_time"]
             if any(it["t0"] <= t[0] or it["t1"] >= t[-1] for it in its):
-                self.dock.toast("Interpolate needs good samples on both sides: windows at the start or end of the "
-                                "trajectory stay as processed. Mark them poor instead.", "warn")
+                self.dock.toast("A window at the start or end of the trajectory is carried on from its one good "
+                                "side at that sample's speed and direction.")
         for it in its:
             e = it["edit"]
             if e is not None and abs(e["t0"] - it["t0"]) < 0.01 and abs(e["t1"] - it["t1"]) < 0.01:
@@ -1841,7 +1852,8 @@ class ReviewPage(Page):
                                                        if x is not e]
             review.add_edit(self.project, it["t0"], it["t1"], action,
                             source=next((k for k, lab in review.KIND_LABEL.items() if lab == it["what"]), "manual"),
-                            horizontal=self.interp_h.isChecked(), vertical=self.interp_v.isChecked())
+                            horizontal=self.interp_h.isChecked(), vertical=self.interp_v.isChecked(),
+                            method=self.interp_method.currentData())
         self.dock.save()
         self.after_edit(action in ("poor", "interpolate"))
 
@@ -1899,6 +1911,9 @@ class ReviewPage(Page):
         if not reapply:
             self.fill()
             self.dock.update_steps()
+            ed = self.dock.plugin.editor
+            if ed is not None:
+                ed.refresh_states()
             return
         p = self.project
         work_p = self.dock._work_copy()
@@ -1914,7 +1929,10 @@ class ReviewPage(Page):
             if p.dcs is not None:
                 p.dcs.reload()
                 self.dock.chain.refresh()
+            ed = self.dock.plugin.editor
             if not ok:
+                if ed is not None:
+                    ed.edits_applied()
                 theme.msg_warn(self, "PosPro", "Could not apply the review edits:\n%s" % res)
                 return
             self.dock.qc = results.load_qc(os.path.join(p.work_dir, "results", "qc.csv"))
@@ -1924,8 +1942,13 @@ class ReviewPage(Page):
             self.dock.pages[4].refresh()
             self.fill()
             self.dock.update_steps()
+            if ed is not None:
+                ed.edits_applied()
         if self.dock.start_task("Applying review edits", work, done) is None:
             self.fill()
+            ed = self.dock.plugin.editor
+            if ed is not None:
+                ed.edits_applied()
 
     def select_on_map(self, mode):
         from .selecttool import SelectTool
@@ -2003,7 +2026,9 @@ class ReviewPage(Page):
             return "warn", "process again"
         if not r["anomalies"] and not r["edits"]:
             return "todo", "find anomalies"
-        n_open = sum(1 for a in r["anomalies"] if not review.edit_for(p, a["t0"], a["t1"]))
+        n_open = sum(1 for a in r["anomalies"] if review.is_open(review.edit_for(p, a["t0"], a["t1"])))
+        n_open += sum(1 for e in r["edits"] if e["action"] == "reject" and not any(
+            review.edit_for(p, a["t0"], a["t1"]) is e for a in r["anomalies"]))
         if n_open:
             return "warn", "%d open" % n_open
         return "done", "%d reviewed" % (len(r["anomalies"]) + len([e for e in r["edits"] if e.get("source") == "manual"]))
@@ -2829,6 +2854,8 @@ class PosProDock(PluginWindow):
             self.goto_page(4)
             if self.plugin.plots:
                 self.plugin.plots.set_data(self.qc)
+            if self.plugin.editor is not None and self.plugin.editor.isVisible():
+                self.plugin.editor.reload(keep_view=True)
         self.start_task("Processing", work, done)
 
     # ------------------------------------------------------------------
@@ -2893,6 +2920,15 @@ class PosProDock(PluginWindow):
 
     def show_plots(self):
         self.plugin.show_plots(self.qc)
+
+    def pages_review(self):
+        return self.pages[5]
+
+    def open_editor(self, *_):
+        if not self.qc:
+            theme.msg_info(self, "PosPro", "Process the project first: the editor works on the processed trajectory.")
+            return
+        self.plugin.show_editor()
 
     def goto_time(self, t0, t1=None):
         self.plugin.goto_time(t0, t1)
