@@ -204,6 +204,16 @@ class Project:
         os.makedirs(d, exist_ok=True)
         return d
 
+    def _shared_horizontal(self):
+        """The projected CRS PosPro offers the next stages: the one the user exports easting/northing in.
+        Otherwise whatever is already shared (CloudPro sets it too) is kept, never blanked."""
+        e = self.cfg.get("export") or {}
+        cols = (e.get("ascii_cols") or "").split(",")
+        if e.get("ascii_crs") and e.get("ascii") and ("easting" in cols or "northing" in cols):
+            return e["ascii_crs"]
+        cur = (self.dcs.shared("crs") or {}) if self.dcs is not None else {}
+        return (cur.get("horizontal") if isinstance(cur, dict) else "") or ""
+
     def sync_dcs(self):
         """Write the shared facts PosPro owns into the DCS project: raw files,
         coordinate frame, base station, antenna offsets, vehicle and the
@@ -213,10 +223,11 @@ class Project:
         c = self.cfg
         inst = c["installation"]
         b = self.base()
+        fr_ = c.get("frame") or {} if c["processing"].get("mode") == "rt" else self.trajectory_frame()
         facts = {
-            "crs": {"frame": (c.get("frame") or {}).get("name"), "epoch": (c.get("frame") or {}).get("epoch"),
+            "crs": {"frame": fr_.get("name"), "epoch": fr_.get("epoch"),
                     "height": "ellipsoidal",
-                    "horizontal": (c.get("export") or {}).get("ascii_crs") or ""},
+                    "horizontal": self._shared_horizontal()},
             "base_station": None if not b else {
                 "name": b.get("name"), "files": b.get("files"), "xyz_m": b.get("xyz"),
                 "position_source": b.get("pos_source"), "frame": b.get("frame"), "epoch": b.get("epoch"),
@@ -330,6 +341,28 @@ class Project:
         os.makedirs(os.path.dirname(p), exist_ok=True)
         return p
 
+    def run_frame(self):
+        """The frame the trajectory is in, worked out from the settings of the run rather than stored:
+        PPP gives ITRF2020 at the observation date; PPK takes the base position's frame; real time is the
+        Certus solution in the frame of its RTK corrections."""
+        c = self.cfg
+        p = c["processing"]
+        fr = c.get("frame") or {}
+        if p.get("mode") == "rt":
+            return {"name": "Certus real-time solution (frame of the RTK corrections)", "epoch": ""}
+        if p.get("positioning") == "ppp":
+            from . import geo
+            span = self.rover_span()
+            ep = geo.decimal_year(geo.gps_to_utc(span[0])) if span else None
+            return {"name": "ITRF2020", "epoch": "%.3f" % ep if ep else ""}
+        b = self.base() or {}
+        return {"name": b.get("frame") or fr.get("name") or "NAD83(CSRS)",
+                "epoch": (b.get("epoch") if b.get("frame") else fr.get("epoch")) or ""}
+
+    def trajectory_frame(self):
+        """The frame of the last processed trajectory (as it was run), else what the settings would give."""
+        return (self.cfg.get("results") or {}).get("frame_used") or self.run_frame()
+
     # ------------------------------------------------------------------
     def base(self, bid=None):
         bid = bid or self.cfg.get("base_selected")
@@ -396,7 +429,10 @@ class Project:
         t0, t1 = span
         s = self.cfg["rover"].get("time_start") or t0
         e = self.cfg["rover"].get("time_end") or t1
-        return max(s, t0), min(e, t1)
+        s, e = max(s, t0), min(e, t1)
+        if e <= s:          # a crop outside the recording (or reversed): use the whole recording
+            return t0, t1
+        return s, e
 
     def approx_xyz(self):
         ex = self.cfg["rover"].get("extract") or {}

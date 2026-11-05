@@ -25,17 +25,12 @@ MAX_POINTS = 2000
 
 def read_rt(path):
     """[(t, vn, ve, heading, yaw_rate)] from rt.bin (the Certus's own solution, packet 20)."""
-    out = []
-    with open(path, "rb") as fh:
-        if fh.read(64)[:8] != b"PPRT0001":
-            return out
-        while True:
-            b = fh.read(RT.size * 4096)
-            if not b:
-                break
-            for r in RT.iter_unpack(b[:len(b) - len(b) % RT.size]):
-                out.append((r[0], r[4], r[5], r[9], r[15]))
-    return out
+    from .results import read_rt_array
+    rt = read_rt_array(path)
+    if rt is None or not len(rt):
+        return []
+    v, a, g = rt["vel"].astype(float), rt["att"].astype(float), rt["gyr"].astype(float)
+    return list(zip(rt["t"].tolist(), v[:, 0].tolist(), v[:, 1].tolist(), a[:, 2].tolist(), g[:, 2].tolist()))
 
 
 def _wrap(a):

@@ -28,14 +28,6 @@ NOAA_S3 = "https://noaa-cors-pds.s3.amazonaws.com"
 
 
 
-def _ok(err):
-    """QgsBlockingNetworkRequest error code is NoError (PyQt5 int or PyQt6 enum)."""
-    try:
-        from qgis.core import QgsBlockingNetworkRequest
-        return err == QgsBlockingNetworkRequest.ErrorCode.NoError
-    except AttributeError:
-        return int(err) == 0
-
 class DownloadError(Exception):
     pass
 
@@ -144,7 +136,8 @@ class progress_hook:
         return False
 
 
-def _qt_request(url, body=None, ctype=None, timeout=120, headers=None):
+def _qt_request(url, body=None, ctype=None, timeout=120, headers=None, sink=None):
+    """sink: a file opened for writing; the body is streamed into it (not held in memory)."""
     from qgis.PyQt.QtCore import QByteArray, QEventLoop, QTimer, QUrl
     from qgis.PyQt.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest, QSslConfiguration
     nam = QNetworkAccessManager()
@@ -190,15 +183,20 @@ def _qt_request(url, body=None, ctype=None, timeout=120, headers=None):
     timer.setSingleShot(True)
     timer.timeout.connect(reply.abort)
     cb = getattr(_HOOK, "cb", None)
-    if cb is not None:
-        def on_progress(rec, tot):
-            timer.start(int(timeout * 1000))        # data is flowing: stall timeout, not total
+
+    def on_progress(rec, tot):
+        timer.start(int(timeout * 1000))        # data is flowing: a stall timeout, not a total limit
+        if cb is not None:
             try:
                 if cb(url, int(rec), int(tot)):
                     reply.abort()
             except Exception:       # noqa: BLE001
                 pass
-        reply.downloadProgress.connect(on_progress)
+    reply.downloadProgress.connect(on_progress)
+    if sink is not None:
+        def on_ready():
+            sink.write(bytes(reply.readAll()))
+        reply.readyRead.connect(on_ready)
     reply.finished.connect(loop.quit)
     timer.start(int(timeout * 1000))
     if not reply.isFinished():
@@ -207,6 +205,9 @@ def _qt_request(url, body=None, ctype=None, timeout=120, headers=None):
     code = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
     err = reply.error()
     data = bytes(reply.readAll())
+    if sink is not None:
+        sink.write(data)
+        data = None
     msg = reply.errorString()
     reply.deleteLater()
     if ssl["errors"]:
@@ -216,7 +217,24 @@ def _qt_request(url, body=None, ctype=None, timeout=120, headers=None):
     return data
 
 
-def _request(url, body=None, ctype=None, timeout=120, headers=None):
+def _request(url, body=None, ctype=None, timeout=120, headers=None, sink=None):
+    """One retry after a short pause for transient network errors (TLS chains are completed separately)."""
+    for attempt in (0, 1):
+        if sink is not None:
+            sink.seek(0)
+            sink.truncate()
+        try:
+            return _request1(url, body, ctype, timeout, headers, sink)
+        except DownloadError as e:
+            txt = str(e).lower()
+            permanent = any(k in txt for k in ("http 4", "not found", "certificate", "host not found",
+                                                 "unknown host", "empty file"))
+            if attempt or permanent:
+                raise
+            time.sleep(3)
+
+
+def _request1(url, body=None, ctype=None, timeout=120, headers=None, sink=None):
     try:
         import qgis.PyQt.QtNetwork      # noqa: F401
         have_qt = True
@@ -225,7 +243,7 @@ def _request(url, body=None, ctype=None, timeout=120, headers=None):
     if have_qt:
         for attempt in range(3):
             try:
-                return _qt_request(url, body, ctype, timeout, headers)
+                return _qt_request(url, body, ctype, timeout, headers, sink)
             except TlsError as e:
                 learnt = False
                 for u in e.issuers:
@@ -235,6 +253,9 @@ def _request(url, body=None, ctype=None, timeout=120, headers=None):
                         continue
                 if not learnt:
                     raise DownloadError(str(e))
+                if sink is not None:
+                    sink.seek(0)
+                    sink.truncate()
         raise DownloadError("%s: certificate chain could not be completed" % url)
     import urllib.request
     import urllib.error
@@ -245,6 +266,9 @@ def _request(url, body=None, ctype=None, timeout=120, headers=None):
             h["Content-Type"] = ctype or "application/octet-stream"
         rq = urllib.request.Request(url, data=body, headers=h)
         with urllib.request.urlopen(rq, timeout=timeout) as fh:
+            if sink is not None:
+                shutil.copyfileobj(fh, sink, 1 << 20)
+                return None
             return fh.read()
     except (urllib.error.URLError, OSError) as e:
         raise DownloadError("%s: %s" % (url, e))
@@ -272,30 +296,61 @@ def _save(data, path):
     os.replace(tmp, path)
 
 
-def _gunzip_bytes(data, name):
-    if name.endswith(".gz"):
-        return gzip.decompress(data)
-    if name.endswith(".Z"):
-        raise DownloadError("Unix .Z compression is not supported (%s)" % name)
-    return data
+def complete(path, day=None, min_size=1):
+    """A cached file that can be used as it is. A daily file (day given) fetched before that day was over
+    (plus 3 h for the archives to fill) may be partial and is fetched again."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    if st.st_size < min_size:
+        return False
+    if day is not None:
+        end = datetime.datetime(day.year, day.month, day.day, tzinfo=datetime.timezone.utc) + \
+            datetime.timedelta(days=1, hours=3)
+        if st.st_mtime < end.timestamp():
+            return False
+    return True
 
 
-def fetch(urls, out_path, log=None, min_size=100, timeout=120):
-    """Try each URL; store the uncompressed file at out_path (cached)."""
-    if os.path.exists(out_path) and os.path.getsize(out_path) >= min_size:
+def fetch(urls, out_path, log=None, min_size=100, timeout=120, day=None):
+    """Try each URL; store the uncompressed file at out_path (cached). The download is streamed to disk and
+    unpacked from there, so a 1 s daily RINEX does not sit in memory. With day: see complete()."""
+    if complete(out_path, day, min_size):
         return out_path
+    have_old = os.path.exists(out_path) and os.path.getsize(out_path) >= min_size
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    dl, part = out_path + ".dl", out_path + ".part"
     errors = []
     for u in urls:
         try:
             if log:
                 log("downloading %s" % u)
-            data = _gunzip_bytes(http_get(u, timeout), u)
-            if len(data) < min_size:
+            with open(dl, "w+b") as fh:
+                _request(u, timeout=timeout, sink=fh)
+            if u.endswith(".Z"):
+                raise DownloadError("Unix .Z compression is not supported (%s)" % u)
+            if u.endswith(".gz"):
+                with gzip.open(dl, "rb") as fi, open(part, "wb") as fo:
+                    shutil.copyfileobj(fi, fo, 1 << 20)
+            else:
+                os.replace(dl, part)
+            if os.path.getsize(part) < min_size:
                 raise DownloadError("%s: empty file" % u)
-            _save(data, out_path)
+            os.replace(part, out_path)
             return out_path
         except (DownloadError, OSError, zlib.error, EOFError) as e:
             errors.append(str(e))
+        finally:
+            for f in (dl, part):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+    if have_old:            # the refresh of a same-day file failed: the earlier copy is still usable
+        if log:
+            log("using the copy of %s fetched earlier (could not refresh it)" % os.path.basename(out_path))
+        return out_path
     raise DownloadError("could not download %s:\n  %s" % (os.path.basename(out_path), "\n  ".join(errors)))
 
 
@@ -324,7 +379,7 @@ def brdc(day, log=None):
             "%s/BRDC/%04d/%03d/BRDC00IGS_R_%04d%03d0000_01D_MN.rnx.gz" % (BKG, y, d, y, d),
             "%s/data/%04d/%03d/BRDC00IGS_R_%04d%03d0000_01D_MN.rnx.gz" % (IGN, y, d, y, d),
             "%s/data/%04d/%03d/%s.gz" % (IGN, y, d, name)]
-    return fetch(urls, out, log)
+    return fetch(urls, out, log, day=day)
 
 
 def precise(day, log=None):
@@ -347,11 +402,24 @@ def precise(day, log=None):
         ("COD0OPSRAP", "05M", "30S", lambda n: ["%s/%s.gz" % (AIUB, n), "%s/%04d/%s.gz" % (AIUB, y, n)]),
     ]
     errors = []
+    missing_f = os.path.join(cache_dir(), "products", "missing.json")
+    try:
+        with open(missing_f, "r", encoding="utf-8") as fh:
+            missing = json.load(fh)
+    except (OSError, ValueError):
+        missing = {}
+    now = time.time()
+    missing = {k: v for k, v in missing.items() if now - v < 6 * 3600}     # asked again after 6 h
     for ac, orb, clk, urls in combos:
         sp3n = "%s_%04d%03d0000_01D_%s_ORB.SP3" % (ac, y, d, orb)
         clkn = "%s_%04d%03d0000_01D_%s_CLK.CLK" % (ac, y, d, clk)
         sp3o = os.path.join(cache_dir(), "products", wk, sp3n)
         clko = os.path.join(cache_dir(), "products", wk, clkn)
+        key = "%s_%04d%03d" % (ac, y, d)
+        if key in missing and not (os.path.exists(sp3o) and os.path.exists(clko)):
+            errors.append("%s: not available when last asked (%s); asked again after 6 h" % (
+                ac, time.strftime("%H:%M", time.localtime(missing[key]))))
+            continue
         try:
             fetch(urls(sp3n), sp3o, log, timeout=40)
             fetch(urls(clkn), clko, log, timeout=60)
@@ -360,6 +428,14 @@ def precise(day, log=None):
             return sp3o, clko, ac
         except DownloadError as e:
             errors.append(str(e))
+            missing[key] = now
+            try:
+                os.makedirs(os.path.dirname(missing_f), exist_ok=True)
+                with open(missing_f + ".tmp", "w", encoding="utf-8") as fh:
+                    json.dump(missing, fh)
+                os.replace(missing_f + ".tmp", missing_f)
+            except OSError:
+                pass
     raise DownloadError("no precise orbit/clock found for %s (final products appear ~2 weeks after "
                         "the day, rapid ~1 day):\n%s" % (day, "\n".join(errors)))
 
@@ -384,14 +460,17 @@ def antex(log=None, max_age_days=60):
 # base stations
 # ---------------------------------------------------------------------------
 def crx2rnx(path, log=None):
-    """Hatanaka-decompress a compact RINEX file; returns the RINEX path."""
+    """Hatanaka-decompress a compact RINEX file; returns the RINEX path. Skipped when the RINEX file is
+    already there and newer than the compact one."""
     exe = os.path.join(PLUGIN_DIR, "bin", "windows" if sys.platform.startswith("win") else "linux",
                        "crx2rnx.exe" if sys.platform.startswith("win") else "crx2rnx")
     src = path
     if src.lower().endswith(".gz"):
         plain = src[:-3]
-        with gzip.open(src, "rb") as fi, open(plain, "wb") as fo:
-            shutil.copyfileobj(fi, fo)
+        if not (os.path.exists(plain) and os.path.getmtime(plain) >= os.path.getmtime(src)):
+            with gzip.open(src, "rb") as fi, open(plain + ".part", "wb") as fo:
+                shutil.copyfileobj(fi, fo, 1 << 20)
+            os.replace(plain + ".part", plain)
         src = plain
     low = src.lower()
     if low.endswith(".crx"):
@@ -400,12 +479,24 @@ def crx2rnx(path, log=None):
         out = src[:-1] + "o"
     else:
         out = src + ".rnx"
+    if os.path.exists(out) and os.path.getsize(out) > 0 and os.path.getmtime(out) >= os.path.getmtime(src):
+        return out
+    if not os.path.exists(exe):
+        raise DownloadError("the compact RINEX decompressor is missing (%s); reinstall PosPro" % exe)
     kw = {"creationflags": 0x08000000} if sys.platform.startswith("win") else {}
-    with open(src, "rb") as fi, open(out + ".part", "wb") as fo:
-        r = subprocess.run([exe, "-s"], stdin=fi, stdout=fo, stderr=subprocess.PIPE, **kw)
-    if r.returncode not in (0, 2):
-        raise DownloadError("compact RINEX could not be decompressed: %s" % r.stderr.decode(errors="replace")[:300])
-    os.replace(out + ".part", out)
+    try:
+        with open(src, "rb") as fi, open(out + ".part", "wb") as fo:
+            r = subprocess.run([exe, "-s"], stdin=fi, stdout=fo, stderr=subprocess.PIPE, **kw)
+        if r.returncode not in (0, 2):
+            raise DownloadError("compact RINEX could not be decompressed: %s" %
+                                r.stderr.decode(errors="replace")[:300])
+        os.replace(out + ".part", out)
+    finally:
+        if os.path.exists(out + ".part"):
+            try:
+                os.remove(out + ".part")
+            except OSError:
+                pass
     return out
 
 
@@ -439,17 +530,18 @@ def noaa_rinex(sid, day, log=None):
     yy = y % 100
     folder = os.path.join(cache_dir(), "cors", s, "%04d%03d" % (y, d))
     obs = os.path.join(folder, "%s%03d0.%02do" % (s, d, yy))
-    if os.path.exists(obs) and os.path.getsize(obs) > 1000:
+    if complete(obs, day, 1000):
         return obs
     # NOAA retired the corsdata/ paths on 1 Nov 2026; the AWS bucket is the archive
     for base in ("%s/rinex" % NOAA_S3, "%s/corsdata/rinex" % NOAA):
         try:
-            return fetch(["%s/%04d/%03d/%s/%s%03d0.%02do.gz" % (base, y, d, s, s, d, yy)], obs, log, 1000)
+            return fetch(["%s/%04d/%03d/%s/%s%03d0.%02do.gz" % (base, y, d, s, s, d, yy)], obs, log, 1000,
+                         day=day)
         except DownloadError:
             pass
         try:
             crx = os.path.join(folder, "%s%03d0.%02dd" % (s, d, yy))
-            fetch(["%s/%04d/%03d/%s/%s%03d0.%02dd.gz" % (base, y, d, s, s, d, yy)], crx, log, 1000)
+            fetch(["%s/%04d/%03d/%s/%s%03d0.%02dd.gz" % (base, y, d, s, s, d, yy)], crx, log, 1000, day=day)
             return crx2rnx(crx, log)
         except DownloadError:
             pass
@@ -463,8 +555,8 @@ def igs_rinex(sid9, day, log=None):
     folder = os.path.join(cache_dir(), "igs", sid9.upper())
     crx = os.path.join(folder, name + ".crx")
     rnx = os.path.join(folder, name + ".rnx")
-    if os.path.exists(rnx):
+    if complete(rnx, day, 1000):
         return rnx
     fetch(["%s/obs/%04d/%03d/%s.crx.gz" % (BKG, y, d, name), "%s/data/%04d/%03d/%s.crx.gz" % (IGN, y, d, name)],
-          crx, log, 1000)
+          crx, log, 1000, day=day)
     return crx2rnx(crx, log)

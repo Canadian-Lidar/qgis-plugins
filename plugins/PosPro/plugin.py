@@ -63,15 +63,16 @@ class PosProPlugin:
             pass
 
     def unload(self):
+        if self.dock is not None:
+            try:
+                self.dock.shutdown()        # stop a running job and release its DCS stage lock first
+            except Exception:       # noqa: BLE001
+                pass
         try:
             self.iface.pluginHelpMenu().removeAction(self.help_action)
         except Exception:       # noqa: BLE001
             pass
-        try:
-            from .ui import theme
-            theme.remove_guard()
-        except Exception:           # noqa: BLE001
-            pass
+        # the shared theme guard belongs to DCS Core (AlignPro and CloudPro use it too): it is left in place
         if self.action:
             self.iface.removeToolBarIcon(self.action)
             from dcs_core import menu, registry
@@ -82,6 +83,9 @@ class PosProPlugin:
             if d is not None:
                 d.release_window()      # remembers the window, removes it safely (also when it is a window)
         self.dock = self.plots = self.editor = None
+        for a in (self.action, self.help_action):
+            if a is not None:
+                a.deleteLater()
 
     def toggle(self, on=True):
         if self.dock is None:

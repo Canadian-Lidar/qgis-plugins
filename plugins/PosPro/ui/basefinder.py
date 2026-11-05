@@ -7,6 +7,7 @@ clocks and antenna file.
 Networks without a download service (subscription portals) still show on
 the map; their button opens the portal and Import loads the file you save.
 """
+import os
 import webbrowser
 
 from qgis.core import (QgsCategorizedSymbolRenderer, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
@@ -173,6 +174,7 @@ class BaseFinder(QDialog):
         self.pframe.setVisible(False)
         sl.addWidget(self.pframe)
         self._task = None
+        self._list_task = None
         self._spin = QTimer(self)
         self._spin.setInterval(500)
         self._spin.timeout.connect(self._tick)
@@ -210,7 +212,12 @@ class BaseFinder(QDialog):
                 r.setOpacity(0.85)
                 self.base.brightnessFilter().setBrightness(-60)
                 self.base.brightnessFilter().setContrast(-10)
-                self.base.hueSaturationFilter().setGrayscaleMode(1)
+                hs = self.base.hueSaturationFilter()
+                try:
+                    from qgis.core import QgsHueSaturationFilter
+                    hs.setGrayscaleMode(QgsHueSaturationFilter.GrayscaleMode.GrayscaleLightness)
+                except (ImportError, AttributeError, TypeError):
+                    hs.setGrayscaleMode(1)
             except Exception:           # noqa: BLE001 - cosmetic only
                 pass
         self.lyr_track = QgsVectorLayer("LineString?crs=EPSG:4326", "Drive", "memory")
@@ -293,6 +300,9 @@ class BaseFinder(QDialog):
                                    cancelled=ctx.cancelled)
 
         def done(ok, res):
+            self._list_task = None
+            if getattr(self, "_closed", False):
+                return
             self.b_refresh.setEnabled(True)
             if not ok:
                 self.status.setText("Station lists not loaded: %s" % str(res).splitlines()[0][:120])
@@ -302,7 +312,10 @@ class BaseFinder(QDialog):
                 len(self.stations), stations.RADIUS_KM,
                 ("  ·  not reached: " + ", ".join(problems)) if problems else ""))
             self.redraw()
-        self.page.dock.start_task("Finding base stations", work, done)
+        self._list_task = self.page.dock.start_task("Finding base stations", work, done, quiet=True)
+        if self._list_task is None:         # another job is running: let the user try again later
+            self.b_refresh.setEnabled(True)
+            self.status.setText("Another PosPro job is running; press Refresh station lists when it ends.")
 
     def visible(self):
         return [s for s in self.stations if self.filters[s.network].isChecked()]
@@ -451,7 +464,17 @@ class BaseFinder(QDialog):
                     != QMessageBox.StandardButton.Yes:
                 return
             self._task.cancel()
+        if getattr(self, "_list_task", None) is not None:
+            try:
+                self._list_task.cancel()
+            except RuntimeError:
+                pass
+        self._closed = True
         super().reject()
+
+    def accept(self):
+        self._closed = True
+        super().accept()
 
     def open_portal(self):
         s = self.sel
@@ -509,9 +532,19 @@ class BaseFinder(QDialog):
                     state["step"], state["span"] = 0.7, 0.3
                     ctx.progress(0.7, "precise orbits and clocks")
                     stations.download_products(self.days, log=log)
+            if ctx.cancelled():             # cancelled: what came in so far is not kept
+                for f in files:
+                    try:
+                        os.remove(f)
+                    except OSError:
+                        pass
+                return []
             return files
 
         def done(ok, res):
+            self._task = None
+            if getattr(self, "_closed", False):
+                return
             self._busy(False)
             if not ok:
                 if str(res).startswith("Cancelled"):

@@ -24,7 +24,9 @@ def leap_seconds(utc):
 
 def gps_to_utc(gps_seconds):
     t = GPS_EPOCH + datetime.timedelta(seconds=gps_seconds)
-    return t - datetime.timedelta(seconds=leap_seconds(t))
+    # the leap-second table is in UTC: look it up at the UTC time (iterated once), not the GPS time
+    u = t - datetime.timedelta(seconds=leap_seconds(t))
+    return t - datetime.timedelta(seconds=leap_seconds(u))
 
 
 def utc_to_gps(utc):
@@ -72,16 +74,6 @@ def distance_m(a, b):
     return math.sqrt(sum((a[i] - b[i]) ** 2 for i in range(3)))
 
 
-def enu_offset(ref_xyz, xyz):
-    lat, lon, _ = ecef2llh(*ref_xyz)
-    la, lo = math.radians(lat), math.radians(lon)
-    dx = [xyz[i] - ref_xyz[i] for i in range(3)]
-    e = -math.sin(lo) * dx[0] + math.cos(lo) * dx[1]
-    n = -math.sin(la) * math.cos(lo) * dx[0] - math.sin(la) * math.sin(lo) * dx[1] + math.cos(la) * dx[2]
-    u = math.cos(la) * math.cos(lo) * dx[0] + math.cos(la) * math.sin(lo) * dx[1] + math.sin(la) * dx[2]
-    return e, n, u
-
-
 # ---------------------------------------------------------------------------
 # ITRF -> NAD83(CSRS), 14-parameter Helmert, position-vector convention,
 # reference epoch 2010.0 (EPSG:10415 for ITRF2020 -> NAD83(CSRS)v8,
@@ -112,27 +104,6 @@ def itrf_to_nad83csrs(xyz, epoch, itrf="ITRF2020"):
             tz - ry * x + rx * y + (1 + s) * z)
 
 
-def apply_velocity(xyz, vel_enu_mm, from_epoch, to_epoch):
-    """Move a point by a velocity given as east/north/up mm/yr."""
-    lat, lon, _ = ecef2llh(*xyz)
-    la, lo = math.radians(lat), math.radians(lon)
-    ve, vn, vu = [v / 1000.0 for v in vel_enu_mm]
-    dt = to_epoch - from_epoch
-    dx = (-math.sin(lo) * ve - math.sin(la) * math.cos(lo) * vn + math.cos(la) * math.cos(lo) * vu) * dt
-    dy = (math.cos(lo) * ve - math.sin(la) * math.sin(lo) * vn + math.cos(la) * math.sin(lo) * vu) * dt
-    dz = (math.cos(la) * vn + math.sin(la) * vu) * dt
-    return xyz[0] + dx, xyz[1] + dy, xyz[2] + dz
-
-
-def fmt_dms(deg, pos="N", neg="S"):
-    h = pos if deg >= 0 else neg
-    d = abs(deg)
-    dd = int(d)
-    mm = int((d - dd) * 60)
-    ss = (d - dd - mm / 60.0) * 3600
-    return "%d°%02d'%07.4f\" %s" % (dd, mm, ss, h)
-
-
 def fmt_duration(s):
     s = int(round(s))
     h, r = divmod(s, 3600)
@@ -142,10 +113,6 @@ def fmt_duration(s):
     if m:
         return "%d min %02d s" % (m, sec)
     return "%d s" % sec
-
-
-def utc_from_unix(u):
-    return datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=u)
 
 
 def unix_from_utc(t):

@@ -7,11 +7,10 @@ available through a subscriber web portal have no download function: the
 finder shows them on the map and opens their portal instead.
 """
 import datetime
-import gzip
 import json
-import math
 import os
 import time
+import zlib
 
 from . import geo, products
 
@@ -92,10 +91,14 @@ def _cache_path(net):
     return os.path.join(d, "%s.json" % net)
 
 
-def _cached_list(net, fn, force, log, centre=None):
+def _list_key(net, centre=None):
     if net in CENTRE_DEPENDENT and centre:
-        net = "%s_%.1f_%.1f" % (net, round(centre[0] * 2) / 2, round(centre[1] * 2) / 2)
-    path = _cache_path(net)
+        return "%s_%.1f_%.1f" % (net, round(centre[0] * 2) / 2, round(centre[1] * 2) / 2)
+    return net
+
+
+def _cached_list(net, fn, force, log, centre=None):
+    path = _cache_path(_list_key(net, centre))
     if not force and os.path.exists(path) and time.time() - os.path.getmtime(path) < CACHE_DAYS * 86400:
         with open(path, encoding="utf-8") as fh:
             return [Station.from_json(d) for d in json.load(fh)]
@@ -119,12 +122,12 @@ def nearby(centre_llh, days, force=False, log=None, cancelled=None, radius_km=RA
         try:
             sts = _cached_list(prov, fn, force, log, centre_llh)
         except Exception as e:      # noqa: BLE001 - one network down must not hide the rest
-            # a stale cache is better than nothing
-            path = _cache_path(prov)
-            if os.path.exists(path):
+            # a stale cache is better than nothing (the same file the list was cached in)
+            path = _cache_path(_list_key(prov, centre_llh))
+            try:
                 with open(path, encoding="utf-8") as fh:
                     sts = [Station.from_json(d) for d in json.load(fh)]
-            else:
+            except (OSError, ValueError):
                 sts = []
             problems.append(PROVIDER_LABEL.get(prov, prov))
             if log:
@@ -325,9 +328,20 @@ def _fetch_crx(url, out_dir, log):
     if not os.path.exists(local[:-3] if local.endswith(".gz") else local):
         data = products.http_get(url)
         os.makedirs(out_dir, exist_ok=True)
-        with open(local, "wb") as fh:
+        with open(local + ".part", "wb") as fh:          # a cut download never looks complete
             fh.write(data)
-    return products.crx2rnx(local, log)
+        os.replace(local + ".part", local)
+    try:
+        return products.crx2rnx(local, log)
+    except (EOFError, OSError, zlib.error) as e:
+        # a damaged download: remove it so the next try downloads it again
+        for f in (local, local[:-3] if local.endswith(".gz") else None):
+            if f and os.path.exists(f):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+        raise products.DownloadError("%s was damaged (%s); try again" % (name, e))
 
 
 def _hours(day, span, margin_s=600):

@@ -1,30 +1,30 @@
-"""PosPro main panel: a step-by-step workflow in the spirit of Qinertia.
+"""PosPro main panel: a guided workflow in three phases (see STEPS below and the user guide).
 
-    1 Data           rover files, time range, ephemeris
-    2 Base stations  files or downloads, positions (PPP, CSRS-PPP, entered)
-    3 Installation   vehicle, IMU model, lever arms, output point
-    4 Processing     coupling mode, constellations, constraints, run
-    5 Quality        summary, findings, map colouring, plots
-    6 Calibration    antenna lever arms solved from the data
-    7 Export         SBET/SMRMSG, text files, map layers
+    Prepare   1 Data          rover files, time range, ephemeris
+              2 Installation  vehicle, IMU model, lever arms, antenna check, output point
+              3 Base          files or downloads, positions (PPP, CSRS-PPP, entered)
+    Process   4 Processing    coupling mode, constellations, constraints, run
+              5 Quality       summary, findings, map colouring, plots
+              6 Calibration   antenna lever arms solved from the data
+    Finish    7 Review        anomalies, Trajectory editor, decisions
+              8 Export        SBET/SMRMSG, text files, map layers
 
 Styled like the Mobile Mapper dashboard (ui/theme.py).
 """
 import copy
 import datetime
-import math
 import os
 import time
 
 from qgis.core import Qgis, QgsApplication, QgsCoordinateReferenceSystem, QgsProject
 from qgis.PyQt.QtCore import QDateTime, QSettings, Qt, QTimer, pyqtSignal
-from qgis.PyQt.QtGui import QColor, QIcon
+from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDateTimeEdit,
                                  QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-                                 QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
-                                 QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit,
-                                 QProgressBar, QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSpinBox,
-                                 QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+                                 QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+                                 QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit, QProgressBar,
+                                 QPushButton, QRadioButton, QScrollArea, QStackedWidget, QTableWidget, QTableWidgetItem,
+                                 QVBoxLayout, QWidget)
 
 from ..core import csrs, engine, geo, pipeline, products, results, rinex
 from ..core.project import FRAMES, IMU_PRESETS, PROJECT_SUFFIX, Project
@@ -103,6 +103,26 @@ def _qdt_to_gps(q):
 
 
 # ===========================================================================
+
+def _utc_qdt(unix_s):
+    """A UTC QDateTime (QTimeZone: Qt.TimeSpec is deprecated from Qt 6.7)."""
+    try:
+        from qgis.PyQt.QtCore import QTimeZone
+        return QDateTime.fromSecsSinceEpoch(int(unix_s), QTimeZone.utc())
+    except (ImportError, AttributeError, TypeError):
+        return QDateTime.fromSecsSinceEpoch(int(unix_s), Qt.TimeSpec.UTC)
+
+
+def _edit_utc(w):
+    try:
+        from qgis.PyQt.QtCore import QTimeZone
+        if hasattr(w, "setTimeZone"):           # Qt 6.7+
+            w.setTimeZone(QTimeZone.utc())
+            return
+    except ImportError:
+        pass
+    w.setTimeSpec(Qt.TimeSpec.UTC)
+
 class Page(QWidget):
     changed = pyqtSignal()
 
@@ -159,7 +179,7 @@ class DataPage(Page):
         self.t1 = QDateTimeEdit()
         for w in (self.t0, self.t1):
             w.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
-            w.setTimeSpec(Qt.TimeSpec.UTC)
+            _edit_utc(w)
             w.setCalendarPopup(True)
             w.editingFinished.connect(self.store_times)
         b_all = QPushButton("Whole capture")
@@ -313,12 +333,10 @@ class DataPage(Page):
                 "" if p.capture_span_source() == "imu" else ";  from the real-time solution (no raw IMU)"))
             for w, g in ((self.t0, p.cfg["rover"].get("time_start") or t0), (self.t1, p.cfg["rover"].get("time_end") or t1)):
                 w.blockSignals(True)
-                q = QDateTime()
                 ut = geo.gps_to_utc(g)
-                q.setTimeSpec(Qt.TimeSpec.UTC)
-                q.setSecsSinceEpoch(int(geo.unix_from_utc(ut)))
-                w.setMinimumDateTime(QDateTime.fromSecsSinceEpoch(int(geo.unix_from_utc(u0)), Qt.TimeSpec.UTC))
-                w.setMaximumDateTime(QDateTime.fromSecsSinceEpoch(int(geo.unix_from_utc(u1)) + 1, Qt.TimeSpec.UTC))
+                q = _utc_qdt(int(geo.unix_from_utc(ut)))
+                w.setMinimumDateTime(_utc_qdt(int(geo.unix_from_utc(u0))))
+                w.setMaximumDateTime(_utc_qdt(int(geo.unix_from_utc(u1)) + 1))
                 w.setDateTime(q)
                 w.blockSignals(False)
         except (KeyError, ValueError):
@@ -367,6 +385,31 @@ class DataPage(Page):
 
 
 # ---------------------------------------------------------------------------
+def scan_base(files, name, frame):
+    """The base entry for RINEX files (header and observation coverage). Runs in a background task."""
+    info = rinex.header_info(files[0], scan_body=True)
+    ent = {"name": name or info.get("marker") or os.path.basename(files[0])[:8], "files": files,
+           "approx_xyz": info.get("approx_xyz"), "antenna": (info.get("antenna") or "").strip(),
+           "delta_hen": list(info.get("delta_hen") or (0, 0, 0)), "interval": info.get("interval"),
+           "first": info["first"].isoformat() if info.get("first") else None,
+           "last": info["last"].isoformat() if info.get("last") else None,
+           "pos_source": "rinex", "xyz": list(info["approx_xyz"]) if info.get("approx_xyz") else None,
+           "frame": frame, "epoch": "",
+           "coverage": info.get("segments") or [], "low_sats": info.get("low_sats") or []}
+    for f in files[1:]:
+        try:
+            more = rinex.header_info(f, scan_body=True)
+            ent["coverage"] += more.get("segments") or []
+            ent["low_sats"] += more.get("low_sats") or []
+            if more.get("last"):
+                ent["last"] = max(ent["last"] or "", more["last"].isoformat())
+        except Exception:       # noqa: BLE001
+            pass
+    if info.get("hatanaka"):
+        ent["hatanaka"] = True
+    return ent
+
+
 class BasePage(Page):
     COLS = ["Base", "Distance", "Interval", "Covers", "Position from"]
 
@@ -482,27 +525,23 @@ class BasePage(Page):
         bid = self.table.item(rows[0].row(), 0).data(Qt.ItemDataRole.UserRole)
         return self.project.base(bid)
 
-    def add_base_file(self, files, name=None, source="rinex"):
-        info = rinex.header_info(files[0], scan_body=True)
-        ent = {"name": name or info.get("marker") or os.path.basename(files[0])[:8], "files": files,
-               "approx_xyz": info.get("approx_xyz"), "antenna": (info.get("antenna") or "").strip(),
-               "delta_hen": list(info.get("delta_hen") or (0, 0, 0)), "interval": info.get("interval"),
-               "first": info["first"].isoformat() if info.get("first") else None,
-               "last": info["last"].isoformat() if info.get("last") else None,
-               "pos_source": "rinex", "xyz": list(info["approx_xyz"]) if info.get("approx_xyz") else None,
-               "frame": self.project.cfg["frame"]["name"], "epoch": "",
-               "coverage": info.get("segments") or [], "low_sats": info.get("low_sats") or []}
-        for f in files[1:]:
-            try:
-                more = rinex.header_info(f, scan_body=True)
-                ent["coverage"] += more.get("segments") or []
-                ent["low_sats"] += more.get("low_sats") or []
-                if more.get("last"):
-                    ent["last"] = max(ent["last"] or "", more["last"].isoformat())
-            except Exception:       # noqa: BLE001
-                pass
-        if info.get("hatanaka"):
-            ent["hatanaka"] = True
+    def add_base_file(self, files, name=None, then=None):
+        """Scan the base files in the background (a 1 s daily RINEX takes a while), then add the base."""
+        frame = self.project.cfg["frame"]["name"]
+
+        def work(ctx):
+            return scan_base(files, name, frame)
+
+        def done(ok, res):
+            if not ok:
+                theme.msg_warn(self, "PosPro", "Cannot read %s:\n%s" % (files[0], res))
+                return
+            b = self.add_base_entry(res)
+            if then is not None:
+                then(b)
+        self.dock.start_task("Reading base files", work, done)
+
+    def add_base_entry(self, ent):
         b = self.project.add_base(ent)
         self.dock.save()
         self.refresh()
@@ -515,10 +554,7 @@ class BasePage(Page):
                                              "RINEX observations (*.obs *.rnx *.crx *.*o *.*d *.gz);;All files (*)")
         if not fs:
             return
-        try:
-            self.add_base_file(fs)
-        except Exception as e:      # noqa: BLE001
-            theme.msg_warn(self, "PosPro", "Cannot read %s:\n%s" % (fs[0], e))
+        self.add_base_file(fs)
 
     def _span_days(self):
         span = self.project.rover_span()
@@ -526,25 +562,6 @@ class BasePage(Page):
             theme.msg_info(self, "PosPro", "Read the rover files first (Data page).")
             return None
         return products.days_between(span[0], span[1])
-
-    def _download(self, title, fn):
-        days = self._span_days()
-        if not days:
-            return
-
-        def work(ctx):
-            out = []
-            for d in days:
-                out.append(fn(d, ctx))
-            return out
-
-        def done(ok, res):
-            if not ok:
-                theme.msg_warn(self, "PosPro", "Download failed:\n%s" % res)
-                return
-            name = os.path.basename(res[0])[:4].upper()
-            self.add_base_file(res, name)
-        self.dock.start_task(title, work, done)
 
     def open_finder(self):
         from .basefinder import BaseFinder
@@ -563,58 +580,19 @@ class BasePage(Page):
             llh = (sum(t[0] for t in track) / len(track), sum(t[1] for t in track) / len(track), llh[2])
         dlg = BaseFinder(self, p, days, llh, track)
         dlg.exec()
+        dlg.deleteLater()           # its own map canvas and basemap go with it
         if dlg.result:
             files, st = dlg.result
-            self.add_base_file(files, st.sid[:4].upper() if st else None)
-            b = self.selected() or (p.cfg["bases"][-1] if p.cfg["bases"] else None)
-            if st is not None and b is not None and st.extra.get("xyz_published"):
-                b["note"] = "published position available from %s" % st.network
-            self.dock.save()
             where = dlg.saved_to or os.path.dirname(files[0])
-            self.dock.toast("%s added as a base \u2013 %d file%s saved to %s" % (
-                st.sid if st else "Station", len(files), "" if len(files) == 1 else "s", where))
-            self.dock.log("info", "base files saved to %s" % where)
 
-    def download_noaa_id(self):
-        sid, ok = theme.get_text(self, "NOAA CORS", "Station ID (4 characters):")
-        if ok and sid.strip():
-            self._download("CORS %s" % sid, lambda d, ctx: products.noaa_rinex(sid.strip(), d, lambda m: ctx.log("info", m)))
-
-    def download_noaa_nearest(self):
-        xyz = self.project.approx_xyz()
-        if not xyz:
-            theme.msg_info(self, "PosPro", "Read the rover files first (Data page).")
-            return
-
-        def work(ctx):
-            ids = products.noaa_nearest(xyz)
-            out = []
-            for sid in ids:
-                try:
-                    st = products.noaa_station(sid)
-                    x = float(st.get("x") or st.get("X"))
-                    y = float(st.get("y") or st.get("Y"))
-                    z = float(st.get("z") or st.get("Z"))
-                    out.append((sid, geo.distance_m(xyz, (x, y, z)) / 1000.0))
-                except Exception:   # noqa: BLE001
-                    out.append((sid, None))
-            return out
-
-        def done(ok, res):
-            if not ok:
-                theme.msg_warn(self, "PosPro", "Could not reach NOAA:\n%s" % res)
-                return
-            items = ["%s  (%s)" % (s, "%.0f km" % d if d is not None else "?") for s, d in res]
-            it, ok2 = theme.get_item(self, "Nearest NOAA CORS", "Station:", items, 0, False)
-            if ok2:
-                sid = it.split()[0]
-                self._download("CORS %s" % sid, lambda d, ctx: products.noaa_rinex(sid, d, lambda m: ctx.log("info", m)))
-        self.dock.start_task("Finding CORS stations", work, done)
-
-    def download_igs(self):
-        sid, ok = theme.get_text(self, "IGS station", "9-character station ID (e.g. FRDN00CAN):")
-        if ok and len(sid.strip()) == 9:
-            self._download("IGS %s" % sid, lambda d, ctx: products.igs_rinex(sid.strip(), d, lambda m: ctx.log("info", m)))
+            def added(b):
+                if st is not None and b is not None and st.extra.get("xyz_published"):
+                    b["note"] = "published position available from %s" % st.network
+                    self.dock.save()
+                self.dock.toast("%s added as a base \u2013 %d file%s saved to %s" % (
+                    st.sid if st else "Station", len(files), "" if len(files) == 1 else "s", where))
+                self.dock.log("info", "base files saved to %s" % where)
+            self.add_base_file(files, st.sid[:4].upper() if st else None, then=added)
 
     def remove(self):
         b = self.selected()
@@ -1331,9 +1309,6 @@ class ProcessPage(Page):
         self.b_run.setMinimumHeight(36)
         self.b_run.clicked.connect(self.dock.run_processing)
         v.addWidget(self.b_run)
-        self.steps = QLabel("")
-        self.steps.setWordWrap(True)
-        v.addWidget(self.steps)
         v.addStretch(1)
         for w in [self.pos, self.passes, self.nf, self.rate, self.align, self.atm]:
             w.currentIndexChanged.connect(self.store)
@@ -1342,7 +1317,10 @@ class ProcessPage(Page):
         for w in list(self.sys.values()) + [self.ar, self.nhc, self.zupt, self.snr]:
             w.toggled.connect(self.store)
         self.mode.buttonClicked.connect(self.store)
-        self.extra.textChanged.connect(self.store)
+        self._extra_timer = QTimer(self)          # saved when typing pauses, not on every key
+        self._extra_timer.setSingleShot(True)
+        self._extra_timer.timeout.connect(self.store)
+        self.extra.textChanged.connect(lambda *_: self._extra_timer.start(400))
         self._loading = False
 
     def refresh(self):
@@ -1413,9 +1391,11 @@ class ProcessPage(Page):
             return "todo", ""
         r = p.cfg.get("results") or {}
         if r.get("combine") or (r.get("mode") == "gnss" and r.get("gnss")):
+            if r.get("settings_sig") and r["settings_sig"] != pipeline.settings_sig(p):
+                return "warn", "settings changed since %s: process again" % r.get("finished", "")[11:16]
             return "done", "processed %s" % r.get("finished", "")[:16]
-        return "todo", {"tc": "tightly coupled", "lc": "loosely coupled", "gnss": "GNSS only"}.get(
-            p.cfg["processing"].get("mode"), "")
+        return "todo", {"tc": "tightly coupled", "lc": "loosely coupled", "gnss": "GNSS only",
+                        "rt": "real-time solution"}.get(p.cfg["processing"].get("mode"), "")
 
 
 # ---------------------------------------------------------------------------
@@ -1597,7 +1577,7 @@ class ReviewPage(Page):
             b.setToolTip("Select part of the trajectory on the map with a %s; it is added to the list." % label.lower())
             b.clicked.connect(lambda _=False, m=mode: self.select_on_map(m))
             br.addWidget(b)
-        b = QPushButton("Plot view")
+        b = QPushButton("Add plot range")
         b.setToolTip("Add the time range shown in the quality plots")
         b.clicked.connect(self.select_plot_range)
         br.addWidget(b)
@@ -1634,7 +1614,7 @@ class ReviewPage(Page):
         ar = QGridLayout()
         self.b_zoom = QPushButton("Zoom to")
         self.b_zoom.clicked.connect(self.zoom)
-        self.b_excl = QPushButton("Exclude GNSS")
+        self.b_excl = QPushButton("Bridge with IMU")
         self.b_excl.setToolTip("Do not use GNSS in these windows; the IMU carries the trajectory. Needs processing "
                                "again.")
         self.b_excl.clicked.connect(lambda: self.decide("exclude"))
@@ -1644,7 +1624,7 @@ class ReviewPage(Page):
         self.b_poor.clicked.connect(lambda: self.decide("poor"))
         self.b_interp = QPushButton("Interpolate")
         self.b_interp.setToolTip("Replace the positions between the good samples on both sides (method below). "
-                                 "For longer stretches, Exclude GNSS lets the IMU carry the trajectory instead.")
+                                 "For longer stretches, Bridge with IMU lets the IMU carry the trajectory instead.")
         self.b_interp.clicked.connect(lambda: self.decide("interpolate"))
         self.b_accept = QPushButton("Accept")
         self.b_accept.clicked.connect(lambda: self.decide("accept"))
@@ -1916,10 +1896,12 @@ class ReviewPage(Page):
         self.dock.save()
         self.after_edit(True)
 
+    APPLY_DELAY_MS = 900        # quiet time after the last decision before the edits are applied
+
     def after_edit(self, reapply):
-        """Poor / interpolate change the results at once (from the untouched
-        copy); exclusions wait for Process again."""
-        from ..core import review
+        """Poor / interpolate change the results (from the untouched copy) once the clicks stop: quick
+        decisions in a row are applied together, since each apply rewrites the whole trajectory and the
+        handover; exclusions wait for Process again."""
         if not reapply:
             self.fill()
             self.dock.update_steps()
@@ -1927,7 +1909,26 @@ class ReviewPage(Page):
             if ed is not None:
                 ed.refresh_states()
             return
+        self.fill()
+        ed = self.dock.plugin.editor
+        if ed is not None:
+            ed.refresh_states()
+        if getattr(self, "_apply_timer", None) is None:
+            self._apply_timer = QTimer(self)
+            self._apply_timer.setSingleShot(True)
+            self._apply_timer.timeout.connect(self.apply_edits)
+        self.dock.status.setText("Applying review edits\u2026")
+        self._apply_timer.start(self.APPLY_DELAY_MS)
+
+    def apply_edits(self):
+        """Apply the review edits to the results now (and publish the trajectory)."""
+        from ..core import review   # noqa: F401
+        t = getattr(self, "_apply_timer", None)
+        if t is not None:
+            t.stop()
         p = self.project
+        if p is None:
+            return
         work_p = self.dock._work_copy()
 
         def work(ctx):
@@ -1948,7 +1949,7 @@ class ReviewPage(Page):
                 theme.msg_warn(self, "PosPro", "Could not apply the review edits:\n%s" % res)
                 return
             self.dock.qc = results.load_qc(os.path.join(p.work_dir, "results", "qc.csv"))
-            self.dock.show_trajectory()
+            self.dock.show_trajectory(zoom=False)      # keep the user's map view while reviewing
             if self.dock.plugin.plots:
                 self.dock.plugin.plots.set_data(self.dock.qc)
             self.dock.page["quality"].refresh()
@@ -1956,7 +1957,10 @@ class ReviewPage(Page):
             self.dock.update_steps()
             if ed is not None:
                 ed.edits_applied()
-        if self.dock.start_task("Applying review edits", work, done) is None:
+        if self.dock.start_task("Applying review edits", work, done, quiet=True) is None:
+            # another job is running: the edits are applied when it finishes
+            self.dock._edits_pending = True
+            self.dock.status.setText("Review edits will be applied when the current job finishes")
             self.fill()
             ed = self.dock.plugin.editor
             if ed is not None:
@@ -1968,28 +1972,82 @@ class ReviewPage(Page):
             theme.msg_info(self, "PosPro", "Process the project first.")
             return
         canvas = self.dock.iface.mapCanvas()
-        self.tool = SelectTool(canvas, mode)
-        self.tool.selected.connect(self.map_selected)
-        canvas.setMapTool(self.tool)
+        tool = getattr(self, "tool", None)
+        if tool is None:                     # one tool, kept: a new one per click left rubber bands behind
+            self.tool = tool = SelectTool(canvas, mode)
+            tool.selected.connect(self.map_selected)
+        if canvas.mapTool() is not tool:
+            self._prev_tool = canvas.mapTool()   # given back after the selection
+        tool.set_mode(mode)
+        canvas.setMapTool(tool)
         self.dock.toast({"rectangle": "Drag a rectangle over the trajectory",
                          "polygon": "Click the corners; right-click or double-click to finish",
                          "lasso": "Drag around the part of the trajectory"}[mode])
 
+    def end_select(self):
+        """Give the map back the tool it had before the selection (pan, identify, ...)."""
+        tool = getattr(self, "tool", None)
+        if tool is None:
+            return
+        canvas = self.dock.iface.mapCanvas()
+        try:
+            if canvas.mapTool() is tool:
+                prev = getattr(self, "_prev_tool", None)
+                if prev is not None:
+                    canvas.setMapTool(prev)
+                else:
+                    canvas.unsetMapTool(tool)
+        except RuntimeError:            # the previous tool was deleted meanwhile
+            canvas.unsetMapTool(tool)
+        self._prev_tool = None
+
+    def release_tool(self):
+        tool = getattr(self, "tool", None)
+        if tool is None:
+            return
+        self.end_select()
+        try:
+            self.dock.iface.mapCanvas().unsetMapTool(tool)
+        except RuntimeError:
+            pass
+        tool.release()
+        self.tool = None
+
     def map_selected(self, geom):
         from qgis.core import QgsCoordinateTransform, QgsGeometry, QgsPointXY, QgsProject
         from ..core import review
+        self.end_select()
         canvas = self.dock.iface.mapCanvas()
         tr = QgsCoordinateTransform(maplayers._crs(self.project), canvas.mapSettings().destinationCrs(),
                                     QgsProject.instance())
         qc = self.dock.qc
-        flags = []
-        for lat, lon in zip(qc["lat_deg"], qc["lon_deg"]):
-            try:
-                pt = tr.transform(QgsPointXY(lon, lat))
-            except Exception:       # noqa: BLE001
-                flags.append(False)
-                continue
-            flags.append(geom.contains(QgsGeometry.fromPointXY(pt)))
+        flags = None
+        try:
+            # the selection into the trajectory's coordinates once (edges densified so they keep their
+            # shape), then every point tested at once - not one transform and one test per second of data
+            import numpy as np
+            from ..core.editor import inside_polygon
+            g = QgsGeometry(geom).densifyByCount(16)
+            g.transform(tr, QgsCoordinateTransform.TransformDirection.ReverseTransform
+                        if hasattr(QgsCoordinateTransform, "TransformDirection") else 1)
+            rings = g.asMultiPolygon() if g.isMultipart() else [g.asPolygon()]
+            lon, lat = np.asarray(qc["lon_deg"]), np.asarray(qc["lat_deg"])
+            inside = np.zeros(len(lon), bool)
+            for poly in rings:
+                if poly and len(poly[0]) >= 3:
+                    inside |= inside_polygon(lon, lat, [(q.x(), q.y()) for q in poly[0]])
+            flags = inside.tolist()
+        except Exception:       # noqa: BLE001  (fall back to testing point by point)
+            flags = None
+        if flags is None:
+            flags = []
+            for lat, lon in zip(qc["lat_deg"], qc["lon_deg"]):
+                try:
+                    pt = tr.transform(QgsPointXY(lon, lat))
+                except Exception:       # noqa: BLE001
+                    flags.append(False)
+                    continue
+                flags.append(geom.contains(QgsGeometry.fromPointXY(pt)))
         runs = review._runs(qc["gps_time"], flags)
         if not runs:
             self.dock.toast("No part of the trajectory inside the selection", "warn")
@@ -2037,6 +2095,8 @@ class ReviewPage(Page):
         if review.exclusions_pending(p):
             return "warn", "process again"
         if not r["anomalies"] and not r["edits"]:
+            if r.get("detected_at"):
+                return "done", "nothing over the limits"
             return "todo", "find anomalies"
         n_open = sum(1 for a in r["anomalies"] if review.is_open(review.edit_for(p, a["t0"], a["t1"])))
         n_open += sum(1 for e in r["edits"] if e["action"] == "reject" and not any(
@@ -2055,7 +2115,7 @@ class CalibPage(Page):
         super().__init__(dock)
         v = QVBoxLayout(self)
         v.addWidget(_title("Calibration"))
-        v.addWidget(_hint("Works on data you have already processed. Measure the offsets as well as you can "
+        v.addWidget(_hint("Runs its own tightly coupled processing of the drive. Measure the offsets as well as you can "
                           "first; the solver then checks and refines them."))
         lg = QGroupBox("Antenna lever arms")
         ll = QVBoxLayout(lg)
@@ -2248,19 +2308,68 @@ class ExportPage(Page):
         self.out.setWordWrap(True)
         self.out.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         v.addWidget(self.out)
-        v.addWidget(_hint("Heights are ellipsoidal in the base station's frame. SBET velocities are north, "
-                          "east, down with wander angle 0; angles in radians, as Applanix defines."))
+        v.addWidget(_hint("Heights are ellipsoidal in the trajectory's frame (the base station's; ITRF2020 "
+                          "after PPP). SBET velocities are north, east, down with wander angle 0; angles in "
+                          "radians, as Applanix defines."))
         v.addStretch(1)
+        # the choices are kept as they are made (leaving the page used to put them back)
+        self._filling = False
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.timeout.connect(self.store)
+        later = lambda *_: None if self._filling else self._save_timer.start(400)   # noqa: E731
+        self.folder.textChanged.connect(later)
+        for w in (self.point, self.rate, self.sep):
+            w.currentIndexChanged.connect(later)
+        for w in (self.crop, self.sbet, self.ascii, self.layers, self.gpx):
+            w.toggled.connect(later)
+        self.cols.itemChanged.connect(later)
+        self.cols.model().rowsMoved.connect(later)
+        if hasattr(self.crs, "crsChanged"):
+            self.crs.crsChanged.connect(later)
+        else:
+            self.crs.textChanged.connect(later)
 
     def pick_folder(self):
         d = QFileDialog.getExistingDirectory(self, "Export folder", self.folder.text() or self.project.folder)
         if d:
             self.folder.setText(d)
 
+    def _crs_id(self):
+        c = self.crs.crs() if hasattr(self.crs, "crs") else QgsCoordinateReferenceSystem(self.crs.text())
+        return c.authid() if c.isValid() else ""
+
+    def store(self):
+        """The page's choices into the project (and the export CRS as the shared horizontal CRS)."""
+        p = self.project
+        if not p or self._filling:
+            return
+        e = p.cfg["export"]
+        e["folder"] = self.folder.text().strip()
+        e["point"] = self.point.currentData() or "imu"
+        e["rate_hz"] = self.rate.currentData()
+        e["sbet"] = self.sbet.isChecked()
+        e["ascii"] = self.ascii.isChecked()
+        e["gpkg"] = self.layers.isChecked()
+        e["gpx"] = self.gpx.isChecked()
+        e["crop"] = self.crop.isChecked()
+        e["ascii_cols"] = ",".join(self.cols.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.cols.count())
+                                   if self.cols.item(i).checkState() == Qt.CheckState.Checked)
+        e["ascii_sep"] = self.sep.currentData()
+        e["ascii_crs"] = self._crs_id()
+        self.dock.save()
+
     def refresh(self):
         p = self.project
         if not p:
             return
+        self._filling = True
+        try:
+            self._refresh(p)
+        finally:
+            self._filling = False
+
+    def _refresh(self, p):
         e = p.cfg["export"]
         self.folder.setText(e.get("folder") or os.path.join(p.folder, "export"))
         inst = p.cfg["installation"]
@@ -2280,22 +2389,27 @@ class ExportPage(Page):
             it = self.cols.item(i)
             it.setCheckState(Qt.CheckState.Checked if it.data(Qt.ItemDataRole.UserRole) in want else Qt.CheckState.Unchecked)
         self.sep.setCurrentIndex(max(0, self.sep.findData(e.get("ascii_sep", ","))))
+        self.crop.setChecked(bool(e.get("crop", self.crop.isChecked())))
+        # ticked columns first, in the order they were chosen
+        order = {k: i for i, k in enumerate(c for c in want if c)}
+        items = [self.cols.takeItem(0) for _ in range(self.cols.count())]
+        items.sort(key=lambda it: order.get(it.data(Qt.ItemDataRole.UserRole), 1000))
+        for it in items:
+            self.cols.addItem(it)
+        if e.get("ascii_crs"):
+            c = QgsCoordinateReferenceSystem(e["ascii_crs"])
+            if c.isValid():
+                if hasattr(self.crs, "setCrs"):
+                    self.crs.setCrs(c)
+                else:
+                    self.crs.setText(e["ascii_crs"])
 
     def run(self):
         p = self.project
+        self._save_timer.stop()
+        self.store()
         e = p.cfg["export"]
-        e["folder"] = self.folder.text().strip()
-        e["point"] = self.point.currentData()
-        e["rate_hz"] = self.rate.currentData()
-        e["sbet"] = self.sbet.isChecked()
-        e["ascii"] = self.ascii.isChecked()
-        e["gpkg"] = self.layers.isChecked()
-        e["gpx"] = self.gpx.isChecked()
-        cols = [self.cols.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.cols.count())
-                if self.cols.item(i).checkState() == Qt.CheckState.Checked]
-        e["ascii_cols"] = ",".join(cols)
-        e["ascii_sep"] = self.sep.currentData()
-        self.dock.save()
+        cols = [c for c in (e.get("ascii_cols") or "").split(",") if c]
         lever = {"imu": [0, 0, 0], "output": p.cfg["installation"]["lever_output"],
                  "antenna": p.cfg["installation"]["lever_antenna"]}[e["point"]]
         proj = None
@@ -2382,6 +2496,10 @@ class PosProDock(PluginWindow):
         self.project = None
         self.qc = None
         self.task = None
+        self._run_lock = None           # the DCS stage lock of a running Processing job
+        self._edits_pending = False     # review edits waiting for the running job
+        self._closing = False
+        self.antenna_check = None       # the last antenna check (shown in the editor)
         self._log_lines = []
 
         root = QWidget()
@@ -2410,7 +2528,7 @@ class PosProDock(PluginWindow):
         self.pname = self.pbox
         outer.addWidget(self.header)
         self._chain_timer = QTimer(self)
-        self._chain_timer.setInterval(5000)
+        self._chain_timer.setInterval(20000)      # other plugins' progress; also on window activation
         self._chain_timer.timeout.connect(self._refresh_chain)
         self._chain_timer.start()
 
@@ -2502,6 +2620,26 @@ class PosProDock(PluginWindow):
         for b in self.step_buttons:
             b.setEnabled(on)
 
+    def _lock_actions(self, busy):
+        """While a job runs, the page actions that would start another job or change its inputs are off
+        (viewing - the editor, plots, the guide - stays on)."""
+        from qgis.PyQt.QtWidgets import QPushButton, QToolButton
+        if busy:
+            self._locked = []
+            for b in self.stack.findChildren(QPushButton) + self.stack.findChildren(QToolButton):
+                t = (b.text() or "").lower()
+                if not b.isEnabled() or any(k in t for k in ("editor", "plot", "guide", "help", "show", "log")):
+                    continue
+                b.setEnabled(False)
+                self._locked.append(b)
+        else:
+            for b in getattr(self, "_locked", []):
+                try:
+                    b.setEnabled(True)
+                except RuntimeError:
+                    pass
+            self._locked = []
+
     def index_of(self, key):
         return self.keys.index(key)
 
@@ -2521,7 +2659,36 @@ class PosProDock(PluginWindow):
             except Exception:       # noqa: BLE001
                 st, sub = "todo", ""
             sb.set_state(st, sub)
+        self.update_actions()
         self.update_nav()
+
+    def update_actions(self):
+        """Buttons that cannot work yet are off (with the reason as their tooltip)."""
+        p = self.project
+        if p is None or self.task is not None:
+            return
+        have_files = bool(p.cfg["rover"].get("files"))
+        have_ex = bool(p.cfg["rover"].get("extract"))
+        have_qc = bool(self.qc)
+        tc = p.cfg["processing"].get("mode") == "tc"
+        rules = [("data", "b_read", have_files, "Add the rover files first"),
+                 ("install", "b_meas2", have_ex, "Read the rover files first (Data)"),
+                 ("install", "b_antcheck", have_ex, "Read the rover files first (Data)"),
+                 ("process", "b_run", have_ex, "Read the rover files first (Data)"),
+                 ("review", "b_detect", have_qc, "Process first"),
+                 ("review", "b_editor", have_qc, "Process first"),
+                 ("calib", "b_lever", have_ex and tc and p.base() is not None,
+                  "Needs the rover files read, a base station and Tightly coupled processing"),
+                 ("export", "b_export", have_qc, "Process first")]
+        for page, name, ok, why in rules:
+            b = getattr(self.page.get(page), name, None)
+            if b is None:
+                continue
+            b.setEnabled(bool(ok))
+            if not ok:
+                b.setToolTip(why)
+            elif b.toolTip() == why:
+                b.setToolTip("")
 
     def update_nav(self):
         """Back / Next under the pages: is the current step done, what is next."""
@@ -2628,9 +2795,18 @@ class PosProDock(PluginWindow):
             QDesktopServices.openUrl(QUrl.fromLocalFile(self.project.project_folder))
 
     def _refresh_chain(self):
-        if self.isVisible() and self.project is not None and self.project.dcs is not None:
+        w = self.window()
+        if not self.isVisible() or (w is not None and w.isMinimized()):
+            return
+        if self.project is not None and self.project.dcs is not None and self.task is None:
             self.chain.refresh()
             self.update_nav()
+
+    def event(self, ev):                    # noqa: N802
+        from qgis.PyQt.QtCore import QEvent
+        if ev.type() == QEvent.Type.WindowActivate:
+            QTimer.singleShot(0, self._refresh_chain)
+        return super().event(ev)
 
     def relocate_raw(self):
         if not self.project or not self.project.dcs:
@@ -2759,6 +2935,22 @@ class PosProDock(PluginWindow):
         self._set_pname(p.name)
         self.set_enabled(True)
         self.qc = results.load_qc(os.path.join(p.work_dir, "results", "qc.csv"))
+        # nothing of the previous project stays on show
+        self.antenna_check = None
+        self.traj_layer = None
+        self._edits_pending = False
+        try:
+            self.plugin._clear_marker()
+            self.page["review"].end_select()
+            if getattr(self.page["review"], "_apply_timer", None) is not None:
+                self.page["review"]._apply_timer.stop()
+            if self.plugin.plots is not None:
+                self.plugin.plots.set_data(self.qc)
+            if self.plugin.editor is not None:
+                self.plugin.editor.sel_windows = []
+                self.plugin.editor.reload(keep_view=False)
+        except Exception as e:      # noqa: BLE001
+            self.log("warning", "could not refresh the editor or plots: %s" % e)
         for pg in self.pages:
             pg.refresh()
         self.update_steps()
@@ -2769,9 +2961,10 @@ class PosProDock(PluginWindow):
         self.goto_page(self.stack.currentIndex())
 
     # ------------------------------------------------------------------
-    def start_task(self, title, fn, on_done):
+    def start_task(self, title, fn, on_done, quiet=False):
         if self.task is not None:
-            theme.msg_info(self, "PosPro", "Wait for the current job to finish (or cancel it).")
+            if not quiet:
+                theme.msg_info(self, "PosPro", "Wait for the current job to finish (or cancel it).")
             return None
         t = WorkTask("PosPro: %s" % title, fn)
         t.message.connect(self.log)
@@ -2779,17 +2972,31 @@ class PosProDock(PluginWindow):
         t.progressChanged.connect(lambda v: self.prog.setValue(int(v)))
 
         def finished(ok, res):
+            if getattr(self, "_closing", False):     # QGIS is unloading the plugin: the widgets are going
+                return
             self.task = None
-            self.header.set_busy(False)
-            self.prog.setVisible(False)
-            self.b_cancel.setVisible(False)
-            self.status.setText("%s: %s" % (title, "done" if ok else "stopped"))
-            if not ok:
-                self.log("error", "%s: %s" % (title, str(res).splitlines()[0] if res else "stopped"))
-            on_done(ok, res)
-            self.update_steps()
+            self._lock_actions(False)
+            try:
+                self.header.set_busy(False)
+                self.prog.setVisible(False)
+                self.b_cancel.setVisible(False)
+                self.status.setText("%s: %s" % (title, "done" if ok else "stopped"))
+                if not ok:
+                    self.log("error", "%s: %s" % (title, str(res).splitlines()[0] if res else "stopped"))
+                on_done(ok, res)
+            except Exception as e:      # noqa: BLE001  (a failing callback must not leave the panel busy)
+                self.log("error", "%s: %s" % (title, e))
+            finally:
+                if self._run_lock is not None:          # a stage lock the callback did not release
+                    self._release_run(ok, res)
+                self.update_steps()
+                if self._edits_pending and self.task is None:
+                    # review edits made while this job ran: apply them now
+                    self._edits_pending = False
+                    QTimer.singleShot(0, self.page["review"].apply_edits)
         t.done.connect(finished)
         self.task = t
+        self._lock_actions(True)
         self.header.set_busy(True)
         self.prog.setValue(0)
         self.prog.setVisible(True)
@@ -2798,6 +3005,37 @@ class PosProDock(PluginWindow):
         self.update_nav()
         QgsApplication.taskManager().addTask(t)
         return t
+
+    def _release_run(self, ok, res):
+        run, self._run_lock = self._run_lock, None
+        if run is None:
+            return
+        try:
+            run.__exit__(None if ok else RuntimeError, None if ok else RuntimeError(str(res)[:400]), None)
+        except Exception as e:      # noqa: BLE001
+            self.log("warning", "could not close the DCS run record: %s" % e)
+
+    def shutdown(self):
+        """QGIS is unloading the plugin: stop the running job and let go of the DCS stage lock."""
+        self._closing = True
+        t, self.task = self.task, None
+        if t is not None:
+            try:
+                t.done.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            try:
+                t.cancel()
+            except RuntimeError:
+                pass
+        self._release_run(False, "QGIS closed the plugin while the job ran")
+        try:
+            rv = self.page["review"]
+            rv.release_tool()
+            if getattr(rv, "_apply_timer", None) is not None:
+                rv._apply_timer.stop()
+        except Exception:       # noqa: BLE001
+            pass
 
     def _work_copy(self):
         """The background job works on its own copy of the settings, so the
@@ -2809,12 +3047,13 @@ class PosProDock(PluginWindow):
         for k in ("extract", "extract_files", "hardware"):
             dst["rover"][k] = src["rover"].get(k)
         dst["results"] = src.get("results") or {}
-        dst["frame"] = src.get("frame") or dst.get("frame")
         sr, dr = src.get("review") or {}, dst.setdefault("review", {})
         dr["excluded_in_run"] = sr.get("excluded_in_run", [])
         if "anomalies" in sr:
             # found again on the new trajectory; hand selections from before were taken off
             dr["anomalies"] = sr["anomalies"]
+            if sr.get("detected_at"):
+                dr["detected_at"] = sr["detected_at"]
         old_log = set(dr.get("log") or [])
         dr["log"] = ((dr.get("log") or []) + [x for x in sr.get("log") or [] if x not in old_log])[-500:]
 
@@ -2877,6 +3116,7 @@ class PosProDock(PluginWindow):
             except Locked as e:
                 theme.msg_warn(self, "PosPro", str(e))
                 return
+            self._run_lock = run
             self.chain.refresh()
         work_p = self._work_copy()
 
@@ -2888,10 +3128,15 @@ class PosProDock(PluginWindow):
 
         def done(ok, res):
             if run is not None:
-                run.__exit__(None if ok else RuntimeError, None if ok else RuntimeError(str(res)[:400]), None)
+                self._release_run(ok, res)
                 p.dcs.reload()
                 self.chain.refresh()
             if not ok:
+                # a fresh read of the rover files is kept even when a later step failed
+                if work_p.cfg["rover"].get("extract_files") != p.cfg["rover"].get("extract_files"):
+                    for k in ("extract", "extract_files", "hardware"):
+                        p.cfg["rover"][k] = work_p.cfg["rover"].get(k)
+                    self.save()
                 theme.msg_warn(self, "PosPro", "Processing stopped:\n\n%s" % res)
                 return
             self._merge_back(work_p)
@@ -2905,7 +3150,8 @@ class PosProDock(PluginWindow):
                 self.plugin.plots.set_data(self.qc)
             if self.plugin.editor is not None and self.plugin.editor.isVisible():
                 self.plugin.editor.reload(keep_view=True)
-        self.start_task("Processing", work, done)
+        if self.start_task("Processing", work, done) is None:
+            self._release_run(False, "not started")
 
     # ------------------------------------------------------------------
     def show_coverage(self, view, bases=False):
@@ -2952,15 +3198,26 @@ class PosProDock(PluginWindow):
             if not self.qc:
                 maplayers.zoom_to(self.iface, lyr)
 
-    def show_trajectory(self):
+    def show_trajectory(self, zoom=True):
         if not self.qc:
             return
         lyr = maplayers.trajectory_layers(self.project, self.qc, self.page["quality"].colour.currentData() or "status")
         self.traj_layer = lyr
-        maplayers.zoom_to(self.iface, lyr)
+        if zoom:
+            maplayers.zoom_to(self.iface, lyr)
+
+    @property
+    def traj_layer(self):
+        """The trajectory layer, looked up by id each time (the user may have removed it from the map)."""
+        lid = getattr(self, "_traj_layer_id", None)
+        return QgsProject.instance().mapLayer(lid) if lid else None
+
+    @traj_layer.setter
+    def traj_layer(self, lyr):
+        self._traj_layer_id = lyr.id() if lyr is not None else None
 
     def recolour(self, how):
-        lyr = getattr(self, "traj_layer", None)
+        lyr = self.traj_layer
         if lyr is not None:
             try:
                 maplayers.style_trajectory(lyr, how)
@@ -2984,7 +3241,7 @@ class PosProDock(PluginWindow):
 
     def save_layer_gpkg(self, out_dir):
         from qgis.core import QgsVectorFileWriter
-        lyr = getattr(self, "traj_layer", None)
+        lyr = self.traj_layer
         if lyr is None:
             return None
         path = os.path.join(out_dir, "%s_trajectory.gpkg" % self.project.name)
@@ -2997,7 +3254,7 @@ class PosProDock(PluginWindow):
     def export_note(self, e, lever):
         p = self.project
         b = p.base()
-        fr = p.cfg["frame"]
+        fr = p.trajectory_frame()
         span = p.rover_span()
         rt_mode = p.cfg["processing"].get("mode") == "rt"
         lines = ["PosPro export", "=============", "",
@@ -3006,7 +3263,10 @@ class PosProDock(PluginWindow):
                                           "real-time solution" if rt_mode else "%s, %s passes" % (
                                               p.cfg["processing"].get("mode"), p.cfg["processing"].get("passes"))),
                  ("Frame        as the Certus real-time solution (the frame of its RTK corrections)" if rt_mode else
-                  "Frame        %s, epoch %s (that of the base position)" % (fr.get("name"), fr.get("epoch"))),
+                  "Frame        %s, epoch %s (%s)" % (fr.get("name"), fr.get("epoch"),
+                                                     "PPP: precise orbits, at the observation date"
+                                                     if p.cfg["processing"].get("positioning") == "ppp"
+                                                     else "that of the base position")),
                  "Base         %s, position from %s" % (b.get("name") if b else "-", b.get("pos_source") if b else "-"),
                  "Heights      ellipsoidal",
                  "Time         GPS; SBET time is GPS seconds of week %s" % (geo.gps_week_sow(span[0])[0] if span else ""),

@@ -3,11 +3,10 @@ distance rings, processed trajectory coloured by solution type or accuracy."""
 import math
 
 from qgis.core import (QgsCategorizedSymbolRenderer, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
-                       QgsFeature, QgsField, QgsFields, QgsGeometry, QgsGraduatedSymbolRenderer,
-                       QgsLayerTreeGroup, QgsLineSymbol, QgsMarkerSymbol, QgsPalLayerSettings, QgsPointXY,
-                       QgsProject, QgsRendererCategory, QgsRendererRange, QgsTextFormat,
-                       QgsVectorLayer, QgsVectorLayerSimpleLabeling, QgsFillSymbol, QgsWkbTypes)
-from qgis.PyQt.QtGui import QColor
+                       QgsFeature, QgsField, QgsGeometry, QgsGraduatedSymbolRenderer, QgsLineSymbol,
+                       QgsMarkerSymbol, QgsPalLayerSettings, QgsPointXY, QgsProject, QgsRendererCategory,
+                       QgsRendererRange, QgsTextFormat, QgsVectorLayer, QgsVectorLayerSimpleLabeling,
+                       QgsFillSymbol)
 
 from ..core import geo, results
 from ..core.project import FRAMES
@@ -16,7 +15,7 @@ GROUP_PREFIX = "PosPro: "
 
 
 def _crs(project):
-    fr = FRAMES.get(project.cfg["frame"].get("name"), FRAMES["NAD83(CSRS)"])
+    fr = FRAMES.get(project.trajectory_frame().get("name"), FRAMES["NAD83(CSRS)"])
     return QgsCoordinateReferenceSystem(fr["crs"])
 
 
@@ -153,6 +152,23 @@ QC_FIELDS = [("time_utc", "s"), ("gps_time", "d"), ("status", "i"), ("solution",
              ("sd_h", "d"), ("sd_v", "d"), ("sd_3d", "d"), ("sep_h", "d"), ("sep_v", "d"), ("gap_s", "d")]
 
 
+def _utc_strings(gps):
+    """'YYYY-MM-DD HH:MM:SS' UTC for every GPS time at once (one leap-second count per job: a job does not
+    span a leap second in practice)."""
+    if not len(gps):
+        return []
+    try:
+        import numpy as np
+        leap = geo.gps_to_utc(gps[0]) - geo.GPS_EPOCH
+        off = (gps[0] - leap.total_seconds())          # seconds the first UTC time is behind GPS
+        unix0 = (geo.GPS_EPOCH - geo.GPS_EPOCH.replace(year=1970, month=1, day=1)).total_seconds()
+        u = np.floor(np.asarray(gps, float) - off + unix0).astype("int64")
+        txt = np.datetime_as_string(u.astype("datetime64[s]"), unit="s")
+        return [x.replace("T", " ") for x in txt.tolist()]
+    except Exception:       # noqa: BLE001
+        return [geo.gps_to_utc(t).strftime("%Y-%m-%d %H:%M:%S") for t in gps]
+
+
 def trajectory_layers(project, qc, colour_by="status"):
     crs = _crs(project)
     pts = QgsVectorLayer("Point?crs=%s" % crs.authid(), "Trajectory", "memory")
@@ -160,11 +176,13 @@ def trajectory_layers(project, qc, colour_by="status"):
     pr.addAttributes([_field(n, k) for n, k in QC_FIELDS])
     pts.updateFields()
     feats = []
+    utc = _utc_strings(qc["gps_time"])
+    fields = pts.fields()
     for i in range(len(qc["gps_time"])):
-        f = QgsFeature(pts.fields())
+        f = QgsFeature(fields)
         f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(qc["lon_deg"][i], qc["lat_deg"][i])))
         st = qc["status"][i]
-        f.setAttributes([geo.gps_to_utc(qc["gps_time"][i]).strftime("%Y-%m-%d %H:%M:%S"), qc["gps_time"][i], st,
+        f.setAttributes([utc[i], qc["gps_time"][i], st,
                          results.STATUS.get(st, ""), qc["nsat"][i], qc["h_m"][i], qc["roll_deg"][i],
                          qc["pitch_deg"][i], qc["heading_deg"][i], qc["speed"][i], qc["sd_h"][i], qc["sd_d"][i],
                          qc["sd_3d"][i], qc["sep_h"][i], abs(qc["sep_d"][i]), qc["gap_s"][i]])
@@ -220,7 +238,7 @@ REVIEW_COLOURS = {"open": "232,72,85", "exclude": "58,180,242", "poor": "245,166
 
 def review_layer(project, qc, items):
     """Trajectory Review windows on the map: one line per anomaly or edit,
-    coloured by what was decided (red open, blue GNSS excluded, amber poor,
+    coloured by what was decided (red open, blue bridged with the IMU, amber poor,
     violet interpolated, mint accepted)."""
     import bisect
     from qgis.core import QgsCategorizedSymbolRenderer, QgsRendererCategory

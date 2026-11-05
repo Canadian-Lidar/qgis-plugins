@@ -54,7 +54,7 @@ DEFAULTS = {
 KIND_LABEL = {"solution": "Solution type", "sd_h": "Horizontal σ", "sd_v": "Vertical σ",
               "sep_h": "Fwd/bwd separation", "imu_only": "IMU only", "heading": "Heading σ",
               "manual": "Selected by hand"}
-ACTION_LABEL = {"exclude": "GNSS excluded", "poor": "Marked poor", "interpolate": "Interpolated",
+ACTION_LABEL = {"exclude": "Bridged with IMU", "poor": "Marked poor", "interpolate": "Interpolated",
                 "reject": "Rejected", "accept": "Accepted"}
 METHODS = {"smooth": "smooth curve", "straight": "straight line"}
 
@@ -118,6 +118,7 @@ def detect(project, qc=None):
     r = state(project)
     th = r["thresholds"]
     qc = qc or load_original_qc(project)
+    r["detected_at"] = time.time()          # looked, even when nothing is found
     if not qc:
         r["anomalies"] = []
         return []
@@ -307,8 +308,22 @@ def exclusions_pending(project):
     return now != sorted([round(a, 3), round(b, 3)] for a, b in r.get("excluded_in_run") or [])
 
 
+ENGINE_MAX_EXCLUDE = 256      # windows the engine takes (pp_ins.c); it would drop the rest unseen
+
+
+def fit_windows(wins, limit=ENGINE_MAX_EXCLUDE):
+    """At most limit windows: the two closest neighbours are joined until they fit (a little more is
+    excluded, nothing is lost)."""
+    w = sorted([list(x) for x in wins])
+    while len(w) > limit:
+        k = min(range(len(w) - 1), key=lambda i: w[i + 1][0] - w[i][1])
+        w[k][1] = max(w[k][1], w[k + 1][1])
+        del w[k + 1]
+    return [tuple(x) for x in w]
+
+
 def engine_exclude_value(project):
-    return ";".join("%.3f-%.3f" % w for w in exclusions(project))
+    return ";".join("%.3f-%.3f" % w for w in fit_windows(exclusions(project)))
 
 
 # ---------------------------------------------------------------------------
@@ -509,38 +524,41 @@ def summary(project):
 CERTUS_FIX = {7: 6, 6: 5, 5: 4, 4: 3, 3: 3, 2: 2, 1: 2, 0: 0}
 
 
-def rt_to_pass(rt_path, out_path):
+def rt_to_pass(rt_path, out_path, span=None):
     """The Certus real-time solution (rt.bin, packet 20) as a trajectory pass
-    for the engine's combine step. Returns the record count."""
-    from .results import RT_FMT
-    with open(rt_path, "rb") as fi, open(out_path + ".tmp", "wb") as fo:
-        hdr = fi.read(64)
-        if hdr[:8] != b"PPRT0001":
-            raise ValueError("%s is not a real-time track" % rt_path)
-        fo.write(b"PPTRJ001" + struct.pack("<Q", 0) + struct.pack("<3d", 0, 0, 0) + struct.pack("<ii", 0, 1) +
+    for the engine's combine step, inside span (t0, t1 GPS s) when given (the time crop).
+    Returns the record count. (numpy: an hour at 200 Hz takes well under a second)"""
+    import numpy as np
+    from .results import read_rt_array
+    from .editor import _DT
+    rt = read_rt_array(rt_path)
+    if rt is None:
+        raise ValueError("%s is not a real-time track" % rt_path)
+    if span:
+        rt = rt[(rt["t"] >= span[0]) & (rt["t"] <= span[1])]
+    n = len(rt)
+    filt = rt["filt"].astype(np.int64)
+    fix = (filt >> 4) & 7
+    # filter status: bit 1 navigation initialised, bits 4-6 GNSS fix type (0 = none)
+    lut = np.array([CERTUS_FIX.get(k, 0) for k in range(8)], dtype=np.uint8)
+    st = np.where(fix > 0, lut[fix], np.where(filt & 0x02, 1, 0)).astype(np.uint8)
+    t = rt["t"]
+    isfix = (st == 6) | (st == 5) | (st == 4)
+    last = np.maximum.accumulate(np.where(isfix, np.arange(n), -1)) if n else np.zeros(0, np.int64)
+    gap = np.where(last >= 0, np.maximum(0.0, t - t[np.maximum(last, 0)]), 0.0)
+    out = np.zeros(n, dtype=_DT)
+    out["t"], out["lat"], out["lon"], out["h"] = t, rt["lat"], rt["lon"], rt["h"]
+    out["vel"], out["att"], out["sdp"] = rt["vel"], rt["att"], rt["sd"]
+    rest = np.zeros((n, 18), np.float32)
+    rest[:, 0:3] = 0.05
+    rest[:, 3:6] = np.float32([math.radians(0.1), math.radians(0.1), math.radians(0.3)])
+    rest[:, 9:12] = rt["gyr"]
+    out["rest"] = rest
+    out["status"] = st
+    out["gap"] = gap
+    with open(out_path + ".tmp", "wb") as fo:
+        fo.write(b"PPTRJ001" + struct.pack("<Q", n) + struct.pack("<3d", 0, 0, 0) + struct.pack("<ii", 0, 1) +
                  b"\0" * 24)
-        n, tlast_fix = 0, None
-        while True:
-            b = fi.read(RT_FMT.size * 8192)
-            if not b:
-                break
-            buf = []
-            for (t, lat, lon, h, vn, ve, vd, ro, pi, he, sdlat, sdlon, sdh, gx, gy, gz, sysst, filt) in \
-                    RT_FMT.iter_unpack(b[:len(b) - len(b) % RT_FMT.size]):
-                fix = (filt >> 4) & 7
-                # filter status: bit 1 navigation initialised, bits 4-6 GNSS fix type (0 = none)
-                st = CERTUS_FIX.get(fix, 0) if fix else (1 if filt & 0x02 else 0)
-                if st in (6, 5, 4):
-                    tlast_fix = t
-                gap = 0.0 if tlast_fix is None else max(0.0, t - tlast_fix)
-                vals = [t, lat, lon, h, vn, ve, vd, ro, pi, he, sdlat, sdlon, sdh,
-                        0.05, 0.05, 0.05, math.radians(0.1), math.radians(0.1), math.radians(0.3),
-                        0, 0, 0, gx, gy, gz, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        st, 0, 0, 0, gap]
-                buf.append(TRJ.pack(*vals))
-                n += 1
-            fo.write(b"".join(buf))
-        fo.seek(8)
-        fo.write(struct.pack("<Q", n))
+        out.tofile(fo)
     os.replace(out_path + ".tmp", out_path)
     return n

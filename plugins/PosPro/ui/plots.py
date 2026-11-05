@@ -5,11 +5,10 @@ crosshair with values, click to pick a time, shaded bands (e.g. GNSS gaps)
 and a coloured status strip.
 """
 import bisect
-import datetime
 import math
 
 from qgis.PyQt.QtCore import QPointF, QRectF, Qt, pyqtSignal
-from qgis.PyQt.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
+from qgis.PyQt.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPixmap
 from qgis.PyQt.QtWidgets import QSizePolicy, QWidget
 
 from ..core import geo
@@ -154,9 +153,42 @@ class TimePlot(QWidget):
             return t.strftime("%H:%M")
         return t.strftime("%H:%M:%S")
 
+    def _cache_key(self):
+        return (self.width(), self.height(), self.devicePixelRatioF(), self.x0, self.x1, self.yfix, self.title,
+                self.unit, len(self.bands), id(self.strip), self.full,
+                tuple((id(s.x), id(s.y), len(s.x), s.visible, s.label) for s in self.series))
+
     def paintEvent(self, ev):
+        """The axes, bands and series are drawn once into a pixmap and reused while only the hover line
+        or the marker moves (an 8 h profile took a quarter of a second per mouse move)."""
+        key = self._cache_key()
+        if getattr(self, "_cache", None) is None or self._cache[0] != key:
+            dpr = self.devicePixelRatioF()
+            pm = QPixmap(max(1, int(self.width() * dpr)), max(1, int(self.height() * dpr)))
+            pm.setDevicePixelRatio(dpr)
+            q = QPainter(pm)
+            q.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            yr = self._draw_static(q)
+            q.end()
+            self._cache = (key, pm, yr)
         p = QPainter(self)
+        p.drawPixmap(0, 0, self._cache[1])
+        yr = self._cache[2]
+        if yr is None:
+            return
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pr = self._plot_rect()
+        fg = QColor(theme.TEXT)
+        f = QFont(self.font())
+        if f.pointSizeF() > 0:
+            f.setPointSizeF(max(7.0, f.pointSizeF() * 0.9))
+        else:
+            f.setPixelSize(max(10, int(f.pixelSize() * 0.9)))
+        p.setFont(f)
+        self._draw_overlay(p, pr, yr, fg)
+
+    def _draw_static(self, p):
+        """Everything but the hover line and marker. Returns the y range, or None when there is no data."""
         # theme colours, not the palette: QGIS on Windows resets widget palettes
         fg = QColor(theme.TEXT)
         p.fillRect(self.rect(), QColor(theme.SURF))
@@ -174,7 +206,7 @@ class TimePlot(QWidget):
         if self.x0 is None or not (self.series or self.strip):
             p.setPen(AXIS)
             p.drawText(pr, _af(Qt.AlignmentFlag.AlignCenter), "No data yet")
-            return
+            return None
         yr = self._yrange()
         # bands
         for b0, b1, col in self.bands:
@@ -228,9 +260,12 @@ class TimePlot(QWidget):
         for s in self.series:
             if not s.visible or len(s.x) < 1:
                 continue
-            path = self._path(s, pr, yr)
+            path, dense = self._path(s, pr, yr)
+            # per-pixel min/max columns gain nothing from anti-aliasing and cost most of the time
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, not dense)
             p.setPen(QPen(s.color, s.width))
             p.drawPath(path)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setClipping(False)
         # legend
         lx = pr.right()
@@ -240,6 +275,9 @@ class TimePlot(QWidget):
             p.fillRect(QRectF(lx, 8, 12, 3), s.color)
             p.setPen(fg if s.visible else AXIS)
             p.drawText(QRectF(lx + 15, 0, w, 18), _af(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), s.label)
+        return yr
+
+    def _draw_overlay(self, p, pr, yr, fg):
         # marker and hover
         for xm, col in ((self.marker_x, QColor("#f5a623")), (self.hover_x, QColor("#a0a9b1"))):
             if xm is None or xm < self.x0 or xm > self.x1:
@@ -298,7 +336,7 @@ class TimePlot(QWidget):
                 else:
                     path.lineTo(xx, ya)
                 path.lineTo(xx, yb)
-            return path
+            return path, True
         for i in range(i0, i1):
             v = s.y[i]
             if v is None or v != v:
@@ -313,7 +351,7 @@ class TimePlot(QWidget):
             else:
                 path.lineTo(xx, yy)
             lastx = s.x[i]
-        return path
+        return path, False
 
     # ------------------------------------------------------------------
     def _xat(self, px):

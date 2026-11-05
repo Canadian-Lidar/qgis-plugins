@@ -15,7 +15,7 @@ from . import review
 MAX_POINTS = 250000
 STATE_GOOD, STATE_OPEN, STATE_INTERP, STATE_POOR, STATE_EXCL, STATE_ACCEPT = 0, 1, 2, 3, 4, 5
 STATE_LABEL = {STATE_GOOD: "Good", STATE_OPEN: "Open / rejected", STATE_INTERP: "Interpolated",
-               STATE_POOR: "Marked poor", STATE_EXCL: "GNSS excluded", STATE_ACCEPT: "Accepted"}
+               STATE_POOR: "Marked poor", STATE_EXCL: "Bridged with IMU", STATE_ACCEPT: "Accepted"}
 _DT = np.dtype([("t", "<f8"), ("lat", "<f8"), ("lon", "<f8"), ("h", "<f8"), ("vel", "<f4", 3), ("att", "<f4", 3),
                 ("sdp", "<f4", 3), ("rest", "<f4", 18), ("sep", "<f4", 3), ("status", "u1"), ("nsat", "u1"),
                 ("ratio", "u1"), ("flags", "u1"), ("gap", "<f4")])

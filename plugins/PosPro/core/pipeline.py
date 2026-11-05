@@ -10,7 +10,6 @@ import shutil
 import time
 
 from . import engine, geo, products, rinex
-from .project import IMU_PRESETS
 
 
 class Ctx:
@@ -73,8 +72,8 @@ def extract(project, ctx, force=False):
             raise StepError("rover file not found: %s" % f)
     sig = _sig(files)
     out = os.path.join(project.work_dir, "extract")
-    if not force and project.cfg["rover"].get("extract_files") == sig and \
-            os.path.exists(os.path.join(out, "imu.bin")):
+    okf = os.path.join(out, "ok.json")
+    if not force and project.cfg["rover"].get("extract_files") == sig and _extract_ok(okf, sig):
         return project.cfg["rover"]["extract"]
     os.makedirs(out, exist_ok=True)
     for old in glob.glob(os.path.join(out, "*")):
@@ -82,11 +81,16 @@ def extract(project, ctx, force=False):
             os.remove(old)
         except OSError:
             pass
+    with open(os.path.join(out, ".reading"), "w") as fh:   # marks an unfinished read
+        fh.write("1")
     ctx.log("info", "reading %d rover file(s)" % len(files))
     res = _check(engine.run(["extract", "--out", out] + sorted(files, key=_in_time_order),
                             ctx.progress, ctx.log, ctx.cancelled), "Reading the rover files")
     project.cfg["rover"]["extract"] = res.results
     project.cfg["rover"]["extract_files"] = sig
+    with open(okf, "w", encoding="utf-8") as fh:      # written last: a cancelled or failed read has none
+        json.dump({"sig": sig}, fh)
+    os.remove(os.path.join(out, ".reading"))
     hw = os.path.join(out, "clraw_hardware.json")
     if os.path.exists(hw):
         try:
@@ -97,6 +101,16 @@ def extract(project, ctx, force=False):
     _complete_hardware(project, files)
     project.dirty = True
     return res.results
+
+
+def _extract_ok(okf, sig):
+    try:
+        with open(okf, "r", encoding="utf-8") as fh:
+            return json.load(fh).get("sig") == json.loads(json.dumps(sig))
+    except (OSError, ValueError, AttributeError):
+        # extracts from before 2.0.1 have no marker: trusted when imu.bin is there (as before)
+        return not os.path.exists(okf) and os.path.exists(os.path.join(os.path.dirname(okf), "imu.bin")) \
+            and not os.path.exists(os.path.join(os.path.dirname(okf), ".reading"))
 
 
 LINE_ONLY_KEYS = ("vehicle", "ins_to_rear_axle_m", "coordinate_system")
@@ -203,7 +217,8 @@ def capture_offsets(project):
         out["alignment"] = _vec3(al)
     elif _vec3(ex.get("certus_alignment_rph")):
         out["alignment"] = _vec3(ex.get("certus_alignment_rph"))
-    if not hw:      # older captures: look for anything offset-like, then the Certus
+    if hw and any(out[k] is None for k in ("antenna", "lidar")):
+        # older captures name the offsets differently: look for anything offset-like, then the Certus
         found = hardware_levers(hw)
         for k in ("antenna", "antenna2", "lidar"):
             if out[k] is None and k in found:
@@ -224,19 +239,12 @@ def capture_offsets(project):
 def _rt_attitude(path):
     """(t, roll, pitch, heading) radians from rt.bin (the Certus's own
     attitude, vehicle frame)."""
-    import struct
-    fmt = struct.Struct("<dddd3f3f3f3fHH")
-    out = []
-    with open(path, "rb") as fh:
-        if fh.read(64)[:8] != b"PPRT0001":
-            return out
-        while True:
-            b = fh.read(fmt.size * 4096)
-            if not b:
-                break
-            for r in fmt.iter_unpack(b[:len(b) - len(b) % fmt.size]):
-                out.append((r[0], r[7], r[8], r[9]))
-    return out
+    from .results import read_rt_array
+    rt = read_rt_array(path)
+    if rt is None or not len(rt):
+        return []
+    a = rt["att"].astype(float)
+    return list(zip(rt["t"].tolist(), a[:, 0].tolist(), a[:, 1].tolist(), a[:, 2].tolist()))
 
 
 def baseline_solutions(project, ctx):
@@ -296,6 +304,8 @@ def measure_antenna2(project, ctx):
         raise StepError("the GPS1-GPS2 baseline did not fix (%d of %d epochs); try a longer recording in the "
                         "open" % (len(fixed), len(sols)))
     att = _rt_attitude(rt)
+    if not att:
+        raise StepError("the rover files hold no Certus attitude (packet 20) to turn the baseline with")
     import bisect
     ts = [a[0] for a in att]
     vecs = []
@@ -329,11 +339,22 @@ def measure_antenna2(project, ctx):
 # 2. ephemeris
 # ---------------------------------------------------------------------------
 def nav_files(project, ctx, need_precise=False):
-    """Navigation files for processing. The INS's own ephemeris (rover.nav)
+    """Navigation files for processing (worked out once per job: every step asks). The INS's own ephemeris (rover.nav)
     and the IGS broadcast product are trusted; every other file (next to the
     base observations, or added on the Data page) is checked orbit by orbit
     against them first (engine navcheck) and only the orbits that agree are
     used."""
+    key = json.dumps([project.rover_span(), project.cfg.get("nav_files"), project.cfg.get("auto_ephemeris", True),
+                      (project.base() or {}).get("files"), project.cfg["rover"].get("extract_files")], default=str)
+    memo = getattr(project, "_navs", None)
+    if memo and memo[0] == key and all(os.path.exists(f) for f in memo[1]):
+        return list(memo[1])
+    out = _nav_files(project, ctx)
+    project._navs = (key, list(out))
+    return out
+
+
+def _nav_files(project, ctx):
     trusted, screened = [], []
     ex = os.path.join(project.work_dir, "extract", "rover.nav")
     navdir = project.wpath("nav", "x")[:-2]
@@ -422,6 +443,10 @@ def check_nav_files(project, files, refs, ctx):
 # ---------------------------------------------------------------------------
 # 3. base station observations and position
 # ---------------------------------------------------------------------------
+import re as _re
+_R2_EPOCH = _re.compile(r"^ [ \d]\d [ \d]\d [ \d]\d [ \d]\d [ \d]\d [ \d]\d\.\d{7}  [0-6][ \d]{3}")
+
+
 def base_obs_file(project, base, ctx):
     """One plain RINEX observation file covering the rover span (merged if
     the base came as several files)."""
@@ -434,7 +459,6 @@ def base_obs_file(project, base, ctx):
         p = rinex.decompress_to(f, wdir)
         if rinex.is_hatanaka(p):
             if os.path.dirname(os.path.abspath(p)) != os.path.abspath(wdir):
-                import shutil
                 q = os.path.join(wdir, os.path.basename(p))
                 shutil.copyfile(p, q)
                 p = q
@@ -453,7 +477,14 @@ def base_obs_file(project, base, ctx):
                 if "END OF HEADER" in line:
                     break
         return out
-    plain = sorted(plain)
+    def first_epoch(path):
+        try:
+            f = rinex.header_info(path, scan_body=False).get("first")
+            return f.isoformat() if f else ""
+        except Exception:       # noqa: BLE001
+            return ""
+    # in time order (by the first observation, not the path: files from different folders)
+    plain = sorted(plain, key=lambda f: (first_epoch(f), f))
     t0 = types(plain[0])
     for p in plain[1:]:
         if types(p) != t0:
@@ -474,9 +505,14 @@ def base_obs_file(project, base, ctx):
                         if "END OF HEADER" in line:
                             in_header = False
                         continue
+                    stamp = None
                     if v3 and line.startswith(">"):
                         stamp = line[2:29]
-                        skip = stamp <= last
+                    elif not v3 and _R2_EPOCH.match(line):
+                        yy = int(line[1:3])
+                        stamp = "%04d%s" % (yy + (1900 if yy >= 80 else 2000), line[3:26])
+                    if stamp is not None:
+                        skip = stamp <= last        # epochs already written (files that overlap)
                         if not skip:
                             last = stamp
                     if not skip:
@@ -651,12 +687,36 @@ def gnss(project, ctx):
     jobs = [("GNSS forward", ["gnss", "-k", conf, "-o", os.path.join(gdir, "fwd.pos"), "-d", "fwd"] + args_common + inputs)]
     if proc.get("passes", "both") == "both":
         jobs.append(("GNSS backward", ["gnss", "-k", conf, "-o", os.path.join(gdir, "bwd.pos"), "-d", "bwd"] + args_common + inputs))
+    sigf = os.path.join(gdir, "inputs.json")
+    if os.path.exists(sigf):
+        os.remove(sigf)
     res = engine.run_parallel(jobs, ctx.sub(0.05, 1).progress, ctx.log, ctx.cancelled)
     summary = {}
     for label, r in res.items():
         _check(r, label)
         summary[label] = r.results
+    with open(sigf, "w", encoding="utf-8") as fh:
+        json.dump({"sig": _gnss_sig(project)}, fh)
     return summary
+
+
+def _gnss_sig(project):
+    """What the GNSS-only solutions depend on, so a later tight-coupled run uses them only when they still
+    match (base, its position, positioning, time crop, rover data and the GNSS settings)."""
+    c = project.cfg
+    b = project.base() or {}
+    proc = {k: v for k, v in c["processing"].items() if k not in ("mode", "passes")}
+    return json.dumps([proc.get("positioning"), b.get("id"), base_position(b) if b else None, b.get("files"),
+                       project.rover_span(), c["rover"].get("extract_files"), proc], sort_keys=True, default=str)
+
+
+def _gnss_current(project):
+    f = os.path.join(project.work_dir, "gnss", "inputs.json")
+    try:
+        with open(f, "r", encoding="utf-8") as fh:
+            return json.load(fh).get("sig") == _gnss_sig(project)
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -693,8 +753,11 @@ def ins_conf(project, direction, navs, bobs=None, bxyz=None, base=None, atx=None
         w("file.out = %s" % os.path.join(idir, "lever_fwd.bin" if direction > 0 else "lever_bwd.bin"))
     else:
         w("file.out = %s" % os.path.join(idir, "fwd.bin" if direction > 0 else "bwd.bin"))
-    w("file.gnss_fwd = %s" % os.path.join(gdir, "fwd.pos"))
-    w("file.gnss_bwd = %s" % os.path.join(gdir, "bwd.pos" if p.get("passes", "both") == "both" else "fwd.pos"))
+    if mode == "lc" or _gnss_current(project):
+        w("file.gnss_fwd = %s" % os.path.join(gdir, "fwd.pos"))
+        w("file.gnss_bwd = %s" % os.path.join(gdir, "bwd.pos" if p.get("passes", "both") == "both" else "fwd.pos"))
+    # tight coupling with older GNSS-only solutions (another base or base position, crop or settings) would
+    # seed the alignment from wrong positions at a 5 cm sigma: they are left out and the filter starts from SPP
     w("file.rover_obs = %s" % os.path.join(ex, "rover.obs"))
     if bobs:
         w("file.base_obs = %s" % bobs)
@@ -718,7 +781,8 @@ def ins_conf(project, direction, navs, bobs=None, bxyz=None, base=None, atx=None
         w("imu.%s = %s" % (k, v))
     w("imu.time_offset_s = %.6f" % (float(inst.get("time_offset_ms", 0)) / 1000.0))
     w("lever.antenna = %.4f, %.4f, %.4f" % tuple(inst["lever_antenna"]))
-    w("lever.output = %.4f, %.4f, %.4f" % tuple(inst["lever_output"]))
+    # the trajectory is always made at the IMU centre; Export moves it to the chosen point
+    w("lever.output = 0, 0, 0")
     w("lever.nhc = %.4f, %.4f, %.4f" % tuple(inst["lever_nhc"]))
     if mode == "tc":
         a2 = antenna2_obs(project)
@@ -957,7 +1021,9 @@ def rt_trajectory(project, ctx):
     idir = project.wpath("ins", "x")[:-2]
     rdir = project.wpath("results", "x")[:-2]
     fwd = os.path.join(idir, "rt_fwd.bin")
-    n = review.rt_to_pass(rt, fwd)
+    n = review.rt_to_pass(rt, fwd, project.rover_span())
+    if not n:
+        raise StepError("the real-time solution has no records inside the time range")
     ctx.log("info", "real-time solution: %d records" % n)
     r = _check(engine.run(["combine", "--out", os.path.join(rdir, "trajectory.bin"), "--qc",
                            os.path.join(rdir, "qc.csv"), "--fwd", fwd], ctx.progress, ctx.log, ctx.cancelled),
@@ -988,18 +1054,32 @@ def _finish_review(project, ctx):
         ctx.log("info", "Trajectory Review edits applied to %d records" % n)
 
 
+def settings_sig(project):
+    """What the processed trajectory depends on: when it changes the trajectory is out of date."""
+    c = project.cfg
+    rt = c["processing"].get("mode") == "rt"
+    b = {} if rt or c["processing"].get("positioning") == "ppp" else (project.base() or {})
+    inst = {k: v for k, v in c["installation"].items() if k not in ("lever_output", "output_name", "source")}
+    data = [c["processing"], inst, c.get("vehicle"), project.rover_span(), c["rover"].get("extract_files"),
+            c.get("nav_files"), b.get("id"), base_position(b) if b else None, b.get("delta_hen"), b.get("antenna")]
+    import hashlib
+    return hashlib.sha1(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
 def run_all(project, ctx):
     """The whole processing chain. Returns the results summary."""
     t0 = time.time()
     p = project.cfg["processing"]
     summary = {"started": time.strftime("%Y-%m-%d %H:%M:%S"), "mode": p.get("mode"),
-               "positioning": p.get("positioning"), "passes": p.get("passes")}
+               "positioning": p.get("positioning"), "passes": p.get("passes"),
+               "settings_sig": settings_sig(project)}
     extract(project, ctx.sub(0.0, 0.10))
     if ctx.cancelled():
         raise engine.Cancelled()
     if p.get("mode") == "rt":
         summary["combine"] = rt_trajectory(project, ctx.sub(0.10, 1.0))
         summary["frame"] = "as the Certus real-time solution (RTK corrections' frame)"
+        summary["frame_used"] = project.run_frame()
         _finish_review(project, ctx)
         summary["elapsed_s"] = round(time.time() - t0, 1)
         summary["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1010,12 +1090,14 @@ def run_all(project, ctx):
         raise StepError("tight coupling needs a base station; for PPP choose \"Loosely coupled\"")
     if p.get("mode") == "lc" or p.get("mode") == "gnss" or p.get("positioning") == "ppp":
         summary["gnss"] = gnss(project, ctx.sub(0.10, 0.45))
+    if p.get("positioning") == "ppp":
+        ctx.log("warning", "PPP: the trajectory is in ITRF2020 at the observation date, not NAD83(CSRS)")
     if p.get("mode") == "gnss":
         # the GNSS solutions become the trajectory (no attitude), so Quality
         # and Export work the same as after inertial processing
         summary["combine"] = gnss_trajectory(project, ctx.sub(0.45, 1.0))
-        summary["frame"] = summary.get("frame") or "%s %s" % (project.cfg["frame"].get("name"),
-                                                              project.cfg["frame"].get("epoch"))
+        fu = summary["frame_used"] = project.run_frame()
+        summary["frame"] = "%s %s" % (fu["name"], fu["epoch"])
         _finish_review(project, ctx)
         summary["elapsed_s"] = round(time.time() - t0, 1)
         summary["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1024,15 +1106,12 @@ def run_all(project, ctx):
         return summary
     if p.get("positioning") == "ppp":
         # the trajectory is then in the frame of the precise orbits
-        span = project.rover_span()
-        ep = geo.decimal_year(geo.gps_to_utc(span[0])) if span else None
-        project.cfg["frame"] = {"name": "ITRF2020", "epoch": "%.3f" % ep if ep else ""}
         summary["frame"] = "ITRF2020 (IGS20) at the observation date"
-        ctx.log("warning", "PPP: the trajectory is in ITRF2020 at the observation date, not NAD83(CSRS)")
     summary["ins"] = ins(project, ctx.sub(0.45, 0.92))
     summary["combine"] = combine(project, ctx.sub(0.92, 1.0))
     _finish_review(project, ctx)
-    summary["frame"] = summary.get("frame") or "%s %s" % (project.cfg["frame"].get("name"), project.cfg["frame"].get("epoch"))
+    fu = summary["frame_used"] = project.run_frame()
+    summary["frame"] = summary.get("frame") or "%s %s" % (fu["name"], fu["epoch"])
     summary["elapsed_s"] = round(time.time() - t0, 1)
     summary["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")
     project.cfg["results"] = summary
@@ -1129,10 +1208,16 @@ def publish_handover(project, ctx):
             os.unlink(os.path.join(tmp, f))
         except OSError:
             pass
-    written = export(project, ctx.sub(0, 0.9), tmp, rate_hz=0, lever=None, sbet=True)
+    written = export(project, ctx.sub(0, 0.9), tmp, rate_hz=0, lever=[0.0, 0.0, 0.0], sbet=True)
     sbet = os.path.join(od, "trajectory_sbet.out")
     smr = os.path.join(od, "trajectory_smrmsg.out")
     qcf = os.path.join(od, "trajectory_qc.csv")
+    # the old trajectory.json must never describe the new files: take it away before they are replaced,
+    # so a failure below leaves "not published" rather than a handover that looks current
+    try:
+        os.remove(os.path.join(od, "trajectory.json"))
+    except OSError:
+        pass
     os.replace(written[0], sbet)
     os.replace(written[1], smr)
     shutil.copyfile(os.path.join(project.work_dir, "results", "qc.csv"), qcf + ".tmp")
@@ -1151,14 +1236,14 @@ def publish_handover(project, ctx):
             return float(comb.get(k))
         except (TypeError, ValueError):
             return None
+    # the largest sigmas as published (review "poor" raises them after processing)
+    from . import results as _results
+    qc = _results.load_qc(qcf)
+    max_h = round(max(qc["sd_h"]), 4) if qc else num("max_sd_h_m")
+    max_v = round(max(qc["sd_d"]), 4) if qc else num("max_sd_v_m")
     src = inst.get("source") or "entered"
-    rt_mode = c["processing"].get("mode") == "rt"
-    if rt_mode:      # the Certus's own solution: the frame of its RTK corrections, not the project frame
-        frame = {"name": "Certus real-time solution (frame of the RTK corrections)", "epoch": "",
-                 "heights": "ellipsoidal"}
-    else:
-        frame = {"name": (c.get("frame") or {}).get("name"), "epoch": (c.get("frame") or {}).get("epoch"),
-                 "heights": "ellipsoidal"}
+    fu = project.trajectory_frame()     # as the trajectory was processed (PPP: ITRF2020; rt: the Certus's)
+    frame = {"name": fu.get("name"), "epoch": fu.get("epoch"), "heights": "ellipsoidal"}
     rate = _sbet_rate(sbet) or (c["processing"].get("output_rate_hz") or 200)
     fields = {
         "time": {"system": "GPS", "week": week, "leap_seconds": leap, "start_gps": span[0], "end_gps": span[1],
@@ -1169,14 +1254,15 @@ def publish_handover(project, ctx):
                       "pitch + bow up, heading + clockwise",
         "levers_m": {"gnss1": {"value": inst.get("lever_antenna"), "source": src},
                      "gnss2": {"value": inst.get("lever_antenna2"), "source": src,
-                               "used": bool(inst.get("use_antenna2"))},
+                               # GPS2 is processed only by tight coupling
+                               "used": bool(inst.get("use_antenna2")) and c["processing"].get("mode") == "tc"},
                      "lidar": {"value": hw.get("ins_to_lidar_m"), "source": "capture (hardware.json)"}
                      if hw.get("ins_to_lidar_m") else None},
         "rate_hz": rate,
         "quality": {"mode": c["processing"].get("mode"), "positioning": c["processing"].get("positioning"),
                     "fixed_pct": num("fixed_pct"), "imu_only_pct": num("ins_only_pct"),
-                    "sep_h_p95_m": num("sep_h_p95_m"), "max_sd_h_m": num("max_sd_h_m"),
-                    "max_sd_v_m": num("max_sd_v_m")},
+                    "sep_h_p95_m": num("sep_h_p95_m"), "max_sd_h_m": max_h,
+                    "max_sd_v_m": max_v},
         "base_station": (project.base() or {}).get("name"),
         "review": review_summary(project),
     }

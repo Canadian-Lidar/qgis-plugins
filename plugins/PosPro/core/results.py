@@ -119,6 +119,24 @@ def status_shares(qc):
 
 
 RT_FMT = struct.Struct("<dddd3f3f3f3fHH")
+RT_DTYPE = [("t", "<f8"), ("lat", "<f8"), ("lon", "<f8"), ("h", "<f8"), ("vel", "<f4", 3), ("att", "<f4", 3),
+            ("sd", "<f4", 3), ("gyr", "<f4", 3), ("sys", "<u2"), ("filt", "<u2")]
+
+
+def read_rt_array(path):
+    """rt.bin (the Certus real-time solution) as a numpy structured array, or None."""
+    import numpy as np
+    try:
+        with open(path, "rb") as fh:
+            if fh.read(64)[:8] != b"PPRT0001":
+                return None
+    except OSError:
+        return None
+    dt = np.dtype(RT_DTYPE)
+    n = (os.path.getsize(path) - 64) // dt.itemsize
+    if n <= 0:
+        return np.zeros(0, dt)
+    return np.fromfile(path, dtype=dt, count=n, offset=64)
 
 
 def rt_span(path):
@@ -161,17 +179,6 @@ def load_rt(path, step_s=1.0):
                 last = t
                 out.append((t, math.degrees(rec[1]), math.degrees(rec[2]), rec[3], (rec[-1] >> 4) & 7))
     return out
-
-
-def summary_text(proj_cfg):
-    r = proj_cfg.get("results") or {}
-    c = r.get("combine") or {}
-    lines = []
-    if c:
-        lines.append("Epochs %s, fixed %s%%, float %s%%, INS only %s%%" % (
-            c.get("epochs"), c.get("fixed_pct"), c.get("float_pct"), c.get("ins_only_pct")))
-        lines.append("Separation RMS %s m, 95%% %s m" % (c.get("sep_h_rms_m"), c.get("sep_h_p95_m")))
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

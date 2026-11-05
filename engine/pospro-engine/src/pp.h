@@ -12,7 +12,7 @@
 #include <stddef.h>
 #include "rtklib.h"
 
-#define PP_VERSION "1.6.2"
+#define PP_VERSION "2.0.1"
 
 /* -------------------------------------------------------------------------
  * Constants
@@ -67,7 +67,7 @@ typedef struct {            /* 88-byte real-time (packet 20) record */
     uint16_t sys_status, filt_status;
 } rt_rec_t;
 
-/* Trajectory record (fwd.bin, bwd.bin, traj.bin). 168 bytes. */
+/* Trajectory record (fwd.bin, bwd.bin, traj.bin). 160 bytes. */
 typedef struct {
     double t;               /* GPS seconds */
     double lat, lon, h;     /* reference point, rad rad m */

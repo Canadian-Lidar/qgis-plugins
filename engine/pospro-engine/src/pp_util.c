@@ -236,6 +236,8 @@ double norm3(const double *a) { return sqrt(dot3(a, a)); }
 
 double pp_wrap_pi(double a)
 {
+    if (!isfinite(a)) return a;                /* an infinite angle would loop forever */
+    if (fabs(a) > 64.0) a = remainder(a, 2*PI); /* far out: one step (normal angles keep the exact loop) */
     while (a > PI) a -= 2*PI;
     while (a < -PI) a += 2*PI;
     return a;
