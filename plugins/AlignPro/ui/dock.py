@@ -205,6 +205,10 @@ class AlignProDock(PluginWindow):
         theme.mapperize(self.dv)
         theme.mark(self.dv)
         self.dv.apply_requested.connect(self.apply_installation)
+        self.dv.loader = self._load_fine
+        self.dv.area_changed.connect(self._view_area)
+        self.dv.boxes_edited.connect(self._box_edited)
+        self.dv.extent_requested.connect(self._map_extent)
 
     def _refresh_chain(self):
         if self.isVisible() and self.p is not None and self.p.dcs is not None and self.job is None:
@@ -247,7 +251,7 @@ class AlignProDock(PluginWindow):
         self.a_qgz.setEnabled(has)
         self.a_reset.setEnabled(loaded and not busy)
         self.b_view.setEnabled(loaded and not busy)
-        self.dv.setEnabled(loaded and not busy)
+        self.dv.setEnabled(loaded and (not busy or getattr(self, "_fine_job", False)))
 
     def goto_page(self, k):
         self.stack.setCurrentIndex(k)
@@ -304,7 +308,7 @@ class AlignProDock(PluginWindow):
         d.exec()
 
     # ================================================================ jobs
-    def _run(self, title, fn, done):
+    def _run(self, title, fn, done, failed=None):
         if self.job is not None:
             self.toast("Wait for the current job to finish (or stop it).", "warn")
             return
@@ -321,6 +325,8 @@ class AlignProDock(PluginWindow):
             self.b_cancel.setVisible(False)
             self.set_enabled(True)
             if err:
+                if failed is not None:
+                    failed(err)
                 if err != "Cancelled":
                     log(err)
                     self.message("%s: %s" % (title, err.split("\n")[0]), "error")
@@ -532,10 +538,72 @@ class AlignProDock(PluginWindow):
                             "standard deviation and line separation of the lowest surface per cell; trajectory; "
                             "current mounting angles.")
 
-    def refresh_slices(self):
-        """Boxes changed: show the current box again in the Data View."""
+    def refresh_slices(self, kind=None):
+        """Boxes changed: the Data View loads the area around them (kind: the box just drawn)."""
         if self.p is not None:
-            self.dv._preset()
+            self.dv.reload(kind)
+
+    # ------------------------------------------------------- data view area
+    def _load_fine(self, region):
+        """Full-density points inside the inspection boxes, read in the background."""
+        if self.p is None or self.dv.region is None or self.dv.region["sig"] != region["sig"]:
+            return
+        if self.job is not None:
+            QTimer.singleShot(500, lambda: self._load_fine(region))
+            return
+        p = self.p
+
+        def fn(prog, canc):
+            return p.dense_points(region["boxes"], prog, canc)
+
+        def done(res):
+            self._fine_job = False
+            self.dv.set_dense(region, res)
+        def failed(err):
+            self._fine_job = False
+            self.dv.set_dense(region, None, "stopped" if err == "Cancelled" else err.split("\n")[0])
+        self._fine_job = True
+        self._run("Full-density points", fn, done, failed)
+        if self.job is None:
+            self._fine_job = False
+
+    def _view_area(self, region):
+        if self.p is not None:
+            try:
+                self.layers.update_view_area(self.p, region)
+            except Exception as e:  # noqa: BLE001
+                log("view area layer: %s" % e)
+
+    def _box_edited(self, kind):
+        """A box redrawn or resized in the Data View."""
+        if self.p is None:
+            return
+        self.p.save()
+        self.layers.update_boxes(self.p)
+        for pg in self.pages:
+            if hasattr(pg, "refresh_boxes"):
+                pg.refresh_boxes()
+        self.dv.reload(kind)
+
+    def _map_extent(self):
+        """Load map extent: the QGIS map's visible area, in the project's local frame."""
+        if self.p is None or not self.p.lines:
+            return
+        from qgis.core import QgsCoordinateTransform, QgsProject
+        canvas = self.iface.mapCanvas()
+        src = canvas.mapSettings().destinationCrs()
+        dst = local_crs(self.p.frame)
+        ext = canvas.extent()
+        try:
+            ext = QgsCoordinateTransform(src, dst, QgsProject.instance()).transformBoundingBox(ext)
+        except Exception as e:  # noqa: BLE001
+            self.message("Map extent: %s" % e, "warning")
+            return
+        c = ((ext.xMinimum() + ext.xMaximum()) / 2, (ext.yMinimum() + ext.yMaximum()) / 2)
+        half = max(ext.width(), ext.height()) / 2
+        if half > 150:
+            self.toast("The map shows more than 300 m; loading the central 300 m. Zoom in for a closer area.", "warn")
+        self.dv.load_area(c, half, "map extent")
 
     def set_combi(self, row):
         """A combination row was selected: try its angles in the Data View."""
@@ -663,7 +731,7 @@ class AlignProDock(PluginWindow):
                 boxes[kind] = box
                 self.p.save()
                 self.layers.update_boxes(self.p)
-                self.refresh_slices()
+                self.refresh_slices(kind)
             self.iface.mapCanvas().unsetMapTool(tool)
             if self.prev_tool:
                 self.iface.mapCanvas().setMapTool(self.prev_tool)
@@ -735,7 +803,7 @@ class AlignProDock(PluginWindow):
 
             def fn(prog, canc):
                 self.p.analyse()
-            self._run("Area of interest", fn, lambda _: self.refresh_all())
+            self._run("Area of interest", fn, lambda _: (self.refresh_all(), self.dv.reload("aoi")))
         tool.done.connect(done)
         self.iface.mapCanvas().setMapTool(tool)
         self.toast("Click around the target on the map; right-click to finish")
@@ -747,7 +815,7 @@ class AlignProDock(PluginWindow):
 
         def fn(prog, canc):
             self.p.analyse()
-        self._run("Area of interest", fn, lambda _: self.refresh_all())
+        self._run("Area of interest", fn, lambda _: (self.refresh_all(), self.dv.reload(None)))
 
     # ================================================================ output
     def make_report(self, pdf_path, header, shots, clip):

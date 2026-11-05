@@ -35,6 +35,7 @@ class PointCanvas(QWidget):
     lineDrawn = pyqtSignal(float, float, float, float)
     clicked = pyqtSignal(float, float)
     hovered = pyqtSignal(float, float)
+    activated = pyqtSignal()             # any mouse press (the Data View makes this view the active one)
 
     def __init__(self, title, xlabel, ylabel, equal=False, parent=None):
         super().__init__(parent)
@@ -47,6 +48,9 @@ class PointCanvas(QWidget):
         self.overlays = []               # callables(painter, to_screen)
         self.note = ""
         self.accent = theme.ACCENT
+        self.active = False
+        self.empty_text = ""
+        self._ver = 0
         self.point_px = 2
         self._drag = None
         self._rdrag = None
@@ -58,6 +62,7 @@ class PointCanvas(QWidget):
     def set_data(self, x, y, rgb, gx=None, gy=None, keep_view=True):
         self.x, self.y, self.rgb = x, y, rgb
         self.gx, self.gy = gx, gy
+        self._ver += 1
         if not keep_view or self.view is None:
             self.fit()
         self.update()
@@ -106,27 +111,34 @@ class PointCanvas(QWidget):
 
     # ----------------------------------------------------------- paint
     def _raster(self, W, H, x0, x1, y0, y1):
+        key = (self._ver, W, H, x0, x1, y0, y1, self.point_px)
+        if getattr(self, "_rkey", None) == key:
+            return self._rimg
         img = np.empty((H, W, 4), np.uint8)
         r, g, b = _rgb(theme.VIEW_BG)
         img[:] = (b, g, r, 255)          # Format_RGB32 is B, G, R, A in memory
+        flat = img.view(np.uint32).reshape(-1)
         n = self.point_px
+
+        def pack(c):
+            c = np.asarray(c, np.uint32)
+            return (c[..., 2] | (c[..., 1] << 8) | (c[..., 0] << 16) | np.uint32(0xFF000000)).astype(np.uint32)
 
         def splat(xs, ys, cols):
             if xs is None or not len(xs):
                 return
-            px = ((xs - x0) / (x1 - x0) * W).astype(np.int32)
-            py = ((y1 - ys) / (y1 - y0) * H).astype(np.int32)
+            px = ((xs - x0) * (W / (x1 - x0))).astype(np.int32)
+            py = ((y1 - ys) * (H / (y1 - y0))).astype(np.int32)
             m = (px >= 0) & (px < W - n + 1) & (py >= 0) & (py < H - n + 1)
-            px, py = px[m], py[m]
-            c = cols if cols.ndim == 1 else cols[m]
-            for dx in range(n):
-                for dy in range(n):
-                    img[py + dy, px + dx, 0] = c[..., 2]
-                    img[py + dy, px + dx, 1] = c[..., 1]
-                    img[py + dy, px + dx, 2] = c[..., 0]
+            c = pack(cols) if cols.ndim == 1 else pack(cols[m])
+            i = py[m] * W + px[m]
+            for dy in range(n):
+                for dx in range(n):
+                    flat[i + (dy * W + dx)] = c
         splat(self.gx, self.gy, np.array(GHOST, np.uint8))
         if self.rgb is not None:
             splat(self.x, self.y, self.rgb)
+        self._rkey, self._rimg = key, img
         return img
 
     def paintEvent(self, _ev):
@@ -157,7 +169,7 @@ class PointCanvas(QWidget):
             p.setPen(QColor(theme.DIM))
             p.drawText(QRectF(0, Y - 7, a.left() - 4, 14),
                        int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), _tick_label(v, y1 - y0))
-        p.setPen(QPen(QColor(self.accent), 1.2))
+        p.setPen(QPen(QColor(self.accent), 2.6 if self.active else 1.2))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawRect(a)
         p.setFont(theme.font("ui", 12, 700, 110))
@@ -182,6 +194,11 @@ class PointCanvas(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         for ov in self.overlays:
             ov(p, self.to_screen)
+        if self.empty_text and (self.x is None or not len(self.x)):
+            p.setFont(theme.font("ui", 11, 600, 104))
+            p.setPen(QColor(theme.DIM))
+            p.drawText(a.adjusted(16, 16, -16, -16), int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap),
+                       self.empty_text)
         if self._rdrag:
             p.setPen(QPen(QColor(theme.AMBER), 1.5, Qt.PenStyle.DashLine))
             p.drawLine(self._rdrag[0], self._rdrag[1])
@@ -212,6 +229,7 @@ class PointCanvas(QWidget):
 
     def mousePressEvent(self, ev):
         pos = evpos(ev)
+        self.activated.emit()
         if ev.button() == Qt.MouseButton.RightButton:
             self._rdrag = [pos, pos]
         else:

@@ -179,6 +179,28 @@ class MapLayers:
         vl.setRenderer(QgsCategorizedSymbolRenderer("kind", cats))
         self._replace("boxes", vl, project, top=True)
 
+    def update_view_area(self, project, region):
+        """Outline of the area loaded in the Data View (dashed), so it is clear what the views show."""
+        if region is None:
+            return
+        crs = local_crs(project.frame)
+        vl = QgsVectorLayer("Polygon?crs=%s" % crs.toWkt(), "Data View area", "memory")
+        if not vl.crs().isValid():
+            vl.setCrs(crs)
+        pr = vl.dataProvider()
+        pr.addAttributes([QgsField("source", _T_STR)])
+        vl.updateFields()
+        (cx, cy), h = region["center"], region["half"]
+        ring = [(cx - h, cy - h), (cx + h, cy - h), (cx + h, cy + h), (cx - h, cy + h), (cx - h, cy - h)]
+        f = QgsFeature(vl.fields())
+        f.setGeometry(QgsGeometry.fromPolygonXY([[QgsPointXY(float(x), float(y)) for x, y in ring]]))
+        f.setAttributes([str(region.get("source", ""))])
+        pr.addFeatures([f])
+        vl.renderer().setSymbol(QgsFillSymbol.createSimple(
+            {"color": "0,0,0,0", "outline_color": "232,245,240,230", "outline_width": "0.5",
+             "outline_style": "dash"}))
+        self._replace("viewarea", vl, project, top=True)
+
     def update_patches(self, project):
         P = project.P
         crs = local_crs(project.frame)

@@ -25,7 +25,7 @@ import numpy as np
 
 from . import clraw, engine, geo, lines as lines_mod, trajectory
 
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 STAGE_FILE = "alignpro.json"
 PLUGIN = "AlignPro"
 CONVENTION = {"name": "navaq_hesai", "matrix": "M = Rz(heading) Ry(pitch) Rx(-roll) Z0",
@@ -774,6 +774,22 @@ class Project:
         return out
 
     # ------------------------------------------------------------- live view
+    def view_region(self, focus=None):
+        from . import fine
+        return fine.view_region(self, focus)
+
+    def area_region(self, center, half, source="area"):
+        from . import fine
+        return fine.area_region(self, center, half, source)
+
+    def dense_points(self, boxes, progress=None, cancelled=None):
+        from . import fine
+        return fine.dense_points(self, boxes, progress, cancelled)
+
+    def fine_view(self, region, dense=None):
+        from . import fine
+        return fine.fine_view(self, region, dense)
+
     def view_center(self):
         """A good default centre for the data view: the calibration boxes, else the wall patches."""
         boxes = self.cfg.get("boxes") or {}
@@ -826,7 +842,7 @@ class Project:
         if key not in sub["poses"]:
             if len(sub["poses"]) > 4:
                 sub["poses"].clear()
-            pos, C = engine.pose(self.traj, self.frame, sub["t"], key * 1e-3)
+            pos, C = engine.pose_fast(self.traj, self.frame, sub["t"], key * 1e-3)
             sub["poses"][key] = (pos, C.astype(np.float32))
         pos, C = sub["poses"][key]
         M = geo.lidar_matrix(*mount).astype(np.float32)

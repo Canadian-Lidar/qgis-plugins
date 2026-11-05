@@ -119,6 +119,9 @@ SPEC = [
         ("intensity_min", "Intensity min", (0, 255, 1), ""),
         ("points_per_line", "Points kept per line", (100000, 8000000, 250000), "Random thinning budget; "
                                                                               "re-reads the lines"),
+        ("fine_points_per_box", "Fine Tune: points per inspection box", (100000, 8000000, 250000),
+         "Inside the roll / pitch / heading boxes the Data View re-reads every recorded point from the raw "
+         ".clraw; above this many a box is thinned at random"),
     ]),
     ("Passes and pairs", [
         ("split_turns", "Split captures into passes at turns", bool, ""),
