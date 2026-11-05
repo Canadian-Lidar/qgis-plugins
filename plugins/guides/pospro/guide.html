@@ -65,6 +65,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <h2>What's new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>1.6.1</b></td><td>Navigation files next to the base observations, and files you add, are checked orbit by orbit against the Certus's own orbits and the IGS broadcast orbits before processing; orbits that disagree are left out and a warning names the file and the satellites (see <i>Data</i>). Processing stops with a clear error when the solution runs away (σ above 1&nbsp;km) instead of handing over an unusable trajectory. Trajectory Review: <span class="ui">Remove from list</span> and <span class="ui">Clear hand selections</span>; one drawing on the map adds one window (or a few), not one per piece; hand selections from before are taken off the list when you process again, and the anomalies are found again on the new trajectory with your limits.</td></tr>
 <tr><td><b>1.6.0</b></td><td>Guided steps: a <span class="ui">‹ Back</span> / <span class="ui">Next ›</span> bar under the pages says whether each step is done and what to press, and <span class="ui">Continue in AlignPro ›</span> on the last step once the trajectory is published (see <i>The PosPro window</i>). The version number is shown after the plugin name in the header. Fix (DCS Core 1.5.1): QGIS 4 on Windows no longer closes when you click in a floating window. Needs DCS Core 1.6.0.</td></tr>
 <tr><td><b>1.5.3</b></td><td>Fixes from the first real field test: a cycle slip on a signal that returns after a short dropout is caught (it could pull a fixed solution metres off); short losses of IMU data are bridged and the Data step reports how much is missing; the offset between the vehicle and the IMU's aligned frame is estimated while driving and reported; tightly coupled passes start from the fixed GNSS-only position. On the test drive: under 35&nbsp;% fixed before, 99.8&nbsp;% now. New: <a href="#rec">Recording settings</a>.</td></tr>
 <tr><td><b>1.5.2</b></td><td>Fix: no more "unclosed file" warnings in the QGIS log after processing.</td></tr>
@@ -122,6 +123,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <ul>
 <li><span class="ui">Download broadcast ephemeris</span> (on by default): merged broadcast ephemeris of all constellations from the IGS archives, for each day of the drive. Downloads are cached in the <code>pospro_cache</code> folder of your QGIS profile.</li>
 <li>The Certus records GPS ephemeris only. Without internet, add a RINEX navigation file from your base with <span class="ui">Add navigation file…</span>; <span class="ui">Remove</span> takes it off the list. Navigation files lying next to the base observation files (same 4-character station name) are also used automatically.</li>
+<li>Every navigation file that is not the Certus's own or the IGS broadcast file is checked first: each orbit is compared with the Certus's orbits and, with internet, the IGS broadcast orbits of the same satellite. Orbits more than 30&nbsp;m apart are left out, and the log names the file and the satellites. One bad orbit is enough to ruin a trajectory, so if the warning comes up, take the file out of the base folder. Satellites with no reference orbit (GLONASS without internet) cannot be checked and are kept.</li>
 </ul>
 
 <h1><span class="num">{N}</span>Step 2 – Base stations</h1>
@@ -303,9 +305,10 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <h2>Finding and selecting</h2>
 <ul>
 <li><span class="ui">Find anomalies</span> checks the trajectory as processed (before any review edit) against the limits and lists the windows; a message says how many were found. Run it again after changing the limits.</li>
-<li><span class="ui">Rectangle</span>, <span class="ui">Polygon</span>, <span class="ui">Lasso</span>: select part of the trajectory on the QGIS map. Rectangle: drag. Polygon: click the corners; right-click or double-click to finish. Lasso: drag around the part. Esc cancels. Each stretch of trajectory inside the shape is added to the list as <i>Selected by hand</i>.</li>
+<li><span class="ui">Rectangle</span>, <span class="ui">Polygon</span>, <span class="ui">Lasso</span>: select part of the trajectory on the QGIS map. Rectangle: drag. Polygon: click the corners; right-click or double-click to finish. Lasso: drag around the part. Esc cancels. The parts of the trajectory inside the shape are added to the list as <i>Selected by hand</i>: parts less than 30&nbsp;s apart become one window, and a drawing that catches more than 20 separate parts becomes one window from the first to the last. The same window drawn twice is listed once.</li>
 <li><span class="ui">Plot view</span>: adds the time range the quality plots are zoomed to. Open the plots and zoom first.</li>
 </ul>
+<p>Processing finds the anomalies by itself with the limits above, so the list is ready when processing ends. Hand selections belong to the trajectory they were drawn on: processing again takes them off the list (decisions already made on them stay). <span class="ui">Remove from list</span> takes the selected <b>S</b> rows off, and <span class="ui">Clear hand selections</span> takes them all off.</p>
 <p>The list shows the window (<b>A</b> found, <b>S</b> selected by hand), what found it, the start (UTC), the duration, the worst value and the decision (<i>open</i> in red until you decide). The windows are drawn on the map in the layer <i>Review windows</i>: red open, blue GNSS excluded, amber poor, violet interpolated, mint accepted. Double-click a row, or <span class="ui">Zoom to</span>, to see it on the map and in the plots.</p>
 
 <h2>Deciding</h2>
@@ -398,6 +401,9 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <tr><td><i>the base station … has no position yet</i></td><td>Enter or compute the base position on the Base page.</td></tr>
 <tr><td><i>tight coupling needs a base station; for PPP choose "Loosely coupled"</i></td><td>PPP works with loose coupling or GNSS only.</td></tr>
 <tr><td><i>no navigation (ephemeris) data: connect to the internet or add a RINEX navigation file on the Data page</i></td><td>Turn on <span class="ui">Download broadcast ephemeris</span> with internet, or add a navigation file.</td></tr>
+<tr><td><i>navigation file …: N orbits disagree with the INS's own and the IGS broadcast orbits … and are left out (…)</i></td><td>That file holds wrong orbits for those satellites. PosPro already left them out; take the file out of the base folder so it is not used again.</td></tr>
+<tr><td><i>the solution ran away: its σ reached … km</i></td><td>Processing stopped: the trajectory cannot be used, and Trajectory Review cannot repair it. Check the warnings above it: a bad navigation file, a wrong base position (compare the PPP result with the RINEX header position or CSRS-PPP), or IMU data that did not arrive in full. Fix the cause and process again.</td></tr>
+<tr><td><i>the largest σ is … m</i></td><td>A warning: look at the quality plots before using the trajectory.</td></tr>
 <tr><td><i>broadcast ephemeris for … not downloaded (…)</i></td><td>A warning: PosPro goes on with the files you supplied and the rover's GPS ephemeris.</td></tr>
 <tr><td><i>no precise orbit/clock found for …</i></td><td>Final products appear about two weeks after the day, rapid ones after about a day. Try again later, or use CSRS-PPP.</td></tr>
 <tr><td><i>antenna calibrations (igs20.atx) not available</i></td><td>Base antenna phase-centre variations are not applied; connect to the internet once so the file is cached.</td></tr>

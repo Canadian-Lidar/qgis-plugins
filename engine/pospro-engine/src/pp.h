@@ -12,7 +12,7 @@
 #include <stddef.h>
 #include "rtklib.h"
 
-#define PP_VERSION "1.5.3"
+#define PP_VERSION "1.6.1"
 
 /* -------------------------------------------------------------------------
  * Constants
@@ -168,6 +168,7 @@ int cmd_ins(int argc, char **argv);
 int cmd_combine(int argc, char **argv);
 int cmd_pos2trj(int argc, char **argv);
 int cmd_export(int argc, char **argv);
+int cmd_navcheck(int argc, char **argv);
 int cmd_ppp_summary(int argc, char **argv);
 
 /* mcap reader (extract) */

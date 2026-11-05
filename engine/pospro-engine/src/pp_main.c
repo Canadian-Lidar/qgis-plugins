@@ -47,6 +47,7 @@ int main(int argc, char **argv)
     if (!strcmp(cmd, "combine")) return cmd_combine(argc - 2, argv + 2);
     if (!strcmp(cmd, "pos2trj")) return cmd_pos2trj(argc - 2, argv + 2);
     if (!strcmp(cmd, "export")) return cmd_export(argc - 2, argv + 2);
+    if (!strcmp(cmd, "navcheck")) return cmd_navcheck(argc - 2, argv + 2);
     fprintf(stderr, "unknown command %s\n", cmd);
     return 2;
 }
