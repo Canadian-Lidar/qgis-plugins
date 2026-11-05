@@ -5,6 +5,7 @@
 <h2>The header</h2>
 <table>
 <tr><th>Part</th><th>What it does</th></tr>
+<tr><td>Plugin name and version<br><span class="mono">PosPro v1.6.0</span></td><td>The plugin and the version you are running. Quote it when you report a problem; the user guide (<span class="ui">?</span>) is the one for this version.</td></tr>
 <tr><td>Workflow boxes<br><span class="mono">01 POSPRO → 02 ALIGNPRO → 03 CLOUDPRO</span></td><td>The state of each stage on the open project: <b>✓</b> published and current, <b>⚠ stale</b> (out of date: an earlier stage was re-run, the raw data or a shared setting changed), <b>running</b>, <b>failed</b>, or <b>–</b> not run yet. Hover a box for the reasons. Click another stage's box to open that plugin on the same project. The boxes refresh every few seconds.</td></tr>
 {EXTRAS_ROW}
 <tr><td>Project box</td><td>The open project's name; click it for the project menu (<a href="#projects">Projects</a>). It turns red while {NAME} is working.</td></tr>
@@ -12,6 +13,16 @@
 <tr><td><span class="ui">?</span></td><td>Opens this guide.</td></tr>
 </table>
 <p>When the window is narrower than about 1,080 pixels (usually when it is docked) the workflow boxes move to a second row under the header.</p>
+
+<h2>Moving through the steps</h2>
+<p>Under the step pages a bar always says where you are and what comes next:</p>
+<ul>
+<li><span class="ui">‹ Back</span> goes to the previous step.</li>
+<li>The sentence in the middle says whether the step is <b>done</b> (✓, green), needs a <b>check</b> (⚠, amber: you can continue), is <b>not done yet</b> (○, with the button to press), or is <b>optional</b>.</li>
+<li><span class="ui">Next: &lt;step&gt; ›</span> goes to the next step. It is greyed out until a required step is done; on optional steps it reads <span class="ui">Skip to &lt;step&gt; ›</span>.</li>
+<li>On the last step it becomes <span class="ui">Continue in AlignPro ›</span> (from PosPro) or <span class="ui">Continue in CloudPro ›</span> (from AlignPro). It opens the next plugin on the same project once this one has published its results; until then it says what is missing.</li>
+</ul>
+<p>The step list on the left still opens any step at any time; the bar only guides. CloudPro, an editor rather than a list of pages, shows its three steps (Georeference, Clean &amp; classify, Publish) in a strip under the header with one <span class="ui">Next</span> button that does the next thing.</p>
 
 <h2>Floating or docked</h2>
 <p>{NAME} opens as a <b>floating window</b> the first time, centred on the QGIS screen, with its own minimise, maximise and close buttons. It docks into the QGIS window only when you choose to:</p>

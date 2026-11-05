@@ -2241,6 +2241,9 @@ class PosProDock(PluginWindow):
         content = QVBoxLayout()
         content.setContentsMargins(10, 4, 10, 4)
         content.addWidget(self.stack, 1)
+        from dcs_core.stepnav import StepNav
+        self.nav = StepNav(titles, self.goto_page, optional={"Review", "Calibration"}, stage="pospro")
+        content.addWidget(self.nav)
         body.addLayout(content, 1)
         outer.addLayout(body, 1)
 
@@ -2276,6 +2279,7 @@ class PosProDock(PluginWindow):
     # ------------------------------------------------------------------
     def set_enabled(self, on):
         self.stack.setEnabled(on)
+        self.nav.setEnabled(on)
         for b in self.step_buttons:
             b.setEnabled(on)
 
@@ -2284,6 +2288,7 @@ class PosProDock(PluginWindow):
         self.step_buttons[k].setChecked(True)
         if self.project:
             self.pages[k].refresh()
+        self.update_nav()
 
     def update_steps(self):
         for pg, sb in zip(self.pages, self.step_buttons):
@@ -2292,6 +2297,56 @@ class PosProDock(PluginWindow):
             except Exception:       # noqa: BLE001
                 st, sub = "todo", ""
             sb.set_state(st, sub)
+        self.update_nav()
+
+    def update_nav(self):
+        """Back / Next under the pages: is the current step done, what is next."""
+        if not hasattr(self, "nav"):
+            return
+        k = self.stack.currentIndex()
+        if not self.project:
+            self.nav.update(k, "todo", "open or create a project (project box, top right)")
+            return
+        try:
+            st, sub = self.pages[k].state()
+        except Exception:           # noqa: BLE001
+            st, sub = "todo", ""
+        if getattr(self, "task", None) is not None:
+            st = "running"
+        todo = None
+        if k == 0:
+            todo = "press READ FILES" if self.project.cfg["rover"]["files"] else "add the rover files (ADD FILES\u2026)"
+        elif k == 1:
+            todo = "add the base station's RINEX (ADD RINEX\u2026 or DOWNLOAD\u2026)"
+            if st == "warn" and "approximate" in sub:
+                sub += " (BUILT-IN PPP or CSRS-PPP fixes it)"
+        elif k == 3:
+            todo = "press PROCESS at the bottom of this page"
+        elif k == 4:
+            todo = "process first (step 4)"
+        elif k == 5:
+            todo = "FIND ANOMALIES, or skip if the quality is good"
+        elif k == 6:
+            todo = "SOLVE LEVER ARMS (needs a drive with turns), or skip"
+        elif k == 7:
+            todo = "EXPORT is only for other software (AlignPro reads the trajectory already)"
+        self.nav.update(k, st, sub, todo=todo)
+        dcs = self.project.dcs
+        if dcs is None:
+            self.nav.set_continue("alignpro", False, "This older stand-alone project is not part of a job: "
+                                  "AlignPro reads the exported SBET instead.")
+            return
+        try:
+            pst, why = dcs.state("pospro")
+        except Exception:           # noqa: BLE001
+            pst, why = "none", []
+        if pst == "done":
+            self.nav.set_continue("alignpro", True, "", dcs.path)
+        elif pst == "stale":
+            self.nav.set_continue("alignpro", False, "Out of date (%s): process again." % "; ".join(why))
+        else:
+            self.nav.set_continue("alignpro", False, "Process the trajectory to publish it for AlignPro and "
+                                  "CloudPro.")
 
     def save(self):
         if self.project:
@@ -2348,6 +2403,7 @@ class PosProDock(PluginWindow):
     def _refresh_chain(self):
         if self.isVisible() and self.project is not None and self.project.dcs is not None:
             self.chain.refresh()
+            self.update_nav()
 
     def relocate_raw(self):
         if not self.project or not self.project.dcs:
@@ -2512,6 +2568,7 @@ class PosProDock(PluginWindow):
         self.prog.setVisible(True)
         self.b_cancel.setVisible(True)
         self.status.setText(title + "\u2026")
+        self.update_nav()
         QgsApplication.taskManager().addTask(t)
         return t
 
