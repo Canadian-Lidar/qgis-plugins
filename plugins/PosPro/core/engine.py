@@ -94,23 +94,33 @@ def run(args, on_progress=None, on_message=None, is_cancelled=None, cwd=None):
         t.start()
     done = 0
     err_lines = []
-    while done < 2:
-        if is_cancelled and is_cancelled():
-            proc.kill()
-            proc.wait()
-            raise Cancelled()
-        try:
-            tag, line = q.get(timeout=0.2)
-        except queue.Empty:
-            continue
-        if line is None:
-            done += 1
-            continue
-        if tag == "err":
-            err_lines.append(line)
-            continue
-        _handle(line, res, on_progress, on_message)
-    res.code = proc.wait()
+    try:
+        while done < 2:
+            if is_cancelled and is_cancelled():
+                proc.kill()
+                proc.wait()
+                raise Cancelled()
+            try:
+                tag, line = q.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if line is None:
+                done += 1
+                continue
+            if tag == "err":
+                err_lines.append(line)
+                continue
+            _handle(line, res, on_progress, on_message)
+        res.code = proc.wait()
+    finally:
+        # close the engine's pipes (Python otherwise warns "unclosed file" for each one)
+        for t in threads:
+            t.join(timeout=1.0)
+        for f in (proc.stdout, proc.stderr):
+            try:
+                f.close()
+            except Exception:       # noqa: BLE001
+                pass
     res.stderr = "\n".join(err_lines[-50:])
     return res
 
