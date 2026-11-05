@@ -32,6 +32,7 @@ t0, _ = simtraj.make(p.work_dir)
 review.state(p)
 review.detect(p)
 dock.set_project(p)
+dock.page["review"].APPLY_DELAY_MS = 0      # apply at once in the test (the panel waits for the clicks to stop)
 harness.settle()
 print("anomalies found:", [(a["id"], round(a["t0"] - t0, 1), round(a["t1"] - t0, 1)) for a in review.state(p)["anomalies"]])
 

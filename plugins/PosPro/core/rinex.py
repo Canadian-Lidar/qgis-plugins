@@ -194,21 +194,3 @@ def header_info(path, scan_body=True):
         info["interval"] = d[len(d) // 2]
     return info
 
-
-def nav_epoch_range(path):
-    """Rough time span of a navigation file (first/last ephemeris epoch)."""
-    first = last = None
-    with open_text(path) as fh:
-        for line in fh:
-            if "END OF HEADER" in line:
-                break
-        for line in fh:
-            if line[:1] in "GRECJSI" and len(line) > 23 and line[3] == " ":
-                try:
-                    t = datetime.datetime(int(line[4:8]), int(line[9:11]), int(line[12:14]),
-                                          int(line[15:17]), int(line[18:20]))
-                except ValueError:
-                    continue
-                first = first or t
-                last = t
-    return first, last

@@ -526,39 +526,38 @@ CERTUS_FIX = {7: 6, 6: 5, 5: 4, 4: 3, 3: 3, 2: 2, 1: 2, 0: 0}
 def rt_to_pass(rt_path, out_path, span=None):
     """The Certus real-time solution (rt.bin, packet 20) as a trajectory pass
     for the engine's combine step, inside span (t0, t1 GPS s) when given (the time crop).
-    Returns the record count."""
-    t_lo, t_hi = (span[0], span[1]) if span else (-1e300, 1e300)
-    from .results import RT_FMT
-    with open(rt_path, "rb") as fi, open(out_path + ".tmp", "wb") as fo:
-        hdr = fi.read(64)
-        if hdr[:8] != b"PPRT0001":
-            raise ValueError("%s is not a real-time track" % rt_path)
-        fo.write(b"PPTRJ001" + struct.pack("<Q", 0) + struct.pack("<3d", 0, 0, 0) + struct.pack("<ii", 0, 1) +
+    Returns the record count. (numpy: an hour at 200 Hz takes well under a second)"""
+    import numpy as np
+    from .results import read_rt_array
+    from .editor import _DT
+    rt = read_rt_array(rt_path)
+    if rt is None:
+        raise ValueError("%s is not a real-time track" % rt_path)
+    if span:
+        rt = rt[(rt["t"] >= span[0]) & (rt["t"] <= span[1])]
+    n = len(rt)
+    filt = rt["filt"].astype(np.int64)
+    fix = (filt >> 4) & 7
+    # filter status: bit 1 navigation initialised, bits 4-6 GNSS fix type (0 = none)
+    lut = np.array([CERTUS_FIX.get(k, 0) for k in range(8)], dtype=np.uint8)
+    st = np.where(fix > 0, lut[fix], np.where(filt & 0x02, 1, 0)).astype(np.uint8)
+    t = rt["t"]
+    isfix = (st == 6) | (st == 5) | (st == 4)
+    last = np.maximum.accumulate(np.where(isfix, np.arange(n), -1)) if n else np.zeros(0, np.int64)
+    gap = np.where(last >= 0, np.maximum(0.0, t - t[np.maximum(last, 0)]), 0.0)
+    out = np.zeros(n, dtype=_DT)
+    out["t"], out["lat"], out["lon"], out["h"] = t, rt["lat"], rt["lon"], rt["h"]
+    out["vel"], out["att"], out["sdp"] = rt["vel"], rt["att"], rt["sd"]
+    rest = np.zeros((n, 18), np.float32)
+    rest[:, 0:3] = 0.05
+    rest[:, 3:6] = np.float32([math.radians(0.1), math.radians(0.1), math.radians(0.3)])
+    rest[:, 9:12] = rt["gyr"]
+    out["rest"] = rest
+    out["status"] = st
+    out["gap"] = gap
+    with open(out_path + ".tmp", "wb") as fo:
+        fo.write(b"PPTRJ001" + struct.pack("<Q", n) + struct.pack("<3d", 0, 0, 0) + struct.pack("<ii", 0, 1) +
                  b"\0" * 24)
-        n, tlast_fix = 0, None
-        while True:
-            b = fi.read(RT_FMT.size * 8192)
-            if not b:
-                break
-            buf = []
-            for (t, lat, lon, h, vn, ve, vd, ro, pi, he, sdlat, sdlon, sdh, gx, gy, gz, sysst, filt) in \
-                    RT_FMT.iter_unpack(b[:len(b) - len(b) % RT_FMT.size]):
-                if t < t_lo or t > t_hi:
-                    continue
-                fix = (filt >> 4) & 7
-                # filter status: bit 1 navigation initialised, bits 4-6 GNSS fix type (0 = none)
-                st = CERTUS_FIX.get(fix, 0) if fix else (1 if filt & 0x02 else 0)
-                if st in (6, 5, 4):
-                    tlast_fix = t
-                gap = 0.0 if tlast_fix is None else max(0.0, t - tlast_fix)
-                vals = [t, lat, lon, h, vn, ve, vd, ro, pi, he, sdlat, sdlon, sdh,
-                        0.05, 0.05, 0.05, math.radians(0.1), math.radians(0.1), math.radians(0.3),
-                        0, 0, 0, gx, gy, gz, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        st, 0, 0, 0, gap]
-                buf.append(TRJ.pack(*vals))
-                n += 1
-            fo.write(b"".join(buf))
-        fo.seek(8)
-        fo.write(struct.pack("<Q", n))
+        out.tofile(fo)
     os.replace(out_path + ".tmp", out_path)
     return n

@@ -139,7 +139,9 @@ def main():
     t0 = win.qc["gps_time"][100]
     review.add_edit(p, t0, t0 + 5, "poor")     # ... when the user marks a stretch poor
     p.save()
-    win.page["review"].after_edit(True)
+    win.page["review"].after_edit(True)        # applied once the clicks stop ...
+    assert win.page["review"]._apply_timer.isActive()
+    win.page["review"].apply_edits()           # ... (the timer firing)
     assert win._edits_pending, "the edit was not queued"
     win.task = None
     win.run_extract()                          # the running job finishes: the queued edit is applied

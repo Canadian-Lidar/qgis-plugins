@@ -16,14 +16,6 @@ DOMAIN = "https://webapp.csrs-scrs.nrcan-rncan.gc.ca"
 
 
 
-def _ok(err):
-    """QgsBlockingNetworkRequest error code is NoError (PyQt5 int or PyQt6 enum)."""
-    try:
-        from qgis.core import QgsBlockingNetworkRequest
-        return err == QgsBlockingNetworkRequest.ErrorCode.NoError
-    except AttributeError:
-        return int(err) == 0
-
 class CsrsError(Exception):
     pass
 
@@ -71,11 +63,21 @@ def submit(rinex_path, email, frame="NAD83", epoch="CURR", vdatum="cgvd2013", mo
     key = reply.split()[0]
     t0 = time.time()
     status = ""
+    fails = 0
     while time.time() - t0 < max_wait_s:
         if is_cancelled and is_cancelled():
             raise CsrsError("cancelled")
         time.sleep(poll_s)
-        status = products.http_get(DOMAIN + "/CSRS-PPP/service/results/status?id=%s" % key).decode("utf-8", "replace")
+        try:
+            status = products.http_get(DOMAIN + "/CSRS-PPP/service/results/status?id=%s" % key).decode(
+                "utf-8", "replace")
+            fails = 0
+        except products.DownloadError as e:      # a dropped connection while waiting: ask again
+            fails += 1
+            if fails >= 6:
+                raise CsrsError("lost contact with CSRS-PPP while it processed (job %s): %s" % (
+                    key, str(e).splitlines()[0][:200]))
+            continue
         if log:
             log("CSRS-PPP: %s" % status.strip()[:80])
         if "done" in status.lower():
@@ -84,7 +86,11 @@ def submit(rinex_path, email, frame="NAD83", epoch="CURR", vdatum="cgvd2013", mo
             raise CsrsError("CSRS-PPP reported an error: %s" % status.strip()[:300])
     else:
         raise CsrsError("CSRS-PPP did not finish within %d minutes (last status: %s)" % (max_wait_s // 60, status))
-    data = products.http_get(DOMAIN + "/CSRS-PPP/service/results/file?id=%s" % key)
+    try:
+        data = products.http_get(DOMAIN + "/CSRS-PPP/service/results/file?id=%s" % key)
+    except products.DownloadError as e:
+        raise CsrsError("CSRS-PPP finished but its results could not be downloaded (job %s): %s" % (
+            key, str(e).splitlines()[0][:200]))
     out_zip = os.path.splitext(rinex_path)[0] + "_csrs_full_output.zip"
     with open(out_zip, "wb") as fh:
         fh.write(data)

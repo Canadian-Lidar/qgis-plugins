@@ -239,19 +239,12 @@ def capture_offsets(project):
 def _rt_attitude(path):
     """(t, roll, pitch, heading) radians from rt.bin (the Certus's own
     attitude, vehicle frame)."""
-    import struct
-    fmt = struct.Struct("<dddd3f3f3f3fHH")
-    out = []
-    with open(path, "rb") as fh:
-        if fh.read(64)[:8] != b"PPRT0001":
-            return out
-        while True:
-            b = fh.read(fmt.size * 4096)
-            if not b:
-                break
-            for r in fmt.iter_unpack(b[:len(b) - len(b) % fmt.size]):
-                out.append((r[0], r[7], r[8], r[9]))
-    return out
+    from .results import read_rt_array
+    rt = read_rt_array(path)
+    if rt is None or not len(rt):
+        return []
+    a = rt["att"].astype(float)
+    return list(zip(rt["t"].tolist(), a[:, 0].tolist(), a[:, 1].tolist(), a[:, 2].tolist()))
 
 
 def baseline_solutions(project, ctx):
@@ -346,11 +339,22 @@ def measure_antenna2(project, ctx):
 # 2. ephemeris
 # ---------------------------------------------------------------------------
 def nav_files(project, ctx, need_precise=False):
-    """Navigation files for processing. The INS's own ephemeris (rover.nav)
+    """Navigation files for processing (worked out once per job: every step asks). The INS's own ephemeris (rover.nav)
     and the IGS broadcast product are trusted; every other file (next to the
     base observations, or added on the Data page) is checked orbit by orbit
     against them first (engine navcheck) and only the orbits that agree are
     used."""
+    key = json.dumps([project.rover_span(), project.cfg.get("nav_files"), project.cfg.get("auto_ephemeris", True),
+                      (project.base() or {}).get("files"), project.cfg["rover"].get("extract_files")], default=str)
+    memo = getattr(project, "_navs", None)
+    if memo and memo[0] == key and all(os.path.exists(f) for f in memo[1]):
+        return list(memo[1])
+    out = _nav_files(project, ctx)
+    project._navs = (key, list(out))
+    return out
+
+
+def _nav_files(project, ctx):
     trusted, screened = [], []
     ex = os.path.join(project.work_dir, "extract", "rover.nav")
     navdir = project.wpath("nav", "x")[:-2]
@@ -439,6 +443,10 @@ def check_nav_files(project, files, refs, ctx):
 # ---------------------------------------------------------------------------
 # 3. base station observations and position
 # ---------------------------------------------------------------------------
+import re as _re
+_R2_EPOCH = _re.compile(r"^ [ \d]\d [ \d]\d [ \d]\d [ \d]\d [ \d]\d [ \d]\d\.\d{7}  [0-6][ \d]{3}")
+
+
 def base_obs_file(project, base, ctx):
     """One plain RINEX observation file covering the rover span (merged if
     the base came as several files)."""
@@ -451,7 +459,6 @@ def base_obs_file(project, base, ctx):
         p = rinex.decompress_to(f, wdir)
         if rinex.is_hatanaka(p):
             if os.path.dirname(os.path.abspath(p)) != os.path.abspath(wdir):
-                import shutil
                 q = os.path.join(wdir, os.path.basename(p))
                 shutil.copyfile(p, q)
                 p = q
@@ -470,7 +477,14 @@ def base_obs_file(project, base, ctx):
                 if "END OF HEADER" in line:
                     break
         return out
-    plain = sorted(plain)
+    def first_epoch(path):
+        try:
+            f = rinex.header_info(path, scan_body=False).get("first")
+            return f.isoformat() if f else ""
+        except Exception:       # noqa: BLE001
+            return ""
+    # in time order (by the first observation, not the path: files from different folders)
+    plain = sorted(plain, key=lambda f: (first_epoch(f), f))
     t0 = types(plain[0])
     for p in plain[1:]:
         if types(p) != t0:
@@ -491,9 +505,14 @@ def base_obs_file(project, base, ctx):
                         if "END OF HEADER" in line:
                             in_header = False
                         continue
+                    stamp = None
                     if v3 and line.startswith(">"):
                         stamp = line[2:29]
-                        skip = stamp <= last
+                    elif not v3 and _R2_EPOCH.match(line):
+                        yy = int(line[1:3])
+                        stamp = "%04d%s" % (yy + (1900 if yy >= 80 else 2000), line[3:26])
+                    if stamp is not None:
+                        skip = stamp <= last        # epochs already written (files that overlap)
                         if not skip:
                             last = stamp
                     if not skip:
@@ -1222,7 +1241,8 @@ def publish_handover(project, ctx):
                       "pitch + bow up, heading + clockwise",
         "levers_m": {"gnss1": {"value": inst.get("lever_antenna"), "source": src},
                      "gnss2": {"value": inst.get("lever_antenna2"), "source": src,
-                               "used": bool(inst.get("use_antenna2"))},
+                               # GPS2 is processed only by tight coupling
+                               "used": bool(inst.get("use_antenna2")) and c["processing"].get("mode") == "tc"},
                      "lidar": {"value": hw.get("ins_to_lidar_m"), "source": "capture (hardware.json)"}
                      if hw.get("ins_to_lidar_m") else None},
         "rate_hz": rate,

@@ -1939,10 +1939,12 @@ class ReviewPage(Page):
         self.dock.save()
         self.after_edit(True)
 
+    APPLY_DELAY_MS = 900        # quiet time after the last decision before the edits are applied
+
     def after_edit(self, reapply):
-        """Poor / interpolate change the results at once (from the untouched
-        copy); exclusions wait for Process again."""
-        from ..core import review
+        """Poor / interpolate change the results (from the untouched copy) once the clicks stop: quick
+        decisions in a row are applied together, since each apply rewrites the whole trajectory and the
+        handover; exclusions wait for Process again."""
         if not reapply:
             self.fill()
             self.dock.update_steps()
@@ -1950,7 +1952,26 @@ class ReviewPage(Page):
             if ed is not None:
                 ed.refresh_states()
             return
+        self.fill()
+        ed = self.dock.plugin.editor
+        if ed is not None:
+            ed.refresh_states()
+        if getattr(self, "_apply_timer", None) is None:
+            self._apply_timer = QTimer(self)
+            self._apply_timer.setSingleShot(True)
+            self._apply_timer.timeout.connect(self.apply_edits)
+        self.dock.status.setText("Applying review edits\u2026")
+        self._apply_timer.start(self.APPLY_DELAY_MS)
+
+    def apply_edits(self):
+        """Apply the review edits to the results now (and publish the trajectory)."""
+        from ..core import review   # noqa: F401
+        t = getattr(self, "_apply_timer", None)
+        if t is not None:
+            t.stop()
         p = self.project
+        if p is None:
+            return
         work_p = self.dock._work_copy()
 
         def work(ctx):
@@ -2831,6 +2852,8 @@ class PosProDock(PluginWindow):
         try:
             self.plugin._clear_marker()
             self.page["review"].end_select()
+            if getattr(self.page["review"], "_apply_timer", None) is not None:
+                self.page["review"]._apply_timer.stop()
             if self.plugin.plots is not None:
                 self.plugin.plots.set_data(self.qc)
             if self.plugin.editor is not None:
@@ -2879,7 +2902,7 @@ class PosProDock(PluginWindow):
                 if self._edits_pending and self.task is None:
                     # review edits made while this job ran: apply them now
                     self._edits_pending = False
-                    QTimer.singleShot(0, lambda: self.page["review"].after_edit(True))
+                    QTimer.singleShot(0, self.page["review"].apply_edits)
         t.done.connect(finished)
         self.task = t
         self.header.set_busy(True)
@@ -2915,7 +2938,10 @@ class PosProDock(PluginWindow):
                 pass
         self._release_run(False, "QGIS closed the plugin while the job ran")
         try:
-            self.page["review"].release_tool()
+            rv = self.page["review"]
+            rv.release_tool()
+            if getattr(rv, "_apply_timer", None) is not None:
+                rv._apply_timer.stop()
         except Exception:       # noqa: BLE001
             pass
 
