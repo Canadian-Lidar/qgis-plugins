@@ -16,7 +16,7 @@ The functions below the class are the same operations for any QDockWidget. They 
 AlignPro's docksafe.py, which found that on Qt 6 (QGIS 4) a panel given window buttons must
 never go through QMainWindow.removeDockWidget (QGIS crashes): release() handles unloading.
 """
-from qgis.PyQt.QtCore import QPoint, QRect, QRectF, QSettings, Qt, QTimer, pyqtSignal
+from qgis.PyQt.QtCore import QEvent, QPoint, QRect, QRectF, QSettings, Qt, QTimer, pyqtSignal
 from qgis.PyQt.QtGui import QColor, QGuiApplication, QPainter, QPen
 from qgis.PyQt.QtWidgets import QDockWidget, QMenu
 
@@ -269,6 +269,20 @@ class PluginWindow(QDockWidget):
         return holder
 
     # ------------------------------------------------------------------ events
+    _MOUSE = (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease, QEvent.Type.MouseMove,
+              QEvent.Type.MouseButtonDblClick)
+
+    def event(self, ev):                   # noqa: N802
+        # As a window (make_window) the panel is moved by its frame and by WindowTitle. Mouse
+        # events that reach the panel itself (a child left them unhandled) must not go to
+        # QDockWidget's title-bar drag code: on Qt 6 / Windows it expects a dock title bar this
+        # window does not have and crashes (QDockWidgetLayout::minimumTitleWidth, access
+        # violation; QGIS 4.2.3, 5 Nov 2026).
+        if ev.type() in self._MOUSE and self.property(WINDOWED):
+            ev.accept()
+            return True
+        return super().event(ev)
+
     def moveEvent(self, ev):               # noqa: N802
         super().moveEvent(ev)
         if self.isFloating() or self.property(WINDOWED):
@@ -307,6 +321,7 @@ class WindowTitle(DockTitle):
 
     def __init__(self, dock):
         super().__init__(dock, dock.windowTitle())
+        self._drag = None
         self.setToolTip("Right-click for the Window menu: floating, maximise, dock left / right / top / "
                         "bottom, reset. Dragging moves the window; it docks only when you choose.")
 
@@ -347,13 +362,45 @@ class WindowTitle(DockTitle):
                 float_window(self.dock.iface if hasattr(self.dock, "iface") else None, self.dock)
             ev.accept()
             return
+        if self.dock.property(WINDOWED):
+            # a window moves itself; Qt's dock drag must never run on it (see PluginWindow.event)
+            if self._hit(pos) == "close":
+                self.dock.close()
+            elif not self.dock.isMaximized():
+                self._drag = _gpos(ev) - self.dock.frameGeometry().topLeft()
+            ev.accept()
+            return
         super().mousePressEvent(ev)
+
+    def mouseMoveEvent(self, ev):          # noqa: N802
+        if self.dock.property(WINDOWED):
+            pos = ev.position().toPoint() if hasattr(ev, "position") else ev.pos()
+            h = self._hit(pos)
+            if h != self.hover:
+                self.hover = h
+                self.update()
+            if self._drag is not None and (ev.buttons() & Qt.MouseButton.LeftButton):
+                self.dock.move(_gpos(ev) - self._drag)
+            ev.accept()
+            return
+        super().mouseMoveEvent(ev)
+
+    def mouseReleaseEvent(self, ev):       # noqa: N802
+        if self.dock.property(WINDOWED):
+            self._drag = None
+            ev.accept()
+            return
+        super().mouseReleaseEvent(ev)
 
     def mouseDoubleClickEvent(self, ev):   # noqa: N802
         if not (self.dock.isFloating() or self.dock.property(WINDOWED)):
             if isinstance(self.dock, PluginWindow):
                 self.dock.float_window()
         ev.accept()
+
+
+def _gpos(ev):
+    return ev.globalPosition().toPoint() if hasattr(ev, "globalPosition") else ev.globalPos()
 
 
 def _plain_menu(d, parent):

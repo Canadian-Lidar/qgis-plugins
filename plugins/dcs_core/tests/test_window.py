@@ -200,3 +200,41 @@ def test_release_while_windowed_or_docked_is_safe(env):
         w.release_window()
         settle()
     assert True
+
+
+def test_mouse_on_a_window_never_reaches_the_dock_drag_code(env):
+    """QGIS 4.2.3 / Qt 6 on Windows crashed (QDockWidgetLayout::minimumTitleWidth) when a mouse
+    event reached a windowed panel's QDockWidget::event. As a window the title bar moves the
+    window itself and the panel swallows the mouse; docked, Qt's own handling stays."""
+    from qgis.PyQt.QtCore import QEvent, QPoint, QPointF
+    from qgis.PyQt.QtGui import QMouseEvent
+    iface, window = env
+    w = make(window, iface)
+    w.show_window()
+    settle()
+    assert w.property(window.WINDOWED)
+
+    def ev(kind, local, glob, buttons):
+        return QMouseEvent(kind, QPointF(local), QPointF(glob), Qt.MouseButton.LeftButton, buttons,
+                           Qt.KeyboardModifier.NoModifier)
+    t = w.titleBarWidget()
+    start = w.frameGeometry().topLeft()
+    g0 = t.mapToGlobal(QPoint(60, 10))
+    APP.sendEvent(t, ev(QEvent.Type.MouseButtonPress, QPoint(60, 10), g0, Qt.MouseButton.LeftButton))
+    APP.sendEvent(t, ev(QEvent.Type.MouseMove, QPoint(100, 40), g0 + QPoint(40, 30), Qt.MouseButton.LeftButton))
+    APP.sendEvent(t, ev(QEvent.Type.MouseButtonRelease, QPoint(100, 40), g0 + QPoint(40, 30),
+                        Qt.MouseButton.NoButton))
+    settle()
+    moved = w.frameGeometry().topLeft() - start
+    assert (moved.x(), moved.y()) == (40, 30)
+    # clicks the content leaves unhandled, straight on the panel: taken by PluginWindow.event
+    for kind in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseMove, QEvent.Type.MouseButtonRelease,
+                 QEvent.Type.MouseButtonDblClick):
+        e = ev(kind, QPoint(200, 200), w.mapToGlobal(QPoint(200, 200)), Qt.MouseButton.LeftButton)
+        assert w.event(e) is True and e.isAccepted()
+    # docked: not windowed, so the events go to QDockWidget as before
+    w.dock_at("right")
+    settle()
+    assert not w.property(window.WINDOWED)
+    w.release_window()
+    settle()
