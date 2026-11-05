@@ -19,6 +19,8 @@
 <h2>What's new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td>1.4.4</td><td>One SBET per capture: the trajectory can be several SBET files (older MapPro captures, where each Start/Stop made its own project folder and SBET); each capture uses the SBET that covers it, and nothing is interpolated between them.</td></tr>
+<tr><td>1.4.3</td><td>Data View: the views follow the inspection boxes (drawn on the map or in the Data View), the area of interest, the plan (<span class="ui">Load view area</span>) or the QGIS map (<span class="ui">Load map extent</span>); the loaded area is outlined on the map. Inside the boxes every recorded point is shown, re-read from the raw data. Four views at once: plan, roll, pitch and heading.</td></tr>
 <tr><td>1.4.2</td><td>Fixes: no crash in the Data View after Apply, publishing or a new area of interest when the view area holds no points; fewer Python warnings.</td></tr>
 <tr><td>1.4.1</td><td>Mapper 2.10 projects: the survey lines are recognised from what the files record (new file names, a line split over several files, older captures grouped into <code>lines/</code>); navigation recordings are left out, also when PosPro processed them. Needs DCS Core 1.4.0.</td></tr>
 <tr><td>1.4.0</td><td>The same header as the other DCS plugins (logo, name, workflow boxes, project box, Window and guide buttons); the workflow boxes are always shown. Without a project the start page gives the patch test field procedure; projects are created and opened from the project box. Needs DCS Core 1.3.0.</td></tr>
@@ -104,9 +106,10 @@
 <table>
 <tr><th>Option</th><th>Use it</th></tr>
 <tr><td><span class="ui">PosPro trajectory published for this project (trajectory.json)</span></td><td>For the final calibration. This is the choice for a new project. The line under it says PosPro's state: <i>published and current</i> (green), <i>published, but out of date</i> with the reasons, <i>PosPro is processing now</i>, <i>the last PosPro run failed</i>, or <i>not run yet</i> (amber). While PosPro has not published a trajectory, AlignPro uses the Certus real-time trajectory and says so in a warning. GPS week and leap seconds come from PosPro's file.</td></tr>
-<tr><td><span class="ui">Another post-processed SBET file</span></td><td>An SBET made elsewhere. <span class="ui">Browse…</span> picks the file (<code>*.out</code>, <code>*.sbet</code>) and selects this option; a date in the file name such as <code>sbet_20261020.out</code> fills the date. <span class="ui">Find the GPS week from the .clraw times</span> (on by default) works out the GPS week from the capture times; turn it off to give the <span class="ui">Date (UTC)</span> yourself. <span class="ui">Leap seconds</span> is GPS − UTC (18 s since 2017). Without a file name this option falls back to the real-time trajectory.</td></tr>
+<tr><td><span class="ui">Post-processed SBET file(s)</span></td><td>One SBET for the whole drive, or <b>one per capture</b> (see below). <span class="ui">Add…</span> picks one or more files (<code>*.out</code>, <code>*.sbet</code>) and selects this option; <span class="ui">Remove</span> takes the selected ones out. A date in the first file's name such as <code>sbet_20261020.out</code> fills the date. <span class="ui">Find the GPS week from the .clraw times</span> (on by default) works out the GPS week from the capture times; turn it off to give the <span class="ui">Date (UTC)</span> yourself. <span class="ui">Leap seconds</span> is GPS − UTC (18 s since 2017). Without a file name this option falls back to the real-time trajectory.</td></tr>
 <tr><td><span class="ui">Certus real-time (packet 20 in the .clraw), quick look</span></td><td>A first look in the field. Without RTK fixed throughout, the real-time position wanders between passes and the solved angles absorb it; AlignPro warns when it is RTK fixed less than 95 % of the time.</td></tr>
 </table>
+<p><b>One SBET per capture.</b> With the older MapPro format the Certus was logged only during each capture, and every Start/Stop made a new project folder, so each capture has its own SBET. Add every capture folder to the project (<span class="ui">Add folder…</span> above) and every SBET to the list. AlignPro places each SBET by its GPS time and uses it for the captures it covers; the order of the list does not matter. Nothing is interpolated between two SBETs. Under <i>What the files contain</i>, each SBET is listed with the lines it covers, and a warning names any line that no SBET covers (that line is then left without points).</p>
 <p>A calibration solved on anything other than PosPro's trajectory is marked on the Calibration page (<i>Solved on the SBET file trajectory, not PosPro's…</i>) and in <code>alignment.json</code>. When PosPro later publishes, AlignPro turns stale in the workflow boxes.</p>
 
 <h2>What the files contain</h2>
@@ -253,8 +256,8 @@
 <p>A combination clearly apart from the others points at a line that disagrees: check that line's quality and its error in the Data page, and leave it out if it is bad.</p>
 
 <h1 id="dataview"><span class="num">{N}</span>Data View and fine tuning</h1>
-<p>The Data View shows the real points in plan, profile and section, and draws them again a moment after every change of an angle, the lever arm or the latency. Use it to check the automatic result and to adjust by hand when needed. The points are georeferenced with the live (trial) values; a grey <b>ghost</b> shows the same points with other values underneath.</p>
-<figure><img src="fig/dataview_advised.png" style="max-height:96mm"><figcaption><b>Figure {N}.1</b> The Data View as it opens after Auto calibrate: the roll box, with the advised angles as trial values and the applied ones as ghost. The panel on the right holds the values.</figcaption></figure>
+<p>The Data View shows the real points in four views, plan, roll box, pitch box and heading box, and draws them again a moment after every change of an angle, the lever arm or the latency. Use it to check the automatic result and to adjust by hand when needed. The points are georeferenced with the live (trial) values; a grey <b>ghost</b> shows the same points with other values underneath.</p>
+<figure><img src="fig/dataview_advised.png" style="max-height:96mm"><figcaption><b>Figure {N}.1</b> The Data View as it opens after Auto calibrate: plan, roll, pitch and heading views, with the advised angles as trial values and the applied ones as ghost. The panel on the right holds the values; the line under the views says what is loaded.</figcaption></figure>
 
 <h2>Opening it</h2>
 <ul>
@@ -264,33 +267,39 @@
 </ul>
 <p>It is a standard DCS window with its own <span class="ui">⤢</span> Window menu (top right of the toolbar) and title bar menu: floating, maximise, dock right, left, bottom or top, reset, close.</p>
 
-<h2>The three views</h2>
+<h2>The four views</h2>
 <ul>
-<li><b>Plan</b> (left): up to 400,000 points of the used lines around the calibration boxes, from above, true to scale, with the line legend and the boxes as dotted outlines. The current profile is the solid rectangle with an arrow at its end; the dashed line across it is where the section is cut. <b>Right-drag</b> in the plan to draw a new profile anywhere (the Section list switches to <i>Custom</i>).</li>
-<li><b>Profile</b> (top right): the points along the profile, height against distance. <b>Click</b> in the profile to move the section there.</li>
-<li><b>Section</b> (bottom right): a thin slice across the profile at that place.</li>
+<li><b>Plan</b> (top left): the loaded area from above, true to scale, with the line legend and the inspection boxes. The <b>active box</b> is drawn solid with an arrow at its end, the others dotted.</li>
+<li><b>Roll box</b> (top right) and <b>Pitch box</b> (bottom right): the points along each box, height against distance.</li>
+<li><b>Heading box</b> (bottom left): the wall seen from above, edge-on, within the box's height band. A heading error turns the passes against each other about a vertical axis, which a side view hardly shows; here it shows as passes turned apart.</li>
 </ul>
-<p>In every view: the <b>wheel</b> zooms, <b>Shift + wheel</b> (or Ctrl + wheel) stretches the height, <b>drag</b> pans, <b>double-click</b> fits. The hint line under the views shows the coordinates under the mouse. The note at the top right of each view gives the point count and the width or thickness.</p>
+<p>A view without its box says so and how to draw one. In every view: the <b>wheel</b> zooms, <b>Shift + wheel</b> (or Ctrl + wheel) stretches the height, <b>drag</b> pans, <b>double-click</b> fits. The note at the top right of each view gives the point count, the width and whether the points are at full density.</p>
+<p><b>Active box.</b> Click a view (or pick it in <span class="ui">Active box</span>) to make its box the active one; its view gets a thicker frame. <b>Right-drag in the plan</b> redraws the active box, from where you press to where you let go, across the feature (through the wall for roll and pitch, across the wall for heading). <span class="ui">Width</span> sets the active box's width; for the heading box it is the length of wall it covers. Boxes changed here are saved and shown on the map as well.</p>
+
+<h2>Which points are shown</h2>
+<p>The Data View loads a square area around the roll, pitch and heading boxes, and loads again whenever a box is drawn or moved, on the map (Pairs page) or in the Data View. Drawing an area of interest moves it there. The loaded area is outlined on the QGIS map as <b>Data View area</b>, and the line under the views says what is loaded.</p>
+<p>Inside the boxes (and 1.5&nbsp;m around them) you see <b>every point the Lidar recorded there</b>, not the thinned set the calibration reads. AlignPro re-reads the raw <code>.clraw</code> for just the seconds each pass was at a box. The first time takes a few seconds per box; the views show the thinned points meanwhile and fill in when the job ends. After that the points come from the project's <code>work/</code> folder. Outside the boxes the plan shows the thinned points, at most 700,000.</p>
+<div class="note"><b>Note</b> <span class="ui">Settings › Fine Tune: points per inspection box</span> (default 1,500,000) caps a very large box; above it the box's points are thinned at random and the line under the views says so. If the raw files cannot be found the views keep the thinned points.</div>
 
 <h2>The toolbar</h2>
 <table>
 <tr><th>Control</th><th>What it does</th></tr>
-<tr><td><span class="ui">Section</span> list</td><td><i>Roll box</i>, <i>Pitch box</i>, <i>Heading box</i>, or <i>Custom (right-drag in plan)</i>. Each box is placed where its angle shows best: roll across a surface, pitch through a wall, heading along a wall.</td></tr>
-<tr><td><span class="ui">Profile width</span></td><td>How wide the profile is (0.1 to 50 m)</td></tr>
-<tr><td><span class="ui">Section</span> (metres)</td><td>The thickness of the cross-section, along the profile</td></tr>
-<tr><td><span class="ui">Plan height band</span> and its two heights</td><td>Shows only the points in this band above the ground in the plan, so walls and poles stand out. The Heading box turns it on with the box's own band.</td></tr>
+<tr><td><span class="ui">Active box</span></td><td><i>Roll</i>, <i>Pitch</i> or <i>Heading</i>: the box that a right-drag in the plan redraws and <span class="ui">Width</span> sets</td></tr>
+<tr><td><span class="ui">Width</span></td><td>The active box's width (0.1 to 200 m)</td></tr>
+<tr><td><span class="ui">Plan height band</span> and its two heights</td><td>Shows only the points in this band above the ground in the plan, so walls and poles stand out. The heading box view always uses the box's own band.</td></tr>
 <tr><td><span class="ui">Colour</span></td><td><i>Line</i> (the line colours), <i>Height</i> or <i>Intensity</i></td></tr>
 <tr><td><span class="ui">Ghost</span></td><td>Grey points under the live ones, with: <i>None</i>, <i>Recorded angles</i> (the angles and lever arm recorded in the capture, latency 0), <i>Applied values</i> (the default), <i>Advised angles</i>, or <i>When view opened</i>. Coloured points are the trial values; grey shows where the points were.</td></tr>
-<tr><td><span class="ui">Load view area</span></td><td>Loads the points around the centre of the plan view (a square of 20 to 300 m, up to 400,000 points). Use it to look at another part of the drive.</td></tr>
-<tr><td><span class="ui">Fit</span></td><td>Fits all three views to their points</td></tr>
+<tr><td><span class="ui">Around the boxes</span></td><td>Loads the area around the inspection boxes again (after one of the two below)</td></tr>
+<tr><td><span class="ui">Load view area</span></td><td>Loads what the plan shows (a square of 10 to 300 m); boxes inside it at full density</td></tr>
+<tr><td><span class="ui">Load map extent</span></td><td>Loads what the QGIS map shows (up to 300 m across); boxes inside it at full density</td></tr>
+<tr><td><span class="ui">Fit</span></td><td>Fits all four views to their points</td></tr>
 </table>
 
 <h2>The heading box</h2>
-<p>A heading error turns the passes against each other about a vertical axis, which a side view hardly shows. For the Heading box the profile view becomes <i>Heading box · plan, wall edge-on</i>: the wall seen from above, within the height band, so a heading error shows as passes turned apart.</p>
-<figure><img src="fig/dataview_heading.png" style="max-height:92mm"><figcaption><b>Figure {N}.2</b> The heading box: the plan with the height band on, and the wall seen from above, edge-on.</figcaption></figure>
+<figure><img src="fig/dataview_heading.png" style="max-height:92mm"><figcaption><b>Figure {N}.2</b> The heading box active (solid in the plan) with the plan height band on; bottom left, the wall seen from above, edge-on.</figcaption></figure>
 
 <h2>What a misalignment looks like</h2>
-<figure><img src="fig/dataview_compare.png" style="max-height:70mm"><figcaption><b>Figure {N}.3</b> The same wall in the pitch box profile, zoomed in, coloured by line. Left: with the recorded angles the two passes (red and violet) are a few centimetres apart and the wall looks thick. Right: with the advised angles they fall on one thin wall.</figcaption></figure>
+<figure><img src="fig/dataview_compare.png" style="max-height:70mm"><figcaption><b>Figure {N}.3</b> The same wall in the pitch box view, zoomed in, coloured by line. Left: with the recorded angles the two passes (red and violet) are a few centimetres apart and the wall looks thick. Right: with the advised angles they fall on one thin wall.</figcaption></figure>
 
 <h2>Adjusting by hand</h2>
 <div style="display:flex;gap:6mm;align-items:flex-start">
@@ -311,7 +320,7 @@
 </div>
 <ol class="steps">
 <li>Start from <span class="ui">Applied</span> or <span class="ui">Advised</span>.</li>
-<li>Pick the box that shows the angle you want to change: roll in the Roll box, pitch in the Pitch box, heading in the Heading box. Set <span class="ui">Ghost</span> to <i>Applied values</i> to see where you started.</li>
+<li>Watch the view that shows the angle you change: roll in the Roll box, pitch in the Pitch box, heading in the Heading box. Set <span class="ui">Ghost</span> to <i>Applied values</i> to see where you started.</li>
 <li>Nudge until the passes fall on one surface and Error now is at its lowest.</li>
 <li>Press <span class="ui">Apply to project</span>, then copy the angles to the mapper.</li>
 </ol>
@@ -338,7 +347,7 @@
 <ul>
 <li><span class="ui">Add header</span>: the header fields go into the text report too.</li>
 <li><span class="ui">Ask for file name</span>: choose where to save; otherwise the report goes to <code>02_AlignPro/out/Report_YYYY-MM-DD-HHMMSS_&lt;project&gt;.pdf</code>.</li>
-<li><span class="ui">Add screenshots</span>: adds the QGIS map, the Data View's plan, profile and section, and the roll, pitch and heading boxes, each on its own page. Set up the map and the Data View first.</li>
+<li><span class="ui">Add screenshots</span>: adds the QGIS map, the Data View's plan, roll, pitch and heading views, and the roll, pitch and heading boxes, each on its own page. Set up the map and the Data View first.</li>
 <li><span class="ui">Copy text to clipboard</span>: copies the text report.</li>
 </ul></li>
 <li>Press <span class="ui">Create report</span>. AlignPro writes the PDF and a <code>.txt</code> beside it, then asks whether to open the PDF.</li>

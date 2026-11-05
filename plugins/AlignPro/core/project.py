@@ -25,12 +25,24 @@ import numpy as np
 
 from . import clraw, engine, geo, lines as lines_mod, trajectory
 
-VERSION = "1.4.2"
+VERSION = "1.4.4"
 STAGE_FILE = "alignpro.json"
 PLUGIN = "AlignPro"
 CONVENTION = {"name": "navaq_hesai", "matrix": "M = Rz(heading) Ry(pitch) Rx(-roll) Z0",
               "angles": "roll + starboard down, pitch + bow up, heading + clockwise (degrees)",
               "frame": "vehicle frame X forward, Y starboard, Z down, from the Certus reference point"}
+
+
+def sbet_paths(tcfg):
+    """The SBET files of a trajectory setting: "paths" (several, one per capture) or the older "path"."""
+    ps = [p for p in (tcfg.get("paths") or []) if p]
+    if not ps and tcfg.get("path"):
+        ps = [tcfg["path"]]
+    return ps
+
+
+def _utc(t):
+    return dt.datetime.fromtimestamp(float(t), dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 class Project:
@@ -325,18 +337,8 @@ class Project:
                                      "calibration.")
         if typ == "pospro":
             pass
-        elif typ == "sbet" and tcfg.get("path"):
-            date = None
-            if tcfg.get("date"):
-                date = dt.date.fromisoformat(tcfg["date"])
-            near = self.datas[0]["info"].get("t_start")
-            self.traj = trajectory.read_sbet(tcfg["path"], date, int(tcfg.get("leap", 18)), near_unix=near)
-            self.traj_info = {"source": "sbet", "handover_id": None, "path": tcfg["path"]}
-            for d in self.datas:
-                i = d["info"]
-                if i["t_start"] and not self.traj.covers(i["t_start"], i["t_stop"]):
-                    self.warnings.append("SBET does not cover line %03d; check the SBET date and file."
-                                         % i["line"])
+        elif typ == "sbet" and sbet_paths(tcfg):
+            self.traj, self.traj_info = self.read_sbets(tcfg)
         else:
             if rt is None:
                 raise ValueError("No Certus packet 20 in the .clraw files")
@@ -353,6 +355,64 @@ class Project:
                                  "h": float(np.mean(h))}
         f = self.cfg["frame"]
         self.frame = geo.LocalFrame(f["lat"], f["lon"], f["h"])
+
+    def read_sbets(self, tcfg):
+        """One or more SBET files (one per capture, as the older MapPro format recorded them).
+
+        Each SBET is placed in its GPS week by the captures it covers (its date, or the capture
+        times), then they are merged into one trajectory with no data between them, so each capture
+        is georeferenced with its own SBET. -> (trajectory, info with a "match" list per file)."""
+        paths = sbet_paths(tcfg)
+        leap = int(tcfg.get("leap", 18))
+        date = dt.date.fromisoformat(tcfg["date"]) if tcfg.get("date") else None
+        caps = []                       # (label, t_start, t_stop) per capture
+        nums = [d["info"].get("line") for d in self.datas]
+        for d in self.datas:
+            i = d["info"]
+            if i.get("t_start") and i.get("t_stop"):
+                lab = "line %03d" % int(i["line"]) if nums.count(i.get("line")) == 1 else \
+                    "capture %s" % (i.get("capture") or i.get("capture_name") or os.path.basename(i["paths"][0]))
+                caps.append((lab, float(i["t_start"]), float(i["t_stop"])))
+        nears = sorted({round(c[1]) for c in caps}) or [None]
+        pieces, match = [], []
+        for path in paths:
+            if not os.path.isfile(path):
+                self.warnings.append("SBET file not found: %s" % path)
+                match.append({"path": path, "lines": [], "error": "not found"})
+                continue
+            best, best_cov = None, -1.0
+            # several captures may be in different GPS weeks: place the SBET where it covers the most
+            for near in (nears if date is None else [None]):
+                tr = trajectory.read_sbet(path, date, leap, near_unix=near)
+                cov = sum(max(0.0, min(tr.span[1], c[2]) - max(tr.span[0], c[1])) for c in caps)
+                if cov > best_cov:
+                    best, best_cov = tr, cov
+                if date is None and len(nears) > 1 and cov >= sum(c[2] - c[1] for c in caps) - 1e-6:
+                    break
+            lines = [c[0] for c in caps if best.covers(c[1], c[2])]
+            part = [c[0] for c in caps if c[0] not in lines and
+                    min(best.span[1], c[2]) - max(best.span[0], c[1]) > 0]
+            match.append({"path": path, "lines": lines, "partly": part, "start": best.span[0], "end": best.span[1],
+                          "rate_hz": round(best.rate(), 1)})
+            if best_cov <= 0:
+                self.warnings.append("SBET %s covers none of the lines (%s to %s UTC); check the file and its date."
+                                     % (os.path.basename(path), _utc(best.span[0]), _utc(best.span[1])))
+                continue
+            pieces.append(best)
+        if not pieces:
+            raise ValueError("None of the SBET files covers the lines")
+        tr = trajectory.merge(pieces, "SBET %s" % ", ".join(os.path.basename(p) for p in paths)
+                              if len(paths) > 1 else pieces[0].source)
+        if tr.segments and len(tr.segments) < len(pieces):
+            self.warnings.append("Some SBET files overlap in time; where they overlap the earlier file is used.")
+        for c in caps:
+            if not tr.covers(c[1], c[2]):
+                owner = [m for m in match if c[0] in m.get("partly", [])]
+                self.warnings.append("%s is %s; add the SBET for that capture." % (
+                    c[0][0].upper() + c[0][1:], "only partly covered by %s" % os.path.basename(owner[0]["path"]) if owner else
+                    "not covered by any SBET"))
+        info = {"source": "sbet", "handover_id": None, "path": paths[0], "paths": paths, "match": match}
+        return tr, info
 
     def pospro_trajectory(self):
         """PosPro's published trajectory.json (with absolute paths), or None."""
@@ -404,7 +464,7 @@ class Project:
             if not len(t):
                 ln.x = np.zeros((0, 3))
                 continue
-            inside = (t >= self.traj.t[0]) & (t <= self.traj.t[-1])
+            inside = self.traj.inside(t)
             pos, C = engine.pose(self.traj, self.frame, t, lat_s)
             q = ln.data["p"][ln.idx].astype(float) @ M.T
             ln.x = engine.georef(pos, C, q, lever)
@@ -774,6 +834,22 @@ class Project:
         return out
 
     # ------------------------------------------------------------- live view
+    def view_region(self, focus=None):
+        from . import fine
+        return fine.view_region(self, focus)
+
+    def area_region(self, center, half, source="area"):
+        from . import fine
+        return fine.area_region(self, center, half, source)
+
+    def dense_points(self, boxes, progress=None, cancelled=None):
+        from . import fine
+        return fine.dense_points(self, boxes, progress, cancelled)
+
+    def fine_view(self, region, dense=None):
+        from . import fine
+        return fine.fine_view(self, region, dense)
+
     def view_center(self):
         """A good default centre for the data view: the calibration boxes, else the wall patches."""
         boxes = self.cfg.get("boxes") or {}
@@ -826,7 +902,7 @@ class Project:
         if key not in sub["poses"]:
             if len(sub["poses"]) > 4:
                 sub["poses"].clear()
-            pos, C = engine.pose(self.traj, self.frame, sub["t"], key * 1e-3)
+            pos, C = engine.pose_fast(self.traj, self.frame, sub["t"], key * 1e-3)
             sub["poses"][key] = (pos, C.astype(np.float32))
         pos, C = sub["poses"][key]
         M = geo.lidar_matrix(*mount).astype(np.float32)

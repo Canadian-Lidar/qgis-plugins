@@ -10,7 +10,7 @@ import time
 
 import numpy as np
 
-faulthandler.dump_traceback_later(500, exit=True)
+faulthandler.dump_traceback_later(1200, exit=True)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from qgis.core import QgsApplication, QgsProject  # noqa: E402
 from qgis.gui import QgsMapCanvas, QgsMessageBar  # noqa: E402
@@ -143,13 +143,18 @@ def view_shot(name):
     dock.view_dock.grab().save(os.path.join(outdir, name))
 
 
-for i, nm in enumerate(("roll", "pitch", "heading")):
-    dv.preset.setCurrentIndex(i)
-    settle()
-    view_shot("view_%d_%s_advised_vs_applied.png" % (i + 1, nm))
+wait(dock)          # full-density points for the boxes (background job)
+settle()
+print("data view:", dv.src.text())
+assert dv.region is not None and dv.region["source"] == "boxes", dv.region
+assert dv.dense_state == "ok" and dv.sub["n_dense"] > 0, dv.dense_state
+for nm in ("roll", "pitch", "heading"):
+    assert dv.views[nm].x is not None and len(dv.views[nm].x) > 0, nm
+    print("  %s view: %s" % (nm, dv.views[nm].note))
+view_shot("view_1_four_views_advised_vs_applied.png")
 print("view error (advised trial):", dv.c_err.value.text(), "|", dv.c_err.label.text())
 # manual nudging: start from recorded, step heading by +0.1 deg five times, time each live update
-dv.preset.setCurrentIndex(2)
+dv.set_active("heading")
 dv.compare.setCurrentIndex(1)
 dv.load_values("recorded")
 settle()
@@ -161,17 +166,64 @@ for k in range(5):
     dv.ang["heading"].bump(1)
     dv._timer.stop()
     dv._update()
-    dv.plan.repaint(); dv.profile_v.repaint(); dv.section_v.repaint()
+    for v in dv.views.values():
+        v.repaint()
     times.append(time.time() - t0)
     print("  heading %.4f -> %s" % (dv.ang["heading"].value(), dv.c_err.value.text()))
-print("live update ms:", [round(t * 1000) for t in times])
-view_shot("view_4_manual_heading_nudge.png")
-# custom profile drawn in the plan (right-drag) and a section station click
-c = np.array(dv.sub["center"])
-dv._custom_line(c[0] - 15, c[1] + 2, c[0] + 15, c[1] + 2)
-dv._set_station(12.0)
+print("live update ms (%s points):" % "{:,}".format(len(dv.sub["t"])), [round(t * 1000) for t in times])
+view_shot("view_2_manual_heading_nudge.png")
+# redraw the pitch box from the plan (right-drag) far from the start: the views follow it
+box0 = dict(p.cfg["boxes"]["pitch"])
+dv.set_active("pitch")
+c0 = np.array(dv.region["center"])
+dv._drawn(*(c0 + [-30, 18]), *(c0 + [-24, 18]))
+wait(dock)
 settle()
-print("custom profile points:", dv.profile_v.note)
+c1 = np.array(dv.region["center"])
+print("pitch box redrawn: region centre", np.round(c0, 1), "->", np.round(c1, 1), "|", dv.src.text())
+x = dv.x
+b = p.cfg["boxes"]["pitch"]
+from alignpro.core import fine  # noqa: E402
+assert fine.in_box(x[:, :2], b).sum() == len(dv.views["pitch"].x), "pitch view not from the pitch box"
+assert dv.region["boxes"].get("pitch") == b
+p.cfg["boxes"]["pitch"] = box0
+dock._box_edited("pitch")
+wait(dock)
+settle()
+assert abs(dv.bw.value() - p.cfg["boxes"][dv.active]["width"]) < 1e-6, "width box shows another box's width"
+# Load map extent: the QGIS map's visible area, wherever it is
+from alignpro.ui.maplayers import local_crs  # noqa: E402
+from qgis.core import QgsRectangle  # noqa: E402
+cv = iface.mapCanvas()
+cv.setDestinationCrs(local_crs(p.frame))
+cv.resize(800, 600)
+cv.setExtent(QgsRectangle(-40, -10, -10, 20))
+settle()
+dock._map_extent()
+wait(dock)
+settle()
+ec = dv.region["center"]
+print("map extent:", dv.region["source"], np.round(ec, 1), round(dv.region["half"], 1), "|", dv.src.text()[:80])
+assert dv.region["source"] == "map extent" and abs(ec[0] + 25) < 3 and abs(ec[1] - 5) < 3, dv.region
+lay = dock.layers.layer("viewarea")
+assert lay is not None and lay.featureCount() == 1
+bb = lay.extent()
+assert abs((bb.xMinimum() + bb.xMaximum()) / 2 - ec[0]) < 0.01, "Data View area layer not where the view is"
+# area of interest: the view moves there (boxes outside it are not loaded)
+ring_xy = np.array([[20, 30], [35, 30], [35, 45], [20, 45], [20, 30]], float)
+lla = p.frame.to_geodetic(np.c_[ring_xy, np.zeros(len(ring_xy))])
+p.cfg["aoi"] = [[float(np.degrees(lla[1][i])), float(np.degrees(lla[0][i]))] for i in range(len(ring_xy))]
+dv.reload("aoi")
+wait(dock)
+settle()
+ac = dv.region["center"]
+print("area of interest:", dv.region["source"], np.round(ac, 1), "| boxes loaded:", list(dv.region["boxes"]))
+assert dv.region["source"] == "aoi" and abs(ac[0] - 27.5) < 0.6 and abs(ac[1] - 37.5) < 0.6, dv.region
+p.cfg["aoi"] = None
+dv.reload(None)
+wait(dock)
+settle()
+assert dv.region["source"] == "boxes"
 # apply the advised values from the Data View
 dv.load_values("advised")
 settle()

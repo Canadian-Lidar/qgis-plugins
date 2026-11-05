@@ -74,6 +74,7 @@ MB.exec = _mb_exec
 MB.exec_ = _mb_exec
 answers = {"open": "", "save": "", "dir": ""}
 QtWidgets.QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (answers["open"], ""))
+QtWidgets.QFileDialog.getOpenFileNames = staticmethod(lambda *a, **k: ([answers["open"]] if answers["open"] else [], ""))
 QtWidgets.QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (answers["save"], ""))
 QtWidgets.QFileDialog.getExistingDirectory = staticmethod(lambda *a, **k: answers["dir"])
 QtGui.QDesktopServices.openUrl = staticmethod(lambda *a: True)
@@ -200,7 +201,7 @@ d.new_project()
 idle()
 pg = d.pg_data
 answers["open"] = SBET
-pg.traj._browse()                                                              # Browse... picks the SBET
+pg.traj._browse()                                                              # Add... picks the SBET
 pg.read()
 idle()
 
@@ -238,6 +239,8 @@ d.autopatch()
 idle()
 dv = d.view_dock
 dv.resize(1600, 950)
+harness.settle(20)
+idle()                                         # full-density points for the boxes (background job)
 harness.settle(20)
 harness.grab(dv, fig("dataview_advised.png"))                                  # opens after Auto calibrate
 page(4, "calibration.png", 760)
@@ -280,10 +283,12 @@ page(3, "pairs.png", 820)
 
 # ------------------------------------------------------------------ Data View
 d.dv.load_values("applied")
-d.dv.preset.setCurrentIndex(2)                                                 # heading box
+d.dv.set_active("heading")                                                     # heading box active
+d.dv.band.setChecked(True)
 harness.settle(20)
 harness.grab(dv, fig("dataview_heading.png"))
-d.dv.preset.setCurrentIndex(1)                                                 # pitch box, a trial value
+d.dv.band.setChecked(False)
+d.dv.set_active("pitch")                                                       # pitch box, a trial value
 d.dv.compare.setCurrentIndex(2)
 d.dv.colour.setCurrentIndex(1)
 d.dv.ang["pitch"].bump(+1)
@@ -293,20 +298,17 @@ harness.settle(20)
 harness.grab(d.dv._split.widget(2), fig("dataview_panel.png"))
 d.dv.colour.setCurrentIndex(0)
 d.dv.load_values("applied")
-d.dv.preset.setCurrentIndex(0)
 harness.settle(10)
 
-# misalignment as seen in the pitch box profile: recorded angles, then the advised ones
+# misalignment as seen in the pitch box view: recorded angles, then the advised ones
 import numpy as np  # noqa: E402
-d.dv.preset.setCurrentIndex(1)
 d.dv.compare.setCurrentIndex(0)
 d.dv.colour.setCurrentIndex(0)
-d.dv.pw.setValue(1.0)
 parts = []
 for which in ("recorded", "advised"):
     d.dv.load_values(which)
     d.dv._update()
-    pv = d.dv.profile_v
+    pv = d.dv.views["pitch"]
     pv.resize(520, 420)
     y = pv.y
     hi = y > np.percentile(y, 30) + 1.0
@@ -324,7 +326,7 @@ im.paste(parts[1], (parts[0].width + gap, 0))
 im.save(fig("dataview_compare.png"))
 d.dv.load_values("applied")
 d.dv.compare.setCurrentIndex(2)
-d.dv.preset.setCurrentIndex(0)
+d.dv.set_active("heading")
 dv.resize(1600, 950)
 harness.settle(10)
 

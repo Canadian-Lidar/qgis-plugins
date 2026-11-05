@@ -12,6 +12,7 @@ from qgis.PyQt.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDial
 from ..core import engine, geo, report
 from . import theme
 from .common import PlotWidget, cell, fmt, make_table
+from ..core.project import sbet_paths
 from .dialogs import TrajectoryBox
 from .widgets import Card, KV, Section, VehicleView
 
@@ -184,7 +185,7 @@ class DataPage(Page):
             self.files.addItem(f)
         c = p.cfg["trajectory"]
         self.traj.set_type(c.get("type"))
-        self.traj.path.setText(c.get("path", ""))
+        self.traj.set_paths(sbet_paths(c))
         self.traj.leap.setValue(int(c.get("leap", 18)))
         self.traj.auto_date.setChecked(not c.get("date"))
         self.caps.clear()
@@ -228,6 +229,11 @@ class DataPage(Page):
         tr = p.traj
         rtk = [l.stats.get("fix_rtk_pct") for l in p.lines if l.stats.get("fix_rtk_pct") is not None]
         self.kv.set("Trajectory", "%s · %.0f Hz" % (tr.source, tr.rate()))
+        for m in (getattr(p, "traj_info", None) or {}).get("match") or []:
+            got = m.get("lines") or []
+            self.kv.set("  " + os.path.basename(m["path"]),
+                        ("covers " + ", ".join(got)) if got else (m.get("error") or "covers no line"),
+                        "ok" if got else "warn")
         if rtk:
             m = min(rtk)
             self.kv.set("RTK fixed", "%.0f %% (worst line)" % m, "ok" if m >= 99 else ("warn" if m > 80 else "bad"))

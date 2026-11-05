@@ -13,7 +13,7 @@ LINE_COLORS = ["#e5484d", "#a855f7", "#3b82f6", "#10b981", "#f59e0b", "#06b6d4",
 DEFAULT_SETTINGS = {
     # data
     "returns": "strongest", "range_min": 1.5, "range_max": 60.0, "intensity_min": 0,
-    "points_per_line": 1500000,
+    "points_per_line": 1500000, "fine_points_per_box": 1500000,
     # passes
     "split_turns": True, "min_speed": 1.0, "turn_deg": 35.0, "min_pass_s": 4.0,
     # pairing
@@ -100,6 +100,24 @@ def pose(traj, frame, t, latency=0.0, batch=400000):
         lat, lon, h, r, p, hd = traj.interp(t[a:b], latency)
         pos[a:b] = frame.from_geodetic(lat, lon, h)
         C[a:b] = frame.vehicle_to_local(lat, lon, r, p, hd)
+    return pos, C
+
+
+def pose_fast(traj, frame, t, latency=0.0, dt=0.002):
+    """pose() for many points: exact poses on a dt grid (only where there are points), linearly
+    interpolated between them. Over 2 ms the interpolation error is far below a millimetre."""
+    t = np.asarray(t, float)
+    if len(t) < 20000:
+        return pose(traj, frame, t, latency)
+    f = t / dt
+    k = np.floor(f).astype(np.int64)
+    ug = np.unique(np.concatenate([k, k + 1]))
+    posg, Cg = pose(traj, frame, ug * dt, latency)
+    i0 = np.searchsorted(ug, k)
+    i1 = np.searchsorted(ug, k + 1)
+    w = (f - k)[:, None]
+    pos = posg[i0] * (1 - w) + posg[i1] * w
+    C = Cg[i0] * (1 - w)[:, :, None] + Cg[i1] * w[:, :, None]
     return pos, C
 
 
