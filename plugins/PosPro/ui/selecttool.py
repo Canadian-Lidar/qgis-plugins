@@ -30,7 +30,10 @@ class SelectTool(QgsMapTool):
         self.setCursor(Qt.CursorShape.CrossCursor)
 
     def _pt(self, e):
-        return self.toMapCoordinates(e.pos())
+        try:
+            return e.mapPoint()             # QgsMapMouseEvent: already in map coordinates
+        except AttributeError:
+            return self.toMapCoordinates(e.pos())
 
     def _show(self, extra=None):
         self.band.reset(POLY)

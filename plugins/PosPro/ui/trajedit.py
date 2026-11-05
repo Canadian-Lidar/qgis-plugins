@@ -1204,7 +1204,11 @@ class TrajectoryEditor(PluginWindow):
             job = QgsMapRendererParallelJob(ms)
 
             def done():
-                if job is self._bm_job and self.bm.isChecked():
+                try:                    # the editor may be gone (plugin unloaded) when the render ends
+                    alive = job is self._bm_job and self.bm.isChecked()
+                except RuntimeError:
+                    return
+                if alive:
                     self.plan.basemap = (job.renderedImage(), local)
                     self.plan.update()
             job.finished.connect(done)

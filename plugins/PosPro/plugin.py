@@ -83,6 +83,9 @@ class PosProPlugin:
             if d is not None:
                 d.release_window()      # remembers the window, removes it safely (also when it is a window)
         self.dock = self.plots = self.editor = None
+        for a in (self.action, self.help_action):
+            if a is not None:
+                a.deleteLater()
 
     def toggle(self, on=True):
         if self.dock is None:

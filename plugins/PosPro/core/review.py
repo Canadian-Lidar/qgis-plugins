@@ -54,7 +54,7 @@ DEFAULTS = {
 KIND_LABEL = {"solution": "Solution type", "sd_h": "Horizontal σ", "sd_v": "Vertical σ",
               "sep_h": "Fwd/bwd separation", "imu_only": "IMU only", "heading": "Heading σ",
               "manual": "Selected by hand"}
-ACTION_LABEL = {"exclude": "GNSS excluded", "poor": "Marked poor", "interpolate": "Interpolated",
+ACTION_LABEL = {"exclude": "Bridged with IMU", "poor": "Marked poor", "interpolate": "Interpolated",
                 "reject": "Rejected", "accept": "Accepted"}
 METHODS = {"smooth": "smooth curve", "straight": "straight line"}
 
@@ -118,6 +118,7 @@ def detect(project, qc=None):
     r = state(project)
     th = r["thresholds"]
     qc = qc or load_original_qc(project)
+    r["detected_at"] = time.time()          # looked, even when nothing is found
     if not qc:
         r["anomalies"] = []
         return []

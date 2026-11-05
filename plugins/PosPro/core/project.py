@@ -204,6 +204,16 @@ class Project:
         os.makedirs(d, exist_ok=True)
         return d
 
+    def _shared_horizontal(self):
+        """The projected CRS PosPro offers the next stages: the one the user exports easting/northing in.
+        Otherwise whatever is already shared (CloudPro sets it too) is kept, never blanked."""
+        e = self.cfg.get("export") or {}
+        cols = (e.get("ascii_cols") or "").split(",")
+        if e.get("ascii_crs") and e.get("ascii") and ("easting" in cols or "northing" in cols):
+            return e["ascii_crs"]
+        cur = (self.dcs.shared("crs") or {}) if self.dcs is not None else {}
+        return (cur.get("horizontal") if isinstance(cur, dict) else "") or ""
+
     def sync_dcs(self):
         """Write the shared facts PosPro owns into the DCS project: raw files,
         coordinate frame, base station, antenna offsets, vehicle and the
@@ -217,7 +227,7 @@ class Project:
         facts = {
             "crs": {"frame": fr_.get("name"), "epoch": fr_.get("epoch"),
                     "height": "ellipsoidal",
-                    "horizontal": (c.get("export") or {}).get("ascii_crs") or ""},
+                    "horizontal": self._shared_horizontal()},
             "base_station": None if not b else {
                 "name": b.get("name"), "files": b.get("files"), "xyz_m": b.get("xyz"),
                 "position_source": b.get("pos_source"), "frame": b.get("frame"), "epoch": b.get("epoch"),

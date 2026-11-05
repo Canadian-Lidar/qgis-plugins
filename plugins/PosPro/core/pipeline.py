@@ -1054,12 +1054,25 @@ def _finish_review(project, ctx):
         ctx.log("info", "Trajectory Review edits applied to %d records" % n)
 
 
+def settings_sig(project):
+    """What the processed trajectory depends on: when it changes the trajectory is out of date."""
+    c = project.cfg
+    rt = c["processing"].get("mode") == "rt"
+    b = {} if rt or c["processing"].get("positioning") == "ppp" else (project.base() or {})
+    inst = {k: v for k, v in c["installation"].items() if k not in ("lever_output", "output_name", "source")}
+    data = [c["processing"], inst, c.get("vehicle"), project.rover_span(), c["rover"].get("extract_files"),
+            c.get("nav_files"), b.get("id"), base_position(b) if b else None, b.get("delta_hen"), b.get("antenna")]
+    import hashlib
+    return hashlib.sha1(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
 def run_all(project, ctx):
     """The whole processing chain. Returns the results summary."""
     t0 = time.time()
     p = project.cfg["processing"]
     summary = {"started": time.strftime("%Y-%m-%d %H:%M:%S"), "mode": p.get("mode"),
-               "positioning": p.get("positioning"), "passes": p.get("passes")}
+               "positioning": p.get("positioning"), "passes": p.get("passes"),
+               "settings_sig": settings_sig(project)}
     extract(project, ctx.sub(0.0, 0.10))
     if ctx.cancelled():
         raise engine.Cancelled()
