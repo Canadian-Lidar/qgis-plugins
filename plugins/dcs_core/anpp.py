@@ -106,3 +106,146 @@ def nav_states(payloads):
     t = t[order]
     keep = np.concatenate([[True], np.diff(t) > 0])
     return a[keep], t[keep]
+
+
+# ----------------------------------------------------------------------------- raw stream (1.5.0, API 6)
+# The Certus byte stream (.anpp files, or /ins/anpp packets joined) and the packets RemixPro converts:
+# 20 System State, 28 Raw Sensors, 60 Raw Satellite Data, 61 Raw Satellite Ephemeris, 3 Device Information.
+# Taken unchanged from the mapper (mapper/anpp.py, Certus Evo OEM Reference Manual v2.10 chapter 9), so
+# the files made from them stay byte-identical to what the mapper made.
+from binascii import crc_hqx as _crc_hqx  # noqa: E402
+import math as _math  # noqa: E402
+
+HEADER = 5
+DEVICE_INFO = 3
+SYSTEM_STATE = 20
+UNIX_TIME = 21
+RAW_SENSORS = 28
+RAW_SAT_DATA = 60
+RAW_SAT_EPHEMERIS = 61
+
+
+def build(pid, payload=b""):
+    """One ANPP packet (header + payload)."""
+    c = _crc_hqx(payload, 0xFFFF)
+    lo, hi = c & 0xFF, c >> 8
+    lrc = (-(pid + len(payload) + lo + hi)) & 0xFF
+    return bytes((lrc, pid, len(payload), lo, hi)) + payload
+
+
+def iter_packets(fileobj, block=1 << 20):
+    """Yield (packet id, payload) from a binary ANPP byte stream (anything with read(n)). Bytes that are
+    not a packet with a good header LRC and payload CRC are skipped one at a time, as the Certus tools do."""
+    buf = bytearray()
+    crc = _crc_hqx
+    while True:
+        chunk = fileobj.read(block)
+        if not chunk:
+            break
+        buf += chunk
+        n = len(buf)
+        pos = 0
+        while n - pos >= HEADER:
+            ln = buf[pos + 2]
+            lo = buf[pos + 3]
+            hi = buf[pos + 4]
+            if (buf[pos] + buf[pos + 1] + ln + lo + hi) & 0xFF:
+                pos += 1
+                continue
+            end = pos + HEADER + ln
+            if end > n:
+                break
+            payload = bytes(buf[pos + HEADER:end])
+            if crc(payload, 0xFFFF) != (lo | (hi << 8)):
+                pos += 1
+                continue
+            yield buf[pos + 1], payload
+            pos = end
+        del buf[:pos]
+
+
+_S20 = struct.Struct("<HHIIdddffffffffffffffff")
+
+
+def system_state(b):
+    """Packet 20 payload -> dict; angles in degrees, heading 0..360."""
+    (ss, fs, ut, us, lat, lon, h, vn, ve, vd, ax, ay, az, g, roll, pitch, hdg,
+     wx, wy, wz, slat, slon, sh) = _S20.unpack_from(b, 0)
+    return {
+        "system_status": ss, "filter_status": fs, "unix": ut, "micros": us, "time": ut + us * 1e-6,
+        "lat": _math.degrees(lat), "lon": _math.degrees(lon), "height": h,
+        "vn": vn, "ve": ve, "vd": vd, "speed": _math.hypot(vn, ve),
+        "roll": _math.degrees(roll), "pitch": _math.degrees(pitch), "heading": _math.degrees(hdg) % 360.0,
+        "sd_lat": slat, "sd_lon": slon, "sd_height": sh,
+        "orientation_init": bool(fs & 0x0001), "navigation_init": bool(fs & 0x0002),
+        "heading_init": bool(fs & 0x0004), "time_init": bool(fs & 0x0008), "fix": (fs >> 4) & 0x7,
+    }
+
+
+def state_time(b):
+    """Packet 20 payload -> (unix seconds, microseconds, filter status), the fast path."""
+    fs, ut, us = struct.unpack_from("<HII", b, 2)
+    return ut, us, fs
+
+
+_S28 = struct.Struct("<12f")
+
+
+def raw_sensors(b):
+    """Packet 28 payload: accel (m/s^2) x y z, gyro (rad/s) x y z, mag x y z, IMU temperature (C), pressure,
+    pressure temperature. In the vehicle frame (the Certus applies its alignment)."""
+    return _S28.unpack_from(b, 0)
+
+
+_S60H = struct.Struct("<IIiBBBB")
+_S60S = struct.Struct("<BBBHB")
+_S60F = struct.Struct("<BBddff")
+
+
+def raw_sat_data(b):
+    """Packet 60 payload (one part of an epoch) -> (unix, nanos, clock offset ns, receiver, part, parts, sats);
+    sats: [(system, prn, elevation, azimuth, [(frequency, tracking, carrier cycles, pseudorange m, doppler Hz,
+    snr)])]."""
+    ut, ns, clk, rx, pn, tot, nsat = _S60H.unpack_from(b, 0)
+    o = 16
+    sats = []
+    n = len(b)
+    for _ in range(nsat):
+        if o + 6 > n:
+            break
+        sysid, prn, el, az, nf = _S60S.unpack_from(b, o)
+        o += 6
+        freqs = []
+        for _ in range(nf):
+            if o + 26 > n:
+                break
+            freqs.append(_S60F.unpack_from(b, o))
+            o += 26
+        sats.append((sysid, prn, el, az, freqs))
+    return ut, ns, clk, rx, pn, tot, sats
+
+
+def gps_ephemeris(b):
+    """Packet 61 payload of a Keplerian (GPS-style, 132-byte) ephemeris -> dict."""
+    u = struct.unpack_from
+    return {
+        "unix": u("<I", b, 0)[0], "system": b[4], "prn": b[5],
+        "toe": u("<I", b, 6)[0], "iodc": u("<H", b, 10)[0], "iode": u("<H", b, 12)[0],
+        "af0": u("<f", b, 14)[0], "af1": u("<f", b, 18)[0], "af2": u("<f", b, 22)[0],
+        "crs": u("<f", b, 26)[0], "delta_n": u("<f", b, 30)[0], "m0": u("<d", b, 34)[0],
+        "cuc": u("<f", b, 42)[0], "e": u("<d", b, 46)[0], "cus": u("<f", b, 54)[0],
+        "sqrt_a": u("<d", b, 58)[0], "cic": u("<f", b, 66)[0], "omega0": u("<d", b, 70)[0],
+        "cis": u("<f", b, 78)[0], "i0": u("<d", b, 82)[0], "crc": u("<f", b, 90)[0],
+        "omega": u("<d", b, 94)[0], "omega_dot": u("<d", b, 102)[0],
+        "idot": u("<d", b, 110)[0], "tgd": u("<f", b, 118)[0],
+        "week": u("<H", b, 122)[0], "tx_time": u("<I", b, 124)[0],
+        "ura": u("<H", b, 128)[0], "flags": u("<H", b, 130)[0],
+    }
+
+
+def device_info(b):
+    """Packet 3 payload -> software/hardware version, device id, serial number."""
+    sw, dev, hw = struct.unpack_from("<III", b, 0)
+    s1, s2, s3 = struct.unpack_from("<III", b, 12)
+    return {"software_version": sw, "device_id": dev, "hardware_version": hw,
+            "serial": "%08X%08X%08X" % (s1, s2, s3)}

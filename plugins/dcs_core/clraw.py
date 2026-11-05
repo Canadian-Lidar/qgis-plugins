@@ -34,7 +34,9 @@ from .anpp import EULER_SD, SYS_STATE  # noqa: F401 - re-exported
 __all__ = ["MAGIC", "FORMAT_VERSIONS", "TOPIC_POINTS", "TOPIC_STATUS", "TOPIC_ANPP", "TOPIC_EVENTS", "TOPIC_QUALITY",
            "CH_POINTS", "CH_STATUS", "CH_ANPP", "CH_EVENTS", "CH_QUALITY", "TOPICS", "ClrawError",
            "calibration_rows", "parse_calibration", "ClrawFile", "Recording", "find_clraw", "group_lines",
-           "group_recordings", "file_info", "is_navigation", "split_navigation", "NAVIGATION", "DEFAULT_CAL", "DEFAULT_CALIB", "HESAI_LEN", "decode_hesai", "hesai_packet_times",
+           "group_recordings", "file_info", "is_navigation", "split_navigation", "NAVIGATION", "SONAR", "is_sonar",
+           "sonar_topics", "TOPIC_SONAR", "TOPIC_SONARVIEW", "TOPIC_SONARVIEW_OTHER", "TOPIC_MAVLINK", "TOPIC_NMEA",
+           "TOPIC_GNSS_LLH", "TOPIC_GNSS_PPK", "DEFAULT_CAL", "DEFAULT_CALIB", "HESAI_LEN", "decode_hesai", "hesai_packet_times",
            "EULER_SD", "SYS_STATE"]
 
 MAGIC = mcap.MAGIC
@@ -56,6 +58,17 @@ _FNAME = re.compile(r"^(\d+)_(\d{8})_(\d{6})_(\d{4})\.clraw$")          # before
 _FNAME_210 = re.compile(r"^(?P<prefix>.+?)_(?P<number>\d{4})\.clraw$")     # <line id or NAV prefix>_0001
 _LINE_210 = re.compile(r"_L(\d+)_\d{8}_\d{6}$")
 NAVIGATION = "navigation"
+# Marine sonar recordings (DCS Core 1.5.0): SonarView .svlog/.svlz converted by RemixPro. Kind "sonar"; the Ping
+# packets of each sonar on its own channel, the vehicle and GNSS data beside them. Not Lidar survey lines: the
+# grouping functions leave them out unless asked (sonar=True). Layout in dcs/marine-clraw.md.
+SONAR = "sonar"
+TOPIC_SONAR = "/sonar/%d/ping"                  # every Ping packet of sonar <device id>, complete (header + checksum)
+TOPIC_SONARVIEW = "/sonarview/session"          # SonarView's own JSON packets (10, 12) as recorded
+TOPIC_SONARVIEW_OTHER = "/sonarview/other"      # any other Ping packet not from a sonar of the session
+TOPIC_MAVLINK = "/vehicle/mavlink"              # Ping packet 150: a MAVLink message as JSON (mavlink2rest)
+TOPIC_NMEA = "/gnss/nmea"                       # Ping packet 109: an NMEA sentence
+TOPIC_GNSS_LLH = "/gnss/llh"                    # one line of the GNSS receiver's own solution log (Emlid .LLH)
+TOPIC_GNSS_PPK = "/gnss/ppk"                    # one line of a PPK solution (RTKLIB .pos, UTC, llh)
 
 
 class ClrawError(ValueError):
@@ -402,11 +415,29 @@ def is_navigation(path):
     return file_info(path)["kind"] == NAVIGATION
 
 
+def is_sonar(path):
+    """True for a marine sonar recording (kind "sonar", from SonarView via RemixPro): no Lidar, no Certus."""
+    return file_info(path)["kind"] == SONAR
+
+
+def sonar_topics(cf):
+    """{device id: topic} of the sonars in an open ClrawFile."""
+    out = {}
+    for t in cf.channels.values():
+        m = re.match(r"^/sonar/(\d+)/ping$", t)
+        if m:
+            out[int(m.group(1))] = t
+    return dict(sorted(out.items()))
+
+
 def split_navigation(paths):
     """(survey line files, navigation recordings) of a list of .clraw paths."""
     lines, nav = [], []
     for p in paths:
-        (nav if is_navigation(p) else lines).append(p)
+        k = file_info(p)["kind"]
+        if k == SONAR:
+            continue                    # neither a Lidar line nor a Certus navigation recording
+        (nav if k == NAVIGATION else lines).append(p)
     return lines, nav
 
 
@@ -425,7 +456,7 @@ def find_clraw(paths):
     return sorted(set(out), key=lambda x: os.path.basename(x))
 
 
-def group_lines(files, navigation=False):
+def group_lines(files, navigation=False, sonar=False):
     """Group .clraw files into survey lines {key: [ClrawFile...]} in name order.
     The key is capture id + line number so lines from different capture folders never merge.
     Navigation recordings (mapper 2.10) are left out unless navigation=True."""
@@ -434,6 +465,8 @@ def group_lines(files, navigation=False):
         cf = ClrawFile(p)
         if cf.is_navigation and not navigation:
             continue
+        if cf.metadata.get("kind") == SONAR and not sonar:
+            continue
         key = "%s:%03d" % (cf.metadata.get("capture", os.path.dirname(p)), cf.line)
         lines.setdefault(key, []).append(cf)
     for k in lines:
@@ -441,7 +474,7 @@ def group_lines(files, navigation=False):
     return dict(sorted(lines.items(), key=lambda kv: kv[1][0].name))
 
 
-def group_recordings(paths, navigation=False):
+def group_recordings(paths, navigation=False, sonar=False):
     """Group .clraw paths into recordings (survey lines) read in name order.
     Returns {(folder, line): [paths...]}, line as zero-padded text ("001"). The line comes from each file's
     metadata (capture, line), so the old NNN_YYYYMMDD_HHMMSS_0001 and the 2.10 <line id>_0001 names both
@@ -454,6 +487,8 @@ def group_recordings(paths, navigation=False):
             continue
         info = file_info(p)
         if info["kind"] == NAVIGATION and not navigation:
+            continue
+        if info["kind"] == SONAR and not sonar:
             continue
         folder = os.path.dirname(os.path.abspath(p))
         key = (folder, "%0*d" % (max(1, info["digits"]), info["line"]) if info["kind"] != NAVIGATION

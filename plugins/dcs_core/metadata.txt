@@ -2,11 +2,11 @@
 name=DCS Core
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
-description=Shared base of the Canadian Lidar Data Collection Systems plugins (PosPro, AlignPro, CloudPro): one project per job, handover files between stages, stale-result detection, shared menu and look. Menu: Plugins > CLAM > Data Systems.
-version=1.4.0
+description=Shared base of the Canadian Lidar Data Collection Systems plugins (PosPro, AlignPro, CloudPro, RemixPro): one project per job, handover files between stages, stale-result detection, shared menu and look. Menu: Plugins > CLAM > Data Systems.
+version=1.5.0
 author=Canadian Lidar
 email=seantobrien@gmail.com
-about=Install this before PosPro, AlignPro and CloudPro. It keeps one project per job in Processing/<Name>/ beside the captures, records what each stage published and what it was built from, flags results that are out of date when an earlier stage is re-run, and gives every plugin the same menu, look, chain bar and readers for the mapper's .clraw captures, SBET trajectories and LAS. It has no window of its own.
+about=Install this before PosPro, AlignPro, CloudPro and RemixPro. It keeps one project per job in Processing/<Name>/ beside the captures, records what each stage published and what it was built from, flags results that are out of date when an earlier stage is re-run, and gives every plugin the same menu, look, chain bar and readers for the mapper's .clraw captures, SBET trajectories and LAS. It has no window of its own.
 tracker=
 repository=
 category=Analysis
@@ -15,7 +15,8 @@ experimental=False
 deprecated=False
 hasProcessingProvider=no
 tags=canadian lidar,mobile mapping,dcs
-changelog=1.4.0 Mapper 2.10 captures (API 5): lines are grouped from each file's metadata (capture, line), so the new <Project>_L001_..._0001.clraw names, files split over several parts and older captures grouped into lines/ all read correctly, in recording order; navigation recordings (nav/, kind navigation) are never taken as survey lines; DcsProject.survey_clraw_files finds a job's survey lines (the captures' folders, else the job folder) also when the captures are navigation recordings; choosing a folder inside a mapper project (lines/, nav/, a line) makes the mapper project's folder the job folder, named after it.
+changelog=1.5.0 Reads the raw Certus stream for RemixPro (API 6): .anpp files and the /ins/anpp packets of a .clraw, with the raw IMU, raw satellite observations, ephemerides and device information decoded exactly as the mapper decoded them. Marine sonar recordings: reads SonarView .svlog / .svlz (Cerulean Ping packets) and .clraw of kind sonar made by RemixPro; PosPro, AlignPro and CloudPro leave sonar recordings out of their line lists. Nothing else changes for PosPro, AlignPro and CloudPro.
+    1.4.0 Mapper 2.10 captures (API 5): lines are grouped from each file's metadata (capture, line), so the new <Project>_L001_..._0001.clraw names, files split over several parts and older captures grouped into lines/ all read correctly, in recording order; navigation recordings (nav/, kind navigation) are never taken as survey lines; DcsProject.survey_clraw_files finds a job's survey lines (the captures' folders, else the job folder) also when the captures are navigation recordings; choosing a folder inside a mapper project (lines/, nav/, a line) makes the mapper project's folder the job folder, named after it.
     1.3.0 The shared header bar for every DCS plugin (API 4): logo, menu group and plugin name, workflow boxes beside them (on a second row when the window is narrow), project box, Window and user guide buttons in the same order everywhere. Window title bars show the plugin name as written. Disabled input fields look disabled (dimmed text on the panel colour).
     1.2.0 The standard plugin window for every DCS plugin (API 3): floating by default, docked only when the user chooses, remembered per plugin, Reset window; safe unloading on QGIS 4. Neutral graphite theme (window #26292D, panels #2E3237, views #2A2D31) so points and coloured classes stand out; status and solution colours unchanged.
     1.1.0 Shared readers for every plugin (API 2): .clraw recordings, Lidar and INS packet decoding, SBET/SMRMSG and LAS, with the Zstandard decoder bundled, so AlignPro and CloudPro use one copy. SBET reading handles a GPS week rollover inside the file. A missing Zstandard decoder is reported instead of every chunk counting as damaged. Plugins can read the menu titles (menu.TOP, menu.GROUP) and use widgets.align_flags.

@@ -1,0 +1,691 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BeamworX>
+    <Format>SurveyConfig</Format>
+    <Version>1.0</Version>
+    <GeodeticSettings ID="0" Name="Geodetic Settings">
+        <Mode>PROJ4</Mode>
+        <Definition>+bwxdescr=NAD83(CSRS) New Brunswick Oblique Stereographic (EPSG:2953) - HT2(2010-v70) +ellps=GRS80 +geoid_crs=horizontal_crs +geoidgrids=HT2_2010v70.gtx +k_0=0.9999120000 +lat_0=46.500000000000 +lon_0=-66.500000000000 +no_defs +proj=sterea +towgs84=0,0,0 +type=crs +x_0=2500000.0000 +y_0=7500000.0000</Definition>
+    </GeodeticSettings>
+    <Vehicles>
+        <Vehicle>
+            <ID>1</ID>
+            <Name>Hacked Lumos</Name>
+            <Type>Vessel</Type>
+            <Offsets>
+                <Offset ID="1" Name="COG">
+                    <VehicleID>1</VehicleID>
+                    <Location Forward="0.000" Starboard="0.000" Down="0.000"/>
+                </Offset>
+                <Offset ID="2" Name="Primary GPS">
+                    <VehicleID>1</VehicleID>
+                    <Location Forward="-0.070" Starboard="-0.485" Down="-0.090"/>
+                </Offset>
+                <Offset ID="3" Name="Lidar">
+                    <VehicleID>1</VehicleID>
+                    <Location Forward="0.000" Starboard="0.000" Down="0.000"/>
+                </Offset>
+                <Offset ID="4" Name="Secondary GPS">
+                    <VehicleID>1</VehicleID>
+                    <Location Forward="0.000" Starboard="0.970" Down="0.000"/>
+                </Offset>
+            </Offsets>
+            <Systems>
+                <System ID="3" Name="Spatial Pos" State="1" Type="Position">
+                    <Latency>0.0000</Latency>
+                    <DeviceID>2</DeviceID>
+                    <SlotID>0</SlotID>
+                    <Flags>0</Flags>
+                    <Properties>
+                        <Observations>
+                            <Observation ID="30001" Name="X">
+                                <Enabled>1</Enabled>
+                                <SystemID>3</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>PositionX</ObsType>
+                                <UnitCode>Degrees</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="30002" Name="Y">
+                                <Enabled>1</Enabled>
+                                <SystemID>3</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>PositionY</ObsType>
+                                <UnitCode>Degrees</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="30003" Name="Z">
+                                <Enabled>1</Enabled>
+                                <SystemID>3</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>PositionZ</ObsType>
+                                <UnitCode>Unknown</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="30004" Name="QI">
+                                <Enabled>1</Enabled>
+                                <SystemID>3</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>PositionMode</ObsType>
+                                <UnitCode>Unknown</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="30005" Name="DiffAge">
+                                <Enabled>0</Enabled>
+                                <SystemID>3</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>PositionDiffAge</ObsType>
+                                <UnitCode>TSeconds</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="30006" Name="ErrorX">
+                                <Enabled>1</Enabled>
+                                <SystemID>3</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>PositionXError</ObsType>
+                                <UnitCode>Meters</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="30007" Name="ErrorY">
+                                <Enabled>1</Enabled>
+                                <SystemID>3</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>PositionYError</ObsType>
+                                <UnitCode>Meters</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="30008" Name="ErrorZ">
+                                <Enabled>1</Enabled>
+                                <SystemID>3</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>PositionZError</ObsType>
+                                <UnitCode>Meters</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                        </Observations>
+                    </Properties>
+                </System>
+                <System ID="4" Name="Spatial Time" State="1" Type="Time">
+                    <Latency>0.0000</Latency>
+                    <DeviceID>2</DeviceID>
+                    <SlotID>0</SlotID>
+                    <Flags>0</Flags>
+                    <Properties>
+                        <Observations>
+                            <Observation ID="40001" Name="Counter">
+                                <Enabled>1</Enabled>
+                                <SystemID>4</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>TimeSecSinceStart</ObsType>
+                                <UnitCode>Unknown</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="40002" Name="Info">
+                                <Enabled>1</Enabled>
+                                <SystemID>4</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>TimeInfo</ObsType>
+                                <UnitCode>Unknown</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                        </Observations>
+                    </Properties>
+                </System>
+                <System ID="5" Name="Spatial Mot" State="1" Type="Motion">
+                    <Latency>0.0000</Latency>
+                    <DeviceID>2</DeviceID>
+                    <SlotID>0</SlotID>
+                    <Flags>0</Flags>
+                    <Properties>
+                        <MisAlignment>0.0000</MisAlignment>
+                        <Observations>
+                            <Observation ID="50001" Name="Pitch">
+                                <Enabled>1</Enabled>
+                                <SystemID>5</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>Pitch</ObsType>
+                                <UnitCode>Degrees</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="50002" Name="Roll">
+                                <Enabled>1</Enabled>
+                                <SystemID>5</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>Roll</ObsType>
+                                <UnitCode>Degrees</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="50003" Name="Heading">
+                                <Enabled>1</Enabled>
+                                <SystemID>5</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>Heading</ObsType>
+                                <UnitCode>Degrees</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="50004" Name="Heave">
+                                <Enabled>1</Enabled>
+                                <SystemID>5</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>Heave</ObsType>
+                                <UnitCode>Meters</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="50005" Name="PitchError">
+                                <Enabled>1</Enabled>
+                                <SystemID>5</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>PitchError</ObsType>
+                                <UnitCode>Degrees</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="50006" Name="RollError">
+                                <Enabled>1</Enabled>
+                                <SystemID>5</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>RollError</ObsType>
+                                <UnitCode>Degrees</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="50007" Name="HeadingError">
+                                <Enabled>1</Enabled>
+                                <SystemID>5</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>HeadingError</ObsType>
+                                <UnitCode>Degrees</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="50008" Name="HeaveError">
+                                <Enabled>1</Enabled>
+                                <SystemID>5</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>HeaveError</ObsType>
+                                <UnitCode>Meters</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                        </Observations>
+                    </Properties>
+                </System>
+                <System ID="6" Name="Spatial Status" State="1" Type="Auxiliary">
+                    <Latency>0.0000</Latency>
+                    <DeviceID>2</DeviceID>
+                    <SlotID>0</SlotID>
+                    <Flags>0</Flags>
+                    <Properties>
+                        <Observations>
+                            <Observation ID="60001" Name="System Status">
+                                <Enabled>1</Enabled>
+                                <SystemID>6</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>Generic1</ObsType>
+                                <UnitCode>Unknown</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="60002" Name="IMU Temperature">
+                                <Enabled>1</Enabled>
+                                <SystemID>6</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>Generic2</ObsType>
+                                <UnitCode>Unknown</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="60003" Name="Pressure">
+                                <Enabled>1</Enabled>
+                                <SystemID>6</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>Generic3</ObsType>
+                                <UnitCode>Unknown</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="60004" Name="Pressure Temperature">
+                                <Enabled>1</Enabled>
+                                <SystemID>6</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>Generic4</ObsType>
+                                <UnitCode>Unknown</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                        </Observations>
+                    </Properties>
+                </System>
+                <System ID="7" Name="Hesai Laser Scanner" State="1" Type="Laser">
+                    <Latency>0.0000</Latency>
+                    <DeviceID>3</DeviceID>
+                    <SlotID>0</SlotID>
+                    <Flags>0</Flags>
+                    <Properties>
+                        <RollOffset>90.0000</RollOffset>
+                        <PitchOffset>45.0000</PitchOffset>
+                        <HeadingOffset>0.0000</HeadingOffset>
+                        <TransducerSetup ID="70001" Name="Laser">
+                            <Configuration>Combined-TxRx</Configuration>
+                            <SlotID>0</SlotID>
+                            <Mounting-Tx OffsetID="3" Roll="90.000000" Pitch="45.000000" Heading="0.000000"/>
+                            <Mounting-Rx OffsetID="3" Roll="90.000000" Pitch="45.000000" Heading="0.000000"/>
+                        </TransducerSetup>
+                        <LaserBeamCorrections CorrectionEnabled="false" Mode="0"/>
+                    </Properties>
+                </System>
+                <System ID="8" Name="Hesai GPS Status" State="1" Type="Auxiliary">
+                    <Latency>0.0000</Latency>
+                    <DeviceID>3</DeviceID>
+                    <SlotID>0</SlotID>
+                    <Flags>0</Flags>
+                    <Properties>
+                        <Observations>
+                            <Observation ID="80001" Name="PPS-Locked">
+                                <Enabled>1</Enabled>
+                                <SystemID>8</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>Generic1</ObsType>
+                                <UnitCode>Unknown</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                            <Observation ID="80002" Name="GPS-Filled">
+                                <Enabled>1</Enabled>
+                                <SystemID>8</SystemID>
+                                <SlotID>0</SlotID>
+                                <ObsType>Generic2</ObsType>
+                                <UnitCode>Unknown</UnitCode>
+                                <OffsetID>1</OffsetID>
+                                <OffsetID2>0</OffsetID2>
+                                <Flags>0</Flags>
+                                <CMinusO>0.0000000000</CMinusO>
+                                <ScaleFactor>1.0000000000</ScaleFactor>
+                                <Delay>0.0000</Delay>
+                            </Observation>
+                        </Observations>
+                    </Properties>
+                </System>
+            </Systems>
+            <VehicleShape>
+                <VehicleShapeID>0</VehicleShapeID>
+                <VehicleShapeName>shape</VehicleShapeName>
+                <VehicleShapeUnits>100</VehicleShapeUnits>
+                <ShapeLines>
+                    <ShapeLine LineColor="#ff000000" LineThickness="2" FillColor="#64fd8331" ViewPoint="1" UsedForDredgeModel="0" ShapeGroup="Default">
+                        <ShapeLineVertices>
+                            <ShapeLineVertex Forward="-4.980" Starboard="-2.000" Down="0.000"/>
+                            <ShapeLineVertex Forward="3.320" Starboard="-2.000" Down="0.000"/>
+                            <ShapeLineVertex Forward="4.980" Starboard="0.000" Down="0.000"/>
+                            <ShapeLineVertex Forward="3.320" Starboard="2.000" Down="0.000"/>
+                            <ShapeLineVertex Forward="-4.980" Starboard="2.000" Down="0.000"/>
+                            <ShapeLineVertex Forward="-4.980" Starboard="-2.000" Down="0.000"/>
+                        </ShapeLineVertices>
+                    </ShapeLine>
+                    <ShapeLine LineColor="#ff000000" LineThickness="2" FillColor="#64fd8331" ViewPoint="2" UsedForDredgeModel="0" ShapeGroup="Default">
+                        <ShapeLineVertices>
+                            <ShapeLineVertex Forward="0.000" Starboard="-2.000" Down="0.469"/>
+                            <ShapeLineVertex Forward="0.000" Starboard="-2.000" Down="-0.670"/>
+                            <ShapeLineVertex Forward="0.000" Starboard="-1.500" Down="-0.670"/>
+                            <ShapeLineVertex Forward="0.000" Starboard="-1.500" Down="-1.340"/>
+                            <ShapeLineVertex Forward="0.000" Starboard="1.500" Down="-1.340"/>
+                            <ShapeLineVertex Forward="0.000" Starboard="1.500" Down="-0.670"/>
+                            <ShapeLineVertex Forward="0.000" Starboard="2.000" Down="-0.670"/>
+                            <ShapeLineVertex Forward="0.000" Starboard="2.000" Down="0.469"/>
+                            <ShapeLineVertex Forward="0.000" Starboard="0.000" Down="0.670"/>
+                            <ShapeLineVertex Forward="0.000" Starboard="-2.000" Down="0.469"/>
+                        </ShapeLineVertices>
+                    </ShapeLine>
+                    <ShapeLine LineColor="#ff000000" LineThickness="2" FillColor="#64fd8331" ViewPoint="4" UsedForDredgeModel="0" ShapeGroup="Default">
+                        <ShapeLineVertices>
+                            <ShapeLineVertex Forward="-4.980" Starboard="0.000" Down="0.670"/>
+                            <ShapeLineVertex Forward="-4.980" Starboard="0.000" Down="-0.670"/>
+                            <ShapeLineVertex Forward="-2.490" Starboard="0.000" Down="-0.670"/>
+                            <ShapeLineVertex Forward="-2.324" Starboard="0.000" Down="-1.340"/>
+                            <ShapeLineVertex Forward="1.245" Starboard="0.000" Down="-1.340"/>
+                            <ShapeLineVertex Forward="1.909" Starboard="0.000" Down="-0.670"/>
+                            <ShapeLineVertex Forward="4.980" Starboard="0.000" Down="-0.670"/>
+                            <ShapeLineVertex Forward="3.320" Starboard="0.000" Down="0.670"/>
+                            <ShapeLineVertex Forward="-4.980" Starboard="0.000" Down="0.670"/>
+                        </ShapeLineVertices>
+                    </ShapeLine>
+                </ShapeLines>
+            </VehicleShape>
+            <VehicleShape3D>
+                <Mode>1</Mode>
+                <FileName>bwxdefaultlinktool.obj</FileName>
+                <Translate X="0.000000" Y="0.000000" Z="0.000000"/>
+                <Rotate X="0.000000" Y="0.000000" Z="0.000000"/>
+                <Scale X="1.000000" Y="1.000000" Z="1.000000"/>
+            </VehicleShape3D>
+        </Vehicle>
+    </Vehicles>
+    <Devices>
+        <Device Version="1" ID="2" Name="Advanced Navigation Certus Evo OEM" State="1">
+            <DllName>NavAQDrv_AdNavSpatial.dll</DllName>
+            <DllVersion></DllVersion>
+            <DecoderID>130</DecoderID>
+            <PortProperties>
+                <PortName></PortName>
+                <PortID>2</PortID>
+                <ConnectionType>TcpClient</ConnectionType>
+                <Network-PortNumber>16718</Network-PortNumber>
+                <Network-OutputPortOffset>0</Network-OutputPortOffset>
+                <Network-Flags>0</Network-Flags>
+                <Network-IP>10.1.0.10</Network-IP>
+            </PortProperties>
+            <DriverSettings>
+                <FramingMethod>0</FramingMethod>
+                <TimeTagMethod>2</TimeTagMethod>
+                <UseCheckSum>2</UseCheckSum>
+                <RecordAllRawData>true</RecordAllRawData>
+                <DetailedSettings/>
+            </DriverSettings>
+        </Device>
+        <Device Version="1" ID="3" Name="Hesai Laser Scanner" State="1">
+            <DllName>NavAQDrv_Hesai.dll</DllName>
+            <DllVersion></DllVersion>
+            <DecoderID>154</DecoderID>
+            <PortProperties>
+                <PortName></PortName>
+                <PortID>3</PortID>
+                <ConnectionType>UdpClient</ConnectionType>
+                <Network-PortNumber>2368</Network-PortNumber>
+                <Network-OutputPortOffset>0</Network-OutputPortOffset>
+                <Network-Flags>0</Network-Flags>
+                <Network-IP>10.1.0.100</Network-IP>
+            </PortProperties>
+            <DriverSettings>
+                <FramingMethod>0</FramingMethod>
+                <TimeTagMethod>2</TimeTagMethod>
+                <UseCheckSum>1</UseCheckSum>
+                <RecordAllRawData>true</RecordAllRawData>
+                <DetailedSettings/>
+            </DriverSettings>
+        </Device>
+    </Devices>
+    <AlertSetup Version="1" ID="0" Name="AlertSetup" BeepOnAlert="0">
+        <Alerts>
+            <Alert ID="1" Name="Spatial Pos" Type="1" DataID="3" Active="1" UseLowerLimit="1" LowerLimit="0.000000" UpperLimit="2.000000" UseUpperLimit="1">
+                <Details/>
+            </Alert>
+            <Alert ID="2" Name="Spatial Time" Type="1" DataID="4" Active="1" UseLowerLimit="1" LowerLimit="0.000000" UpperLimit="2.000000" UseUpperLimit="1">
+                <Details/>
+            </Alert>
+            <Alert ID="3" Name="Spatial Mot" Type="1" DataID="5" Active="1" UseLowerLimit="1" LowerLimit="0.000000" UpperLimit="2.000000" UseUpperLimit="1">
+                <Details/>
+            </Alert>
+            <Alert ID="4" Name="Spatial Status" Type="1" DataID="6" Active="1" UseLowerLimit="1" LowerLimit="0.000000" UpperLimit="2.000000" UseUpperLimit="1">
+                <Details/>
+            </Alert>
+            <Alert ID="5" Name="Hesai Laser Scanner" Type="1" DataID="7" Active="1" UseLowerLimit="1" LowerLimit="0.000000" UpperLimit="2.000000" UseUpperLimit="1">
+                <Details/>
+            </Alert>
+            <Alert ID="6" Name="Hesai GPS Status" Type="1" DataID="8" Active="1" UseLowerLimit="1" LowerLimit="0.000000" UpperLimit="2.000000" UseUpperLimit="1">
+                <Details/>
+            </Alert>
+            <Alert ID="7" Name="Spatial Pos" Type="2" DataID="3" Active="1" UseLowerLimit="1" LowerLimit="6.000000" UpperLimit="7.000000" UseUpperLimit="1">
+                <Details/>
+            </Alert>
+            <Alert ID="8" Name="Hacked Lumos" Type="4" DataID="1" Active="1" UseLowerLimit="1" LowerLimit="0.000000" UpperLimit="3.000000" UseUpperLimit="1">
+                <Details/>
+            </Alert>
+        </Alerts>
+    </AlertSetup>
+    <ComputationSettingsCollection>
+        <ComputationSettings ID="1" Name="Computation - Hacked Lumos" Triggering="0" VehicleID="1">
+            <StartTime>0.000</StartTime>
+            <PositionSettings ID="0" Name="">
+                <PositionSystemID>3</PositionSystemID>
+                <PositionType>1</PositionType>
+                <PositionRefID></PositionRefID>
+                <PitchRollSystemID>5</PitchRollSystemID>
+                <HeadingSystemID>5</HeadingSystemID>
+                <CMGBufferLength>3.000</CMGBufferLength>
+                <GpsTideBufferLength>30.000</GpsTideBufferLength>
+            </PositionSettings>
+            <HeightSettings ID="0" Name="">
+                <HeightMode>PositioningHeaveInterFill</HeightMode>
+                <HeaveObsID>50004</HeaveObsID>
+                <TideObsID>0</TideObsID>
+                <DraftObsID>0</DraftObsID>
+                <DraftMode>Manual</DraftMode>
+                <ManualDraft>0.000000</ManualDraft>
+                <TideFilterEnabled>1</TideFilterEnabled>
+                <TideFilterPeriod>30.000000</TideFilterPeriod>
+                <DraftFilterEnabled>1</DraftFilterEnabled>
+                <DraftFilterPeriod>20.000000</DraftFilterPeriod>
+            </HeightSettings>
+            <PosQualitySettings ID="0" Name="">
+                <OverallEnabled>false</OverallEnabled>
+                <CheckErrorXY>false</CheckErrorXY>
+                <MaxErrorXY>0.100</MaxErrorXY>
+                <CheckErrorZ>false</CheckErrorZ>
+                <MaxErrorZ>0.050</MaxErrorZ>
+                <CheckQI>true</CheckQI>
+                <QISet>6-7</QISet>
+            </PosQualitySettings>
+            <KalmanFilterSettings ID="0" Name="KalmanFilter" Active="false">
+                <FilterType>ConstantVelocity</FilterType>
+                <FilterStrength>50</FilterStrength>
+                <AllowOnlyAcceptedPos>true</AllowOnlyAcceptedPos>
+                <IncludeHeading>false</IncludeHeading>
+                <IncludeGrondCourse>false</IncludeGrondCourse>
+                <IncludeGroundSpeed>false</IncludeGroundSpeed>
+                <StdDevPosHor>0.50000</StdDevPosHor>
+                <StdDevHeading>1.00000</StdDevHeading>
+                <StdDevGroundCourse>0.10000</StdDevGroundCourse>
+                <StdDevGroundSpeed>0.10000</StdDevGroundSpeed>
+                <OverruleStdDevPosHor>true</OverruleStdDevPosHor>
+                <OverruleStdDevHeading>true</OverruleStdDevHeading>
+                <OverruleStdDevGroundCourse>true</OverruleStdDevGroundCourse>
+                <OverruleStdDevGroundSpeed>true</OverruleStdDevGroundSpeed>
+                <SpeedInputType>1</SpeedInputType>
+                <GroundCourseObsID>0</GroundCourseObsID>
+                <GroundSpeedObsID>0</GroundSpeedObsID>
+            </KalmanFilterSettings>
+            <VehicleLinkSettings ID="0" Name="Vehicle Link" State="1">
+                <StartTime>0.000</StartTime>
+                <FromLocationID>0</FromLocationID>
+                <ToLocationID>0</ToLocationID>
+                <MountingPitch>0.000</MountingPitch>
+                <MountingRoll>0.000</MountingRoll>
+                <MountingHeading>0.000</MountingHeading>
+            </VehicleLinkSettings>
+        </ComputationSettings>
+    </ComputationSettingsCollection>
+    <ESProcessingSettingsCollection>
+        <EsProcessingSettings ID="7" Name="">
+            <SvpUsage>SVFromEchoSounder</SvpUsage>
+            <BeamAngleCorrection>NotUsed</BeamAngleCorrection>
+            <LaunchAngleCalculator>1</LaunchAngleCalculator>
+            <PingReduction>
+                <PingSkipPercentage>90</PingSkipPercentage>
+            </PingReduction>
+            <Blocking>
+                <Depth Enabled="false" Min="0.100" Max="100.000"/>
+                <AbsHeight Enabled="false" Min="-100.000" Max="100.000"/>
+                <Range Enabled="true" Min="1.000" Max="200.000"/>
+                <HorRange Enabled="false" Min="-100.000" Max="100.000"/>
+                <Sector Enabled="false" Min="-70.000" Max="70.000"/>
+                <Intensity Enabled="false" Min="0.000" Max="9999.000"/>
+                <Quality Enabled="false" Min="0.000" Max="999.000"/>
+                <TxFrequency Enabled="false" Min="290000.000" Max="310000.000"/>
+                <UseExcludedBeams>false</UseExcludedBeams>
+                <ExcludedBeams></ExcludedBeams>
+                <UseExcludedClasses>false</UseExcludedClasses>
+                <ExcludedClasses></ExcludedClasses>
+                <BlockPosInvalid>true</BlockPosInvalid>
+                <BlockRawInvalid>true</BlockRawInvalid>
+                <BlockZeroBeams>true</BlockZeroBeams>
+            </Blocking>
+            <TpuBlocking>
+                <BlockOnTHU>false</BlockOnTHU>
+                <BlockOnTVU>false</BlockOnTVU>
+                <TpuBlockMode>0</TpuBlockMode>
+                <MaxTHU>0.100000</MaxTHU>
+                <MaxTVU>0.050000</MaxTVU>
+                <SurveyStandard>IHO Special Order</SurveyStandard>
+            </TpuBlocking>
+            <SssProcSettings>
+                <VirtualFootprintCount>250</VirtualFootprintCount>
+                <AltitudeObsID>0</AltitudeObsID>
+                <GainMethod>0</GainMethod>
+                <ApplyPitch>true</ApplyPitch>
+                <ApplyRoll>false</ApplyRoll>
+            </SssProcSettings>
+            <MagProcSettings>
+                <VirtualFootprintCount>100</VirtualFootprintCount>
+                <ProcMode>1</ProcMode>
+                <AltitudeESSystem>0</AltitudeESSystem>
+                <Width>20</Width>
+            </MagProcSettings>
+        </EsProcessingSettings>
+    </ESProcessingSettingsCollection>
+    <DredgeSettingsCollection/>
+    <ObjectDetectionSettingsCollection/>
+    <SoundVelocityProfileCollection/>
+    <ClockSettings ID="0" Name="Clock Settings">
+        <SyncMode>1</SyncMode>
+        <StartTime>0.000</StartTime>
+        <SyncSystemID>4</SyncSystemID>
+        <NTPServerName>time.windows.com</NTPServerName>
+        <AdjustInterval>10</AdjustInterval>
+        <AdjustWindowsInterval>0</AdjustWindowsInterval>
+    </ClockSettings>
+    <PressureToDraftSettings ID="0" Name="Pressure To Draf">
+        <StartTime>0.000</StartTime>
+        <ComputationID>0</ComputationID>
+        <ManualRefPressure>1.0130</ManualRefPressure>
+        <ManualRefPressureUnit>500</ManualRefPressureUnit>
+        <RefPressureObsID>0</RefPressureObsID>
+        <CalculationMode>1</CalculationMode>
+        <ManualDensity>1030.0000</ManualDensity>
+        <ManualTemperature>15.0000</ManualTemperature>
+        <ManualSalinity>35.0000</ManualSalinity>
+    </PressureToDraftSettings>
+    <TpuSetup ID="0" Name="TPU Calculation" CalcMode="3"/>
+    <AnchorHandlingSetup ID="0" Name="Anchor Handling" State="0">
+        <General>
+            <SaveInterval>30</SaveInterval>
+        </General>
+        <Anchors/>
+        <Tugs/>
+    </AnchorHandlingSetup>
+    <AutoSvpSettings ID="0" Name="Auto SVP Loading" State="0">
+        <LoadMode>1</LoadMode>
+        <MonitorFolder></MonitorFolder>
+        <PositionMode>2</PositionMode>
+        <FileNameWildcard>*.svp</FileNameWildcard>
+        <ValidateInDialog>true</ValidateInDialog>
+        <NotifyAfterLoad>false</NotifyAfterLoad>
+        <ForceLoggingSplit>false</ForceLoggingSplit>
+        <AddGeoLocator>true</AddGeoLocator>
+        <GLPrefix>SVP_</GLPrefix>
+    </AutoSvpSettings>
+</BeamworX>

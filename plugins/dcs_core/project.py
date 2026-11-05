@@ -227,6 +227,20 @@ class DcsProject:
             lines = clraw.split_navigation(walk([self.job_folder]))[0]
         return sorted(set(lines), key=lambda x: os.path.basename(x))
 
+    def sonar_clraw_files(self):
+        """The job's marine sonar recordings (.clraw of kind "sonar", 1.5.0), in recording order: in the captures'
+        folders, else the job folder; never under Processing."""
+        from . import clraw
+        roots = sorted({os.path.dirname(f) for f in self.capture_files()}) or [self.job_folder]
+        found = []
+        for r in roots:
+            for root, dirs, fs in os.walk(r):
+                dirs[:] = [d for d in dirs if d.lower() != "processing"]
+                found += [os.path.join(root, f) for f in fs if f.lower().endswith(".clraw")]
+        found = [f for f in sorted(set(found)) if clraw.is_sonar(f)]
+        groups = clraw.group_recordings(found, sonar=True)
+        return [p for ps in groups.values() for p in ps]
+
     def missing_captures(self):
         return [f for f in self.capture_files() if not os.path.exists(f)]
 
