@@ -14,6 +14,7 @@ figure img[src="fig/review_log.png"]{max-width:72%}
 figure img[src="fig/installation.png"]{max-height:112mm}
 figure img[src="fig/processing.png"]{max-height:105mm}
 figure img[src="fig/base.png"],figure img[src="fig/window.png"]{max-height:95mm}
+figure img[src="fig/editor_found.png"],figure img[src="fig/editor_fixed.png"],figure img[src="fig/editor_fix.png"]{max-height:100mm}
 figure img[src="fig/review_found.png"],figure img[src="fig/review.png"],figure img[src="fig/quality.png"],
 figure img[src="fig/export.png"]{max-height:88mm}
 figure img[src="fig/calibration.png"]{max-height:62mm}
@@ -65,6 +66,8 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <h2>What's new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>1.7.0</b></td><td><b>Trajectory editor</b>: the trajectory in plan and in a height profile side by side, linked both ways &ndash; hover or click in one and the other shows the same moment, select bad points in either (rectangle, lasso, polygon, time range) and fix them there. <span class="ui">Interpolate</span> now works in every processing mode, as a <i>smooth curve</i> (follows bends) or a <i>straight line</i>, horizontally and/or vertically, also at the start or end of the trajectory. New decision <span class="ui">Reject</span> (bad, to fix later). See <i>Trajectory Review</i>.</td></tr>
+<tr><td><b>1.6.3</b></td><td>When DCS Core is updated while QGIS is running, PosPro says to restart QGIS instead of asking for an update.</td></tr>
 <tr><td><b>1.6.2</b></td><td>Installation: <span class="ui">IMU mounting correction</span> &ndash; the pitch and yaw of the vehicle against the IMU, as a start for the estimate or held fixed, and <span class="ui">Use the values from the last processing</span>. Trajectory Review: a <span class="ui">Show</span> filter and sorting by any column.</td></tr>
 <tr><td><b>1.6.1</b></td><td>Navigation files next to the base observations, and files you add, are checked orbit by orbit against the Certus's own orbits and the IGS broadcast orbits before processing; orbits that disagree are left out and a warning names the file and the satellites (see <i>Data</i>). Processing stops with a clear error when the solution runs away (σ above 1&nbsp;km) instead of handing over an unusable trajectory. Trajectory Review: <span class="ui">Remove from list</span> and <span class="ui">Clear hand selections</span>; one drawing on the map adds one window (or a few), not one per piece; hand selections from before are taken off the list when you process again, and the anomalies are found again on the new trajectory with your limits.</td></tr>
 <tr><td><b>1.6.0</b></td><td>Guided steps: a <span class="ui">‹ Back</span> / <span class="ui">Next ›</span> bar under the pages says whether each step is done and what to press, and <span class="ui">Continue in AlignPro ›</span> on the last step once the trajectory is published (see <i>The PosPro window</i>). The version number is shown after the plugin name in the header. Fix (DCS Core 1.5.1): QGIS 4 on Windows no longer closes when you click in a floating window. Needs DCS Core 1.6.0.</td></tr>
@@ -294,7 +297,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <p>Wheel to zoom, drag to pan, double-click (or <span class="ui">Whole drive</span>) for the whole drive. Hover for the values at a time. A click marks the time with an orange line and shows that place on the map with an orange circle. With <span class="ui">Link zoom</span> on, all tabs follow the same time range. Under every plot a strip shows the solution type in the map colours, and GNSS gaps (INS only) are shaded violet.</p>
 
 <h1><span class="num">{N}</span>Step 6 – Trajectory Review</h1>
-<p>Trajectory Review finds where the trajectory misses your limits, lets you look at each place on the map and in the plots, and records what you decide for each. Decisions are kept with the project and carried to AlignPro and CloudPro.</p>
+<p>Trajectory Review finds where the trajectory misses your limits, lets you look at each place in the Trajectory editor, on the map and in the plots, and records what you decide for each. Decisions are kept with the project and carried to AlignPro and CloudPro.</p>
 <figure><img src="fig/review_found.png"><figcaption><b>Figure {N}.1</b> Anomalies found on a real-time trajectory with the horizontal σ limit set to 0.015&nbsp;m. Both are still open.</figcaption></figure>
 
 <h2>Limits</h2>
@@ -321,22 +324,50 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <p><span class="ui">Show</span> narrows the list to the open windows, the ones found by the limits (A), the hand selections (S) or the decided ones; click a column heading to sort by it (again to reverse) &ndash; for example by <i>Worst</i> to look at the largest first. To get rid of old hand selections: <span class="ui">Show</span> &rsaquo; <i>Selected by hand</i>, select them (Ctrl+A) and <span class="ui">Remove from list</span>, or <span class="ui">Clear hand selections</span>.</p>
 <p>The list shows the window (<b>A</b> found, <b>S</b> selected by hand), what found it, the start (UTC), the duration, the worst value and the decision (<i>open</i> in red until you decide). The windows are drawn on the map in the layer <i>Review windows</i>: red open, blue GNSS excluded, amber poor, violet interpolated, mint accepted. Double-click a row, or <span class="ui">Zoom to</span>, to see it on the map and in the plots.</p>
 
+<h2>The Trajectory editor</h2>
+<p><span class="ui">Open Trajectory editor</span> (next to <span class="ui">Find anomalies</span>) opens the processed trajectory in its own window: the <b>plan view</b> on top, the <b>height profile</b> (height against time) below, and on the right the <b>sections</b> of the job and the <b>review list</b>. Everything you decide here is the same decision as on the Review page, so both always agree.</p>
+<figure><img src="fig/editor_found.png"><figcaption><b>Figure {N}.2</b> The Trajectory editor on an anomaly: the window chosen in the review list is selected (yellow) in the plan and in the profile, where the height as processed (red) jumps about. The band under the profile shows the solution type (mint fixed, blue float).</figcaption></figure>
+<p><b>The views are linked.</b> Move the mouse over the plan and the profile shows a line at that moment with its height; move it over the profile and a ring marks the same place in the plan. Click a point in either and it is marked in both. Zoom or pan the plan (wheel, drag) and the profile shows the time of what is in view; zoom the profile and the plan follows when that stretch is off screen. The line under the views gives the time, position, height, solution type and review state under the mouse.</p>
+<table>
+<tr><th>Tool</th><th>Use</th></tr>
+<tr><td><span class="ui">Pan</span></td><td>Drag to move, wheel to zoom, click a point to mark it in both views, double-click to see the whole job. The middle mouse button pans with any tool.</td></tr>
+<tr><td><span class="ui">Rectangle</span>, <span class="ui">Lasso</span>, <span class="ui">Polygon</span></td><td>Select bad points in the plan view (polygon: click the corners, right-click or double-click to finish; Esc cancels). The selection is shown in both views; parts less than 3&nbsp;s apart become one window.</td></tr>
+<tr><td><span class="ui">Time range</span></td><td>Drag across the profile to select a time range, e.g. a height spike.</td></tr>
+<tr><td><span class="ui">Whole job</span>, <span class="ui">Zoom to selection</span></td><td>Fit both views to the shown sections or to the selection.</td></tr>
+<tr><td><span class="ui">Colour</span></td><td><i>Review state</i>: mint good, red open or rejected, violet interpolated, amber poor, blue GNSS excluded, pale mint accepted. <i>Solution type</i>: the mapper's solution colours. Positions the edits moved are also drawn as they were processed, in faint red.</td></tr>
+<tr><td><span class="ui">Map layers underneath</span></td><td>Draws the layers of the QGIS map (your basemap, roads) under the plan view.</td></tr>
+<tr><td>Sections</td><td>The job split where the vehicle stood still for 30&nbsp;s or more, or the data stops. Untick sections to hide them; <span class="ui">Show selected</span> shows only the highlighted ones; double-click a section to zoom to it.</td></tr>
+<tr><td>Review list</td><td>One row per place (a place found by several limits shows as e.g. <i>A1 +3</i>). Click a row to select its window in both views and zoom there.</td></tr>
+</table>
+<p>With a selection, choose what to do with it (the buttons above the views):</p>
+<table>
+<tr><th>Button</th><th>Effect</th></tr>
+<tr><td><span class="ui">Interpolate</span></td><td>Replaces the selected positions between the good points on each side, <span class="ui">Horizontal</span> and/or <span class="ui">Vertical</span>. <i>Smooth curve</i> leaves and meets the good points at their own speed and direction, so it follows a bend; <i>Straight line</i> joins them directly (good for a height spike on level ground). A selection at the very start or end of the trajectory is carried on from its one good side at that point's speed and direction.</td></tr>
+<tr><td><span class="ui">Bridge with IMU</span></td><td>The same as <span class="ui">Exclude GNSS</span>: the IMU carries the trajectory there after <span class="ui">Process again</span> (shown when waiting). Tightly and loosely coupled only.</td></tr>
+<tr><td><span class="ui">Mark poor</span>, <span class="ui">Accept</span></td><td>As on the Review page.</td></tr>
+<tr><td><span class="ui">Reject</span></td><td>Marks it bad, to fix later: it stays <i>open</i> in red.</td></tr>
+<tr><td><span class="ui">Undo</span></td><td>Takes the last decision back.</td></tr>
+</table>
+<figure><img src="fig/editor_fixed.png"><figcaption><b>Figure {N}.3</b> A sideways jump fixed with a smooth curve, horizontally only: the trajectory now (violet) follows the bend, and the positions as processed are drawn in faint red beside it.</figcaption></figure>
+<div class="tip"><b>Interpolate or bridge with the IMU?</b> Interpolation is best for short stretches: spikes, a few seconds of wrong fixes. Over a longer stretch the IMU knows the turns and bumps that a curve cannot guess, so <span class="ui">Bridge with IMU</span> usually follows the road better; PosPro reminds you when you interpolate more than 10&nbsp;s of a coupled trajectory.</div>
+<figure><img src="fig/editor_fix.png"><figcaption><b>Figure {N}.4</b> The whole job coloured by solution type: the height spike is interpolated (violet band), the second place is still open (red band).</figcaption></figure>
+
 <h2>Deciding</h2>
-<figure><img src="fig/review.png"><figcaption><b>Figure {N}.2</b> The same windows after the decisions: A1 marked poor, A2 accepted.</figcaption></figure>
+<figure><img src="fig/review.png"><figcaption><b>Figure {N}.5</b> The same windows after the decisions: A1 marked poor, A2 accepted.</figcaption></figure>
 <p>Select one row or several, then:</p>
 <table>
 <tr><th>Decision</th><th>Effect</th><th>Applies</th></tr>
 <tr><td><span class="ui">Exclude GNSS</span></td><td>GNSS is not used in these windows; the IMU carries the trajectory, as through a tunnel. Use it where multipath or a wrong fix pulled the trajectory away. Tightly and loosely coupled only.</td><td>After <span class="ui">Process again</span>; a note in amber says the exclusions are waiting, and the Review step reads <i>process again</i></td></tr>
 <tr><td><span class="ui">Mark poor</span></td><td>The trajectory is kept, but its position σ is raised to at least <span class="ui">σ given to poor parts</span>, in the SMRMSG file, on the Quality page and in the published trajectory, so later stages know not to trust it.</td><td>At once</td></tr>
-<tr><td><span class="ui">Interpolate</span></td><td>A straight line between the good samples on both sides, <span class="ui">Horizontal</span> and/or <span class="ui">Vertical</span>. Only for GNSS-only and real-time trajectories (the button is shown only then): with the IMU, excluding the GNSS is better. It needs good samples on both sides: a window at the very start or end of the trajectory stays as processed, and PosPro says so; mark it poor instead.</td><td>At once</td></tr>
+<tr><td><span class="ui">Interpolate</span></td><td>Replaces the positions between the good samples on both sides, as a <i>Smooth curve</i> or a <i>Straight line</i>, <span class="ui">Horizontal</span> and/or <span class="ui">Vertical</span>, in any processing mode (see <i>The Trajectory editor</i>). For longer stretches of a coupled trajectory, <span class="ui">Exclude GNSS</span> usually follows the road better.</td><td>At once</td></tr>
 <tr><td><span class="ui">Accept</span></td><td>Looked at and fine as it is.</td><td>At once</td></tr>
 <tr><td><span class="ui">Clear decision</span></td><td>The window is open again.</td><td>At once</td></tr>
 </table>
 <p>Decisions never change the processed result itself: PosPro keeps an untouched copy and applies your decisions to it, so <span class="ui">Undo</span> (the last change), <span class="ui">Reset to original</span> (every decision removed, after a question) and processing again lose nothing. After a decision that changes the trajectory, the Quality page, the map and the plots are updated and the trajectory is published again. <span class="ui">Edit log</span> lists every detection and decision with its time.</p>
-<figure class="half"><img src="fig/review_log.png"><figcaption><b>Figure {N}.3</b> The Trajectory Review log.</figcaption></figure>
+<figure class="half"><img src="fig/review_log.png"><figcaption><b>Figure {N}.6</b> The Trajectory Review log.</figcaption></figure>
 <div class="note"><b>Windows inside windows</b> Deciding on a window that lies inside a larger window that already has a decision adds a decision for the smaller window; the larger window keeps its own. To change a decision, select that window itself and decide again, or use <span class="ui">Clear decision</span>.</div>
 <p>The Review step shows <i>find anomalies</i> before the first search, <i>N open</i> in amber while windows are undecided, <i>process again</i> while GNSS exclusions wait, and <i>N reviewed</i> in green when all are decided.</p>
-<div class="tip"><b>No base station?</b> Choose <span class="ui">Real-time solution (no base station)</span> on the Processing page. PosPro then uses the trajectory the Certus computed in the field (RTK when it had corrections), and Trajectory Review cleans it the same way, with <span class="ui">Interpolate</span> available.</div>
+<div class="tip"><b>No base station?</b> Choose <span class="ui">Real-time solution (no base station)</span> on the Processing page. PosPro then uses the trajectory the Certus computed in the field (RTK when it had corrections), and Trajectory Review cleans it the same way, with the Trajectory editor for the parts it got wrong.</div>
 
 <h1><span class="num">{N}</span>Step 7 – Calibration</h1>
 <p>The lever-arm solver estimates the IMU-to-antenna offsets from the drive itself and shows them beside the ones you entered, so a mis-measured antenna shows up before it spoils a survey. It works on data you have already processed; measure the offsets as well as you can first, and let the solver check and refine them.</p>

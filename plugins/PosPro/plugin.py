@@ -42,6 +42,7 @@ class PosProPlugin:
         self.iface = iface
         self.dock = None
         self.plots = None
+        self.editor = None
         self.action = None
         self.marker = None
 
@@ -77,10 +78,10 @@ class PosProPlugin:
             menu.remove(self.iface, self.action)
             registry.unregister("pospro")
         self._clear_marker()
-        for d in (self.dock, self.plots):
+        for d in (self.editor, self.dock, self.plots):
             if d is not None:
                 d.release_window()      # remembers the window, removes it safely (also when it is a window)
-        self.dock = self.plots = None
+        self.dock = self.plots = self.editor = None
 
     def toggle(self, on=True):
         if self.dock is None:
@@ -96,6 +97,12 @@ class PosProPlugin:
         """Show PosPro on a DCS project (called from another plugin's chain bar)."""
         self.toggle(True)
         self.dock.open_path(path)
+
+    def show_editor(self):
+        if self.editor is None:
+            from .ui.trajedit import TrajectoryEditor
+            self.editor = TrajectoryEditor(self.dock)
+        self.editor.show_editor()
 
     def show_plots(self, qc):
         if self.plots is None:
