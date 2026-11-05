@@ -808,6 +808,8 @@ class BasePage(Page):
             return "todo", ""
         if p.cfg["processing"].get("positioning") == "ppp":
             return "done", "not needed (PPP)"
+        if p.cfg["processing"].get("mode") == "rt":
+            return "done", "not needed (real-time)"
         b = p.base()
         if not b:
             return "todo", "add a base station"
@@ -1949,7 +1951,7 @@ class ReviewPage(Page):
             self.dock.show_trajectory()
             if self.dock.plugin.plots:
                 self.dock.plugin.plots.set_data(self.dock.qc)
-            self.dock.pages[4].refresh()
+            self.dock.page["quality"].refresh()
             self.fill()
             self.dock.update_steps()
             if ed is not None:
@@ -2152,7 +2154,7 @@ class CalibPage(Page):
         if not txt:
             return
         self.dock.save()
-        self.dock.pages[2].refresh()
+        self.dock.page["install"].refresh()
         self.show_levers(res)
         theme.msg_info(self, "PosPro", "Applied:\n" + "\n".join(txt) +
                                 "\n\nProcess the trajectory again so it uses them, and update the Certus and the "
@@ -2354,6 +2356,22 @@ class ExportPage(Page):
 
 
 # ===========================================================================
+# The steps in the order a trajectory is made, grouped in three phases:
+#   Prepare  what was recorded, where the antennas are, the base station's data and position;
+#   Process  the GNSS/INS solution, its quality, and (optional) solving the antenna lever arms, which needs
+#            processing again - so it comes before any hand editing;
+#   Finish   reviewing and fixing what is left, then the files for other software.
+STEPS = [("data", "Data", "Prepare"), ("install", "Installation", "Prepare"), ("base", "Base", "Prepare"),
+         ("process", "Processing", "Process"), ("quality", "Quality", "Process"),
+         ("calib", "Calibration", "Process"),
+         ("review", "Review", "Finish"), ("export", "Export", "Finish")]
+PHASE_TIPS = {"Prepare": "What was recorded, where the antennas are, and the base station: everything processing "
+                         "needs, checked before it runs",
+              "Process": "The GNSS/INS solution and its quality; solve the lever arms here if needed (it means "
+                         "processing again)",
+              "Finish": "Review and fix what is left, then export for other software"}
+
+
 class PosProDock(PluginWindow):
     """PosPro's window: DCS Core's standard plugin window (floating by default, docked on request)."""
 
@@ -2405,14 +2423,27 @@ class PosProDock(PluginWindow):
         sl.setContentsMargins(4, 8, 4, 8)
         sl.setSpacing(4)
         self.stack = QStackedWidget()
-        self.pages = [DataPage(self), BasePage(self), InstallPage(self), ProcessPage(self), QualityPage(self),
-                      ReviewPage(self),
-                      CalibPage(self), ExportPage(self)]
-        titles = ["Data", "Base", "Installation", "Processing", "Quality", "Review", "Calibration", "Export"]
+        # The workflow, in the order a trajectory is made (see STEPS): the pages are reached by key
+        # (self.page["base"]), never by position, so the order can change in one place.
+        self.page = {"data": DataPage(self), "install": InstallPage(self), "base": BasePage(self),
+                     "process": ProcessPage(self), "quality": QualityPage(self), "calib": CalibPage(self),
+                     "review": ReviewPage(self), "export": ExportPage(self)}
+        self.keys = [k for k, _t, _ph in STEPS]
+        self.pages = [self.page[k] for k in self.keys]
+        titles = [t for _k, t, _ph in STEPS]
         self.step_buttons = []
         grp = QButtonGroup(self)
         grp.setExclusive(True)
+        phase = None
         for i, (pg, t) in enumerate(zip(self.pages, titles)):
+            if STEPS[i][2] != phase:
+                phase = STEPS[i][2]
+                ph = QLabel(phase.upper())
+                ph.setObjectName("ppPhase")
+                ph.setToolTip(PHASE_TIPS.get(phase, ""))
+                ph.setStyleSheet("color: %s; font-size: 10px; letter-spacing: 1.5px; padding: %dpx 6px 0 6px;"
+                                 % (theme.DIM, 2 if i == 0 else 10))
+                sl.addWidget(ph)
             sb = StepButton(i + 1, t)
             grp.addButton(sb, i)
             sl.addWidget(sb)
@@ -2471,7 +2502,12 @@ class PosProDock(PluginWindow):
         for b in self.step_buttons:
             b.setEnabled(on)
 
+    def index_of(self, key):
+        return self.keys.index(key)
+
     def goto_page(self, k):
+        if isinstance(k, str):
+            k = self.index_of(k)
         self.stack.setCurrentIndex(k)
         self.step_buttons[k].setChecked(True)
         if self.project:
@@ -2502,21 +2538,24 @@ class PosProDock(PluginWindow):
         if getattr(self, "task", None) is not None:
             st = "running"
         todo = None
-        if k == 0:
+        key = self.keys[k]
+        if key == "data":
             todo = "press READ FILES" if self.project.cfg["rover"]["files"] else "add the rover files (ADD FILES\u2026)"
-        elif k == 1:
+        elif key == "install":
+            todo = "check the antenna offsets against the capture, then CHECK ANTENNAS"
+        elif key == "base":
             todo = "add the base station's RINEX (ADD RINEX\u2026 or DOWNLOAD\u2026)"
             if st == "warn" and "approximate" in sub:
                 sub += " (BUILT-IN PPP or CSRS-PPP fixes it)"
-        elif k == 3:
+        elif key == "process":
             todo = "press PROCESS at the bottom of this page"
-        elif k == 4:
-            todo = "process first (step 4)"
-        elif k == 5:
-            todo = "FIND ANOMALIES, or skip if the quality is good"
-        elif k == 6:
+        elif key == "quality":
+            todo = "process first (step %d)" % (self.index_of("process") + 1)
+        elif key == "calib":
             todo = "SOLVE LEVER ARMS (needs a drive with turns), or skip"
-        elif k == 7:
+        elif key == "review":
+            todo = "FIND ANOMALIES, or skip if the quality is good"
+        elif key == "export":
             todo = "EXPORT is only for other software (AlignPro reads the trajectory already)"
         self.nav.update(k, st, sub, todo=todo)
         dcs = self.project.dcs
@@ -2617,7 +2656,7 @@ class PosProDock(PluginWindow):
         p.cfg["rover"]["files"] = [now.get(os.path.basename(f), f) for f in files_]
         p.save()
         if self.project is p and getattr(self, "chain", None) is not None:
-            self.pages[0].refresh()
+            self.page["data"].refresh()
 
     def save_qgis_project(self):
         if not self.project:
@@ -2796,15 +2835,15 @@ class PosProDock(PluginWindow):
             if ok:
                 self._merge_back(work_p)
                 self.save()
-                self.pages[0].refresh()
+                self.page["data"].refresh()
                 self.show_rt_track()
                 self.refresh_map_bases()
                 inst = self.project.cfg["installation"]
                 if not inst.get("source") and not any(abs(x) > 1e-9 for x in inst["lever_antenna"]):
-                    got = self.pages[2].use_hardware(quiet=True)
+                    got = self.page["install"].use_hardware(quiet=True)
                     if got:
                         self.toast("Installation offsets filled from the capture (%s)" % inst.get("source"))
-                self.pages[2].refresh()
+                self.page["install"].refresh()
         self.start_task("Reading rover files", work, done)
 
     def run_processing(self):
@@ -2859,9 +2898,9 @@ class PosProDock(PluginWindow):
             self.save()
             self.qc = results.load_qc(os.path.join(p.work_dir, "results", "qc.csv"))
             self.show_trajectory()
-            self.pages[4].refresh()
-            self.pages[5].refresh()
-            self.goto_page(4)
+            self.page["quality"].refresh()
+            self.page["review"].refresh()
+            self.goto_page("quality")
             if self.plugin.plots:
                 self.plugin.plots.set_data(self.qc)
             if self.plugin.editor is not None and self.plugin.editor.isVisible():
@@ -2916,7 +2955,7 @@ class PosProDock(PluginWindow):
     def show_trajectory(self):
         if not self.qc:
             return
-        lyr = maplayers.trajectory_layers(self.project, self.qc, self.pages[4].colour.currentData() or "status")
+        lyr = maplayers.trajectory_layers(self.project, self.qc, self.page["quality"].colour.currentData() or "status")
         self.traj_layer = lyr
         maplayers.zoom_to(self.iface, lyr)
 
@@ -2932,7 +2971,7 @@ class PosProDock(PluginWindow):
         self.plugin.show_plots(self.qc)
 
     def pages_review(self):
-        return self.pages[5]
+        return self.page["review"]
 
     def open_editor(self, *_):
         if not self.qc:

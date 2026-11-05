@@ -119,15 +119,15 @@ r = review.state(p)
 acts = sorted(e["action"] + ":" + e.get("method", "") for e in r["edits"])
 print("edits:", acts)
 assert acts == ["interpolate:smooth", "interpolate:straight"]
-dock.pages[5].fill()
-assert any("smooth curve" in (dock.pages[5].table.item(k, 5).text() or "")
-           for k in range(dock.pages[5].table.rowCount()))
+dock.page["review"].fill()
+assert any("smooth curve" in (dock.page["review"].table.item(k, 5).text() or "")
+           for k in range(dock.page["review"].table.rowCount()))
 
 # --- reject counts as open; undo takes the last edit back
 ed.clear_selection()
 ed.profile.rangeSelected.emit(t0 + 300, t0 + 305)
 ed.decide("reject")
-assert dock.pages[5].state()[0] == "warn"
+assert dock.page["review"].state()[0] == "warn"
 ed.undo()
 harness.settle(10)
 assert len(review.state(p)["edits"]) == 2

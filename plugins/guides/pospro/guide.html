@@ -2,14 +2,14 @@
 "EXTRAS_ROW": "",
 "WINDOW_EXTRA": "",
 "PROJECT_MENU_TABLE": "<table><tr><th>Item</th><th>What it does</th></tr><tr><td><span class=\"ui\">New project…</span></td><td>Opens the New DCS project dialog (below). PosPro then offers the captures it finds in the job folder as rover files.</td></tr><tr><td><span class=\"ui\">Open project…</span></td><td>Opens a processing project (<code>.dcsproj</code>), or an older stand-alone PosPro project (<code>.pospro.json</code>). The last project you had open reopens by itself when PosPro starts.</td></tr><tr><td><span class=\"ui\">Open the project folder</span></td><td>Shows the project folder (<code>Processing/&lt;Name&gt;</code>) in the file manager.</td></tr><tr><td><span class=\"ui\">Raw data moved? Relocate the job folder…</span></td><td>Asks for the job folder's new location and finds the captures there again; PosPro's rover file list follows. Not available for older stand-alone projects.</td></tr><tr><td><span class=\"ui\">Save the QGIS project in the project folder</span></td><td>Saves the open QGIS project as <code>&lt;Name&gt;.qgz</code> in the project folder (asks first when the QGIS project already has another file name).</td></tr><tr><td><span class=\"ui\">Show the log</span></td><td>The PosPro log of this session: every message, warning and error with its time.</td></tr><tr><td><span class=\"ui\">Engine version</span></td><td>The version of the processing engine and of RTKLIB inside it, and where the engine is installed.</td></tr><tr><td><span class=\"ui\">User guide (this version)</span></td><td>Opens this guide.</td></tr></table>",
-"AFTER_CREATE": "PosPro then looks through the job folder (five folder levels deep, skipping the Processing folder and the mapper's processed folders) for mapper captures: the survey lines' <code>.clraw</code> files and the mapper 2.10 navigation recordings, or the Certus logs (<code>.anpp</code>) when there is no <code>.clraw</code>, and asks whether to use them as the rover files (Figure {N}.3). When a mapper 2.10 project holds both navigation recordings and survey lines, it asks which (Figure {N}.4)."
+"AFTER_CREATE": "PosPro then looks through the job folder (five folder levels deep, skipping the Processing folder and the mapper's processed folders) for mapper captures: the survey lines' <code>.clraw</code> files and the mapper 2.10 navigation recordings, or the Certus logs (<code>.anpp</code>) when there is no <code>.clraw</code>, and asks whether to use them as the rover files. When a mapper 2.10 project holds both navigation recordings and survey lines, it asks which (Figure {N}.3)."
 }-->
 <style>
 /* figure sizes for this guide (the screenshots are 2x) */
 figure img[src="fig/project_menu.png"]{max-width:34%}
 figure img[src="fig/window_menu.png"]{max-width:24%}
 figure img[src="fig/new_project.png"]{max-width:62%}
-figure img[src="fig/found_captures.png"],figure img[src="fig/choose_rover.png"],figure img[src="fig/calib_needs_tc.png"]{max-width:46%}
+figure img[src="fig/choose_rover.png"],figure img[src="fig/calib_needs_tc.png"]{max-width:46%}
 figure img[src="fig/review_log.png"]{max-width:72%}
 figure img[src="fig/installation.png"]{max-height:112mm}
 figure img[src="fig/processing.png"]{max-height:105mm}
@@ -30,7 +30,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <p>PosPro computes the trajectory of a Canadian Lidar mobile mapper: where the Certus GNSS/INS was, and how it was oriented, at every moment of a drive. It reads the mapper's captures (<code>.clraw</code>) or the Certus logs (<code>.anpp</code>) directly, combines the raw IMU and the raw satellite observations of both Certus antennas with base station data, and runs the inertial filter forward and backward over the drive. The two passes are combined into one smoothed trajectory, which you check on the map and in plots, clean up in Trajectory Review and export as SBET/SMRMSG, text, GeoPackage or GPX.</p>
 <p>PosPro is <b>stage 01</b> of the DCS chain. Every time you process, PosPro also publishes the trajectory for the next stages: <b>AlignPro</b> uses it to solve the Lidar mounting (boresight), and <b>CloudPro</b> uses it to georeference the point cloud. You do not export anything by hand for them.</p>
 
-<figure><img src="fig/window.png"><figcaption><b>Figure {N}.1</b> The PosPro window: the header with the workflow boxes and the project box, the eight steps on the left, the open step on the right, and the status line at the bottom.</figcaption></figure>
+<figure><img src="fig/window.png"><figcaption><b>Figure {N}.1</b> The PosPro window: the header with the workflow boxes and the project box, the eight steps in three phases (Prepare, Process, Finish) on the left, the open step on the right, the Back / Next bar under it and the status line at the bottom.</figcaption></figure>
 
 <h2>What PosPro reads and makes</h2>
 <table>
@@ -43,58 +43,186 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 </table>
 <p>Processing runs in a separate engine program (with RTKLIB inside), so a fault in processing never closes QGIS. The forward and backward passes run at the same time.</p>
 
-<h2>The workflow</h2>
-<div class="side"><div><p>Work down the eight steps on the left of the window. Each step shows its state in colour with a short note under its name:</p>
-<ul>
-<li><b>Green</b>: done (for example <i>100.0% fixed</i>, <i>3 reviewed</i>).</li>
-<li><b>Amber</b>: needs a look (a base position from the RINEX header, an antenna offset of zero, review windows still open, fewer than 95&nbsp;% fixed).</li>
-<li><b>Red</b>: a problem (for example <i>no raw GNSS</i> when the captures hold no raw satellite observations and a method that needs them is chosen).</li>
-<li><b>Grey</b>: not done yet; the note says what is missing.</li>
-</ul>
-<ol class="steps">
-<li><b>Data</b>: the rover files, the time range and the ephemeris.</li>
-<li><b>Base</b>: the base station and its position.</li>
-<li><b>Installation</b>: vehicle, motion sensor and the offsets of the antennas, the Lidar and the rear axle.</li>
-<li><b>Processing</b>: method and settings; <span class="ui">Process</span>.</li>
-<li><b>Quality</b>: the summary, the findings, the map colours and the quality plots.</li>
-<li><b>Review</b>: find the parts that miss your limits and decide what to do with each.</li>
-<li><b>Calibration</b>: solve the antenna lever arms from the drive.</li>
-<li><b>Export</b>: SBET/SMRMSG, text, GeoPackage, GPX.</li>
-</ol>
-</div><figure><img src="fig/steps.png"><figcaption><b>Figure {N}.2</b> The steps and their states.</figcaption></figure></div>
-<p>Steps 1 to 3 hold settings; they are saved as you change them. Step 4 runs the processing; steps 5 to 8 work on its result.</p>
+<h2>How to use this guide</h2>
+<p>Read <i>How a trajectory is made</i> and <i>The workflow and why it is in this order</i> once: they explain what every setting does to the accuracy. <i>Best practices</i> lists what to do in the field and in the office. The step chapters then follow the window, step by step; each starts with why the step comes where it does. The <a href="#index">Index</a> at the end lists every button and setting with the section that explains it.</p>
+<div class="note"><b>New in {VERSION}</b> The steps are in a new order, grouped in three phases: Installation now comes before Base, and Calibration before Review (see <i>The workflow</i>). Full list: <a href="#history">Version history</a>.</div>
 
-<h2>What's new</h2>
+<h1><span class="num">{N}</span>How a trajectory is made</h1>
+<p>A trajectory is the position and orientation of the Certus at every moment of the drive. PosPro builds it from two kinds of measurement that fail in opposite ways, and from what you tell it about the vehicle. Knowing how they fit together explains every setting in this guide and why the steps come in the order they do.</p>
+
+<h2>Two sensors that cover for each other</h2>
 <table>
-<tr><th>Version</th><th>Changes</th></tr>
-<tr><td><b>1.8.0</b></td><td><span class="ui">Check antennas</span> (Installation page and Trajectory editor): measures where GPS2 really was relative to GPS1 while driving straight, using the direction of travel rather than the Certus heading, and says whether the antennas match the installation or look swapped; one click then swaps the offsets and aligns from motion. Trajectory editor: <span class="ui">Direction</span> chevrons along the track, <span class="ui">Antennas</span> (GPS1 and GPS2 drawn along the track, and the vehicle at the point under the mouse) and the measured GPS2 positions. The QGIS map's trajectory and real-time lines show arrowheads in the direction of travel.</td></tr>
-<tr><td><b>1.7.0</b></td><td><b>Trajectory editor</b>: the trajectory in plan and in a height profile side by side, linked both ways &ndash; hover or click in one and the other shows the same moment, select bad points in either (rectangle, lasso, polygon, time range) and fix them there. <span class="ui">Interpolate</span> now works in every processing mode, as a <i>smooth curve</i> (follows bends) or a <i>straight line</i>, horizontally and/or vertically, also at the start or end of the trajectory. New decision <span class="ui">Reject</span> (bad, to fix later). See <i>Trajectory Review</i>.</td></tr>
-<tr><td><b>1.6.3</b></td><td>When DCS Core is updated while QGIS is running, PosPro says to restart QGIS instead of asking for an update.</td></tr>
-<tr><td><b>1.6.2</b></td><td>Installation: <span class="ui">IMU mounting correction</span> &ndash; the pitch and yaw of the vehicle against the IMU, as a start for the estimate or held fixed, and <span class="ui">Use the values from the last processing</span>. Trajectory Review: a <span class="ui">Show</span> filter and sorting by any column.</td></tr>
-<tr><td><b>1.6.1</b></td><td>Navigation files next to the base observations, and files you add, are checked orbit by orbit against the Certus's own orbits and the IGS broadcast orbits before processing; orbits that disagree are left out and a warning names the file and the satellites (see <i>Data</i>). Processing stops with a clear error when the solution runs away (σ above 1&nbsp;km) instead of handing over an unusable trajectory. Trajectory Review: <span class="ui">Remove from list</span> and <span class="ui">Clear hand selections</span>; one drawing on the map adds one window (or a few), not one per piece; hand selections from before are taken off the list when you process again, and the anomalies are found again on the new trajectory with your limits.</td></tr>
-<tr><td><b>1.6.0</b></td><td>Guided steps: a <span class="ui">‹ Back</span> / <span class="ui">Next ›</span> bar under the pages says whether each step is done and what to press, and <span class="ui">Continue in AlignPro ›</span> on the last step once the trajectory is published (see <i>The PosPro window</i>). The version number is shown after the plugin name in the header. Fix (DCS Core 1.5.1): QGIS 4 on Windows no longer closes when you click in a floating window. Needs DCS Core 1.6.0.</td></tr>
-<tr><td><b>1.5.3</b></td><td>Fixes from the first real field test: a cycle slip on a signal that returns after a short dropout is caught (it could pull a fixed solution metres off); short losses of IMU data are bridged and the Data step reports how much is missing; the offset between the vehicle and the IMU's aligned frame is estimated while driving and reported; tightly coupled passes start from the fixed GNSS-only position. On the test drive: under 35&nbsp;% fixed before, 99.8&nbsp;% now. New: <a href="#rec">Recording settings</a>.</td></tr>
-<tr><td><b>1.5.2</b></td><td>Fix: no more "unclosed file" warnings in the QGIS log after processing.</td></tr>
-<tr><td><b>1.5.1</b></td><td>Mapper 2.10 projects: a new project offers the navigation recordings (recommended) or the survey lines; rover files are read in recording order; a navigation recording's hardware record is completed from a survey line. Needs DCS Core 1.4.0.</td></tr>
-<tr><td><b>1.5.0</b></td><td>The same header as AlignPro and CloudPro: logo, the plugin name, the workflow boxes beside it, the project box on the right, then the Window button and the user guide button. The window title is just <i>PosPro</i>. The vehicles are the mapper's (Van, Truck, Car) and set the wheel constraints; the separate motion-constraints list is gone (older projects keep what they processed with). Captures without raw IMU take their time span from the real-time solution, and a real-time trajectory is published with the frame of the Certus RTK corrections and its own rate. This guide, rewritten with screenshots of this version. Needs DCS Core 1.3.0.</td></tr>
-<tr><td>1.4.0</td><td>Named just PosPro. Opens in DCS Core's standard window: floating the first time, docked only when you choose it from the Window menu; dragging never docks it. It comes back as you left it, also after QGIS restarts; <span class="ui">Reset window</span> returns to the default. The quality plots open in the same kind of window. Neutral graphite look with lighter view backgrounds.</td></tr>
-<tr><td>1.3.x</td><td>Trajectory Review (step 6). The real-time mode (the Certus solution, no base station). GPX export. The user guide is installed with the plugin.</td></tr>
-<tr><td>1.2.x</td><td>Part of the DCS chain (needs DCS Core): projects in the job folder, the trajectory published for AlignPro and CloudPro, workflow boxes with out-of-date results, relocating a moved job folder, saving the QGIS project in the project folder. Older <code>.pospro.json</code> projects still open.</td></tr>
-<tr><td>1.1.x</td><td>Tight coupling with both antennas, atmosphere estimation, signal-strength weighting, lever-arm solver, base-station finder, Installation filled from the capture, data coverage bars, <span class="ui">Measure GPS2 from the data</span>.</td></tr>
+<tr><th></th><th>GNSS (the two antennas)</th><th>IMU (inside the Certus)</th></tr>
+<tr><td>Measures</td><td>Distances to satellites: code (metres) and carrier phase (millimetres, once its whole number of cycles, the <i>ambiguity</i>, is known)</td><td>Acceleration and turn rate, 200 times a second</td></tr>
+<tr><td>Strength</td><td>Errors do not grow with time: centimetres anywhere the sky is open</td><td>Smooth, never drops out, gives roll, pitch and heading</td></tr>
+<tr><td>Weakness</td><td>Blocked by bridges, trees, buildings; carrier phase must be fixed again after every interruption</td><td>Errors grow with time when nothing corrects them (metres after a minute)</td></tr>
+</table>
+<p>The <b>Kalman filter</b> combines them: the IMU carries the trajectory from one moment to the next, and every GNSS measurement pulls it back to where the satellites say it is. In <b>tight coupling</b> (PosPro's default) the filter uses each satellite's raw observations from both antennas directly, so even two or three satellites under trees still help; loose coupling only uses complete GNSS positions.</p>
+
+<h2>Differential: the base station</h2>
+<p>Most GNSS errors (satellite orbits and clocks, the ionosphere and troposphere) are almost the same for two receivers a few kilometres apart. Processing the rover's observations <i>against</i> a base station's (double differences, PPK) removes them and makes the carrier-phase ambiguities fixable: that is what turns metres into centimetres. Two consequences:</p>
+<ul>
+<li>The whole trajectory sits on the <b>base station's position</b>: an error there moves every point by the same amount. That is why the base position is computed carefully (PPP or CSRS-PPP), not taken from the RINEX header.</li>
+<li>Accuracy falls with <b>distance to the base</b>, about 1&nbsp;cm + 1&nbsp;mm per km (1&nbsp;ppm), and fixing gets harder beyond 20–30&nbsp;km.</li>
+</ul>
+
+<figure><svg viewBox="0 0 680 330" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="Outfit, sans-serif">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M2 1L8 5L2 9" fill="none" stroke="#5a636b" stroke-width="1.5"/></marker></defs>
+<g font-size="11" fill="#1d2024">
+<rect x="10" y="20" width="150" height="88" rx="6" fill="#f3f5f6" stroke="#5a636b" stroke-width=".6"/>
+<text x="85" y="38" text-anchor="middle" font-weight="600">Rover (Certus)</text>
+<text x="20" y="56">IMU, 200 Hz · packet 28</text><text x="20" y="71">GNSS obs, 2 antennas · 60</text><text x="20" y="86">Ephemeris · 61</text><text x="20" y="101">Real-time solution · 20</text>
+<rect x="10" y="122" width="150" height="58" rx="6" fill="#f3f5f6" stroke="#5a636b" stroke-width=".6"/>
+<text x="85" y="140" text-anchor="middle" font-weight="600">Base station</text>
+<text x="20" y="157">RINEX observations</text><text x="20" y="172">Precise position (PPP)</text>
+<rect x="10" y="194" width="150" height="58" rx="6" fill="#f3f5f6" stroke="#5a636b" stroke-width=".6"/>
+<text x="85" y="212" text-anchor="middle" font-weight="600">Installation</text>
+<text x="20" y="229">Antenna lever arms</text><text x="20" y="244">Vehicle, rear axle</text>
+<rect x="215" y="40" width="170" height="70" rx="6" fill="#e3f6f0" stroke="#00a87d" stroke-width=".8"/>
+<text x="300" y="60" text-anchor="middle" font-weight="600">Forward pass</text>
+<text x="300" y="77" text-anchor="middle">IMU + GNSS filter,</text><text x="300" y="92" text-anchor="middle">start → end of the drive</text>
+<rect x="215" y="140" width="170" height="70" rx="6" fill="#e3f6f0" stroke="#00a87d" stroke-width=".8"/>
+<text x="300" y="160" text-anchor="middle" font-weight="600">Backward pass</text>
+<text x="300" y="177" text-anchor="middle">the same filter,</text><text x="300" y="192" text-anchor="middle">end → start</text>
+<rect x="430" y="85" width="110" height="80" rx="6" fill="#e3f6f0" stroke="#00a87d" stroke-width=".8"/>
+<text x="485" y="108" text-anchor="middle" font-weight="600">Combine</text>
+<text x="485" y="125" text-anchor="middle">best of both</text><text x="485" y="140" text-anchor="middle">+ separation</text><text x="485" y="155" text-anchor="middle">(quality check)</text>
+<rect x="575" y="40" width="95" height="56" rx="6" fill="#f3f5f6" stroke="#5a636b" stroke-width=".6"/>
+<text x="622" y="62" text-anchor="middle" font-weight="600">Quality</text><text x="622" y="79" text-anchor="middle">Review</text>
+<rect x="575" y="150" width="95" height="56" rx="6" fill="#f3f5f6" stroke="#5a636b" stroke-width=".6"/>
+<text x="622" y="172" text-anchor="middle" font-weight="600">Trajectory</text><text x="622" y="189" text-anchor="middle">SBET · handover</text>
+<rect x="430" y="245" width="240" height="56" rx="6" fill="#f3f5f6" stroke="#5a636b" stroke-width=".6"/>
+<text x="550" y="267" text-anchor="middle" font-weight="600">AlignPro → CloudPro</text><text x="550" y="284" text-anchor="middle">boresight, georeferenced point cloud</text>
+</g>
+<g stroke="#5a636b" stroke-width="1" fill="none" marker-end="url(#ah)">
+<path d="M160 64 H188" marker-end="none"/><path d="M160 151 H188" marker-end="none"/><path d="M160 223 H188" marker-end="none"/>
+<path d="M188 64 V223" marker-end="none"/><path d="M188 75 H213"/><path d="M188 175 H213"/>
+<path d="M385 75 H408 V110 H428"/><path d="M385 175 H408 V140 H428"/>
+<path d="M540 110 H573 V70"/><path d="M540 140 H557 V178 H573"/>
+<path d="M622 206 V243"/>
+</g>
+</svg><figcaption><b>Figure {N}.1</b> What goes into a trajectory and where it goes. The three inputs on the left are the three <i>Prepare</i> steps; the filter, the combination and the checks are <i>Process</i>; the trajectory and what uses it are <i>Finish</i>.</figcaption></figure>
+
+<h2>Forward, backward and combined</h2>
+<p>A filter only knows the past. Driving forward, it enters a GNSS gap well known and leaves it with its largest error; running the same data backward, the opposite. Combining the two passes (weighting each by its own accuracy) gives the smallest error everywhere, and halfway through a gap it is much better than either. The <b>separation</b> between the passes is also the most honest quality check there is: two independent solutions that agree to 2&nbsp;cm are right to about 2&nbsp;cm; where they disagree, one of them has a wrong fix.</p>
+<figure><svg viewBox="0 0 680 190" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="Outfit, sans-serif">
+<g font-size="11" fill="#1d2024">
+<rect x="250" y="20" width="180" height="130" fill="#f3f5f6"/>
+<text x="340" y="38" text-anchor="middle" fill="#5a636b">GNSS gap (bridge, trees)</text>
+<line x1="60" y1="150" x2="640" y2="150" stroke="#5a636b" stroke-width=".8"/>
+<line x1="60" y1="20" x2="60" y2="150" stroke="#5a636b" stroke-width=".8"/>
+<text x="55" y="30" text-anchor="end">error</text><text x="640" y="166" text-anchor="end">time →</text>
+<path d="M60 142 H250 Q340 140 430 52 L430 142 H640" fill="none" stroke="#3ab4f2" stroke-width="2"/>
+<path d="M60 142 H250 L250 52 Q340 140 430 142 H640" fill="none" stroke="#f5a623" stroke-width="2"/>
+<path d="M60 144 H250 Q340 122 430 144 H640" fill="none" stroke="#00a87d" stroke-width="3"/>
+<rect x="470" y="40" width="12" height="3" fill="#3ab4f2"/><text x="488" y="45">forward pass</text>
+<rect x="470" y="58" width="12" height="3" fill="#f5a623"/><text x="488" y="63">backward pass</text>
+<rect x="470" y="76" width="12" height="3" fill="#00a87d"/><text x="488" y="81">combined</text>
+</g></svg><figcaption><b>Figure {N}.2</b> Through a GNSS gap each pass is best where it enters and worst where it leaves; the combined trajectory is the best of both.</figcaption></figure>
+
+<h2>What limits the accuracy</h2>
+<p>Each item below adds to the final error. The order of the steps is the order in which they are removed:</p>
+<table>
+<tr><th>Source</th><th>Typical size if ignored</th><th>Removed in</th></tr>
+<tr><td>Antenna lever arms (where the antennas are, from the Certus)</td><td>The full error of the offset, in every direction the vehicle turns; swapped antennas: about 1&nbsp;m</td><td>Installation (measured, checked), Calibration (solved)</td></tr>
+<tr><td>Base station position</td><td>Up to a few metres, the same everywhere</td><td>Base (PPP or CSRS-PPP)</td></tr>
+<tr><td>Distance to the base, atmosphere</td><td>1&nbsp;mm per km, more in disturbed ionosphere</td><td>Base (choose the closest), Processing (atmosphere states)</td></tr>
+<tr><td>Wrong or unfixed ambiguities</td><td>Decimetres to metres</td><td>Processing (tight coupling, both antennas, both passes), Quality, Review</td></tr>
+<tr><td>GNSS gaps (IMU only)</td><td>Grows with the gap: centimetres for seconds, decimetres after a minute</td><td>Processing (combination), Review (bridge with the IMU)</td></tr>
+<tr><td>Vehicle frame (IMU mounting, wheel constraints)</td><td>Small heading and pitch biases, worse in gaps</td><td>Installation (rear axle, IMU mounting correction)</td></tr>
 </table>
 
+<h1><span class="num">{N}</span>The workflow and why it is in this order</h1>
+<p>PosPro's eight steps are grouped in three phases. Each step depends on the ones before it, and the step bar on the left, the <span class="ui">Next</span> button and the step notes guide you through them in order.</p>
+<figure><svg viewBox="0 0 680 250" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="Outfit, sans-serif">
+<defs><marker id="ah2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M2 1L8 5L2 9" fill="none" stroke="#5a636b" stroke-width="1.5"/></marker></defs>
+<g font-family="Rajdhani, sans-serif" font-size="13" font-weight="700" fill="#007a5c" letter-spacing="1.5">
+<text x="110" y="22" text-anchor="middle">PREPARE</text><text x="340" y="22" text-anchor="middle">PROCESS</text><text x="570" y="22" text-anchor="middle">FINISH</text></g>
+<g font-size="11" fill="#1d2024">
+<rect x="10" y="30" width="200" height="180" rx="8" fill="#f3f5f6" stroke="#d5d9dd"/>
+<rect x="240" y="30" width="200" height="180" rx="8" fill="#f3f5f6" stroke="#d5d9dd"/>
+<rect x="470" y="30" width="200" height="180" rx="8" fill="#f3f5f6" stroke="#d5d9dd"/>
+<g fill="#fff" stroke="#5a636b" stroke-width=".6">
+<rect x="25" y="42" width="170" height="44" rx="5"/><rect x="25" y="98" width="170" height="44" rx="5"/><rect x="25" y="154" width="170" height="44" rx="5"/>
+<rect x="255" y="42" width="170" height="44" rx="5"/><rect x="255" y="98" width="170" height="44" rx="5"/><rect x="255" y="154" width="170" height="44" rx="5" stroke-dasharray="3 2"/>
+<rect x="485" y="42" width="170" height="44" rx="5" stroke-dasharray="3 2"/><rect x="485" y="98" width="170" height="44" rx="5"/></g>
+<text x="35" y="60" font-weight="600">1 Data</text><text x="35" y="76" fill="#5a636b">recorded data, coverage</text>
+<text x="35" y="116" font-weight="600">2 Installation</text><text x="35" y="132" fill="#5a636b">antenna offsets, checked</text>
+<text x="35" y="172" font-weight="600">3 Base</text><text x="35" y="188" fill="#5a636b">base data and position</text>
+<text x="265" y="60" font-weight="600">4 Processing</text><text x="265" y="76" fill="#5a636b">both passes, combined</text>
+<text x="265" y="116" font-weight="600">5 Quality</text><text x="265" y="132" fill="#5a636b">fixed %, separation, gaps</text>
+<text x="265" y="172" font-weight="600">6 Calibration</text><text x="265" y="188" fill="#5a636b">lever arms → process again</text>
+<text x="495" y="60" font-weight="600">7 Review</text><text x="495" y="76" fill="#5a636b">fix what is left</text>
+<text x="495" y="116" font-weight="600">8 Export</text><text x="495" y="132" fill="#5a636b">files for other software</text>
+<text x="570" y="180" text-anchor="middle" fill="#5a636b">AlignPro and CloudPro read</text><text x="570" y="195" text-anchor="middle" fill="#5a636b">the published trajectory</text>
+<text x="340" y="232" text-anchor="middle" fill="#5a636b">dashed: optional steps; curved arrows: back to processing</text>
+</g>
+<g stroke="#5a636b" stroke-width="1" fill="none" marker-end="url(#ah2)">
+<path d="M110 86 V96"/><path d="M110 142 V152"/><path d="M195 176 H225 V64 H253"/>
+<path d="M340 86 V96"/><path d="M340 142 V152"/><path d="M425 120 H455 V64 H483"/>
+<path d="M570 86 V96"/>
+<path d="M255 176 Q232 120 255 70" stroke="#00a87d" stroke-dasharray="3 2"/>
+<path d="M485 64 Q462 22 425 52" stroke="#00a87d" stroke-dasharray="3 2"/>
+</g></svg><figcaption><b>Figure {N}.1</b> The three phases. Solving the lever arms (Calibration) and bridging with the IMU (Review) both send you back to Processing, which is why they come after it, and why Calibration comes before Review.</figcaption></figure>
+<div class="side"><div><p>In the window, the steps sit on the left under their phase. Each shows its state in colour with a short note under its name:</p>
+<ul>
+<li><b>Green</b>: done (for example <i>99.8% fixed</i>, <i>3 reviewed</i>, <i>not needed (real-time)</i>).</li>
+<li><b>Amber</b>: needs a look (a base position from the RINEX header, an antenna offset of zero, review windows still open, fewer than 95&nbsp;% fixed).</li>
+<li><b>Red</b>: a problem to fix before going on.</li>
+<li><b>Grey</b>: not done yet; the note says what is missing.</li>
+</ul>
+<p>Under the open step, the <span class="ui">‹ Back</span> / <span class="ui">Next ›</span> bar says in one sentence whether the step is done and what to press; optional steps can be skipped.</p></div>
+<figure><img src="fig/steps.png"><figcaption><b>Figure {N}.2</b> The steps, in their phases, with their states.</figcaption></figure></div>
+<table>
+<tr><th>Step</th><th>Why it comes here</th></tr>
+<tr><td><b>1 Data</b></td><td>Everything else is computed from the rover files. Reading them first shows how complete they are (IMU and satellite coverage, gaps in the recording) before any time is spent on them.</td></tr>
+<tr><td><b>2 Installation</b></td><td>The antenna offsets are used in every epoch of processing, and a wrong offset (or swapped antennas) cannot be fixed afterwards without processing again. They come straight from the capture, so this is mostly a check, and <span class="ui">Check antennas</span> confirms them from the data itself.</td></tr>
+<tr><td><b>3 Base</b></td><td>The base position decides where the whole trajectory sits. It is computed (PPP) before processing, because every PPK solution is relative to it.</td></tr>
+<tr><td><b>4 Processing</b></td><td>Runs once everything it needs is right.</td></tr>
+<tr><td><b>5 Quality</b></td><td>Judges the result before anything is built on it: the share of fixed ambiguities, the forward/backward separation and the gaps say whether to go on, change a setting, or check the inputs.</td></tr>
+<tr><td><b>6 Calibration</b></td><td>Solving the lever arms needs a processed drive and means processing again. Done after a first good processing and before any review, it leaves no hand edits to lose.</td></tr>
+<tr><td><b>7 Review</b></td><td>Hand edits belong to one processed trajectory, so they come last; processing again takes hand selections off the list.</td></tr>
+<tr><td><b>8 Export</b></td><td>Only for other software: AlignPro and CloudPro already read the trajectory PosPro publishes every time it processes or applies a review edit.</td></tr>
+</table>
+<div class="tip"><b>Most jobs</b> With good data the path is short: Data (read), Installation (check), Base (add, PPP), Processing (process), Quality (look), and on to AlignPro. Calibration is for a new installation; Review only where Quality points to a problem.</div>
+
+<h1><span class="num">{N}</span>Best practices</h1>
+<p>Most of a trajectory's accuracy is decided before PosPro runs: by how the data were recorded. These are the practices used across the industry for GNSS/INS mobile mapping, and how PosPro supports each.</p>
+<h2>In the field</h2>
+<table>
+<tr><th>Practice</th><th>Why</th></tr>
+<tr><td>Measure the antenna and Lidar offsets to the Certus reference point to 1&nbsp;cm, and enter them in the mapper (<i>Settings › Hardware</i>)</td><td>Offsets go straight into every position. PosPro reads them from the capture; <span class="ui">Check antennas</span> confirms GPS1 and GPS2 from the data.</td></tr>
+<tr><td>Check that PRIM and SEC are plugged into the right antennas</td><td>Swapped antennas move the trajectory by the antenna separation and turn the Certus's heading 180°.</td></tr>
+<tr><td>Start and end with 3–5 minutes static in the open, engine running</td><td>Lets the filter settle its biases and fix the ambiguities before the drive, and gives the backward pass the same at the end.</td></tr>
+<tr><td>Drive a few turns and figure-eights early on</td><td>Makes heading and the IMU biases observable; the lever-arm solver needs turns.</td></tr>
+<tr><td>Log the base for the whole drive plus 10 minutes before and after, at 1&nbsp;s; within 10–20&nbsp;km where possible</td><td>The base must cover every rover epoch; accuracy falls about 1&nbsp;mm per km; 1&nbsp;s matches the rover's whole-second epochs.</td></tr>
+<tr><td>Record the mapper's navigation recording (mapper 2.10), not only the survey lines</td><td>One continuous recording from start to end processes as one trajectory that covers every line, static periods included.</td></tr>
+<tr><td>Use the mapper's recommended Certus outputs</td><td>Raw IMU at 200&nbsp;Hz and raw observations of both antennas at 8&nbsp;Hz on whole seconds are what tight coupling needs (see <a href="#rec">Recording settings</a>).</td></tr>
+<tr><td>Avoid long GNSS outages where you can; pass through them at a steady speed</td><td>IMU-only error grows quickly with time; the wheel constraints help most at constant speed.</td></tr>
+</table>
+<h2>In the office</h2>
+<table>
+<tr><th>Practice</th><th>Why</th></tr>
+<tr><td>Compute the base position with CSRS-PPP (best, after about 24&nbsp;h when final orbits exist) or built-in PPP; never leave the RINEX header position</td><td>The header position is often metres off; every point of the trajectory inherits it.</td></tr>
+<tr><td>Use tight coupling with both antennas and both passes</td><td>The most observations, the best bridging of gaps, and the separation check.</td></tr>
+<tr><td>Accept a trajectory when: fixed ≥ 95&nbsp;%, forward/backward separation 95&nbsp;% below 5&nbsp;cm, no IMU-only gap longer than about 30&nbsp;s</td><td>The common acceptance criteria for survey-grade mobile mapping; Quality shows each.</td></tr>
+<tr><td>Fix inputs, not results: a bad base file, wrong offsets or a wrong setting are fixed and processed again before any review</td><td>Review edits are for what the data cannot give (a wrong fix under trees), not a substitute for correct inputs.</td></tr>
+<tr><td>Solve the lever arms once per installation, from a drive with turns, and keep the measured values when the solver disagrees by more than a few centimetres without a reason</td><td>A solved value is only as good as the drive it came from.</td></tr>
+<tr><td>Prefer bridging with the IMU over interpolation for anything longer than a few seconds</td><td>The IMU knows the turns and bumps; a curve guesses them.</td></tr>
+<tr><td>Keep the export note with every exported trajectory</td><td>It records the frame, epoch, reference point and time base, which the next user needs.</td></tr>
+</table>
 <!--#include install-->
 <!--#include window-->
 <p>Below the steps, the bottom of the window holds the <b>status line</b> (the last message, or the stage of the job that is running), a progress bar and a red <span class="ui">STOP</span> button while a job runs, and short <b>messages</b> (green, amber or red edge) that disappear after a few seconds. Warnings and errors also go to the QGIS message bar and to <span class="ui">Show the log</span>. Only one job runs at a time; starting another while one runs gives <i>Wait for the current job to finish (or cancel it).</i></p>
 <p>The default window is 1400 × 950 pixels; docked left or right it is 720 pixels wide.</p>
 
 <!--#include projects-->
-<figure class="half"><img src="fig/found_captures.png"><figcaption><b>Figure {N}.3</b> After a new project is created, PosPro offers the captures it found in the job folder as rover files.</figcaption></figure>
-<figure class="half"><img src="fig/choose_rover.png"><figcaption><b>Figure {N}.4</b> A mapper 2.10 project with a navigation recording and survey lines: choose <span class="ui">Navigation</span> (recommended), <span class="ui">Survey lines</span> or <span class="ui">Neither</span>.</figcaption></figure>
+<figure class="half"><img src="fig/choose_rover.png"><figcaption><b>Figure {N}.3</b> A mapper 2.10 project with a navigation recording and survey lines: choose <span class="ui">Navigation</span> (recommended), <span class="ui">Survey lines</span> or <span class="ui">Neither</span>.</figcaption></figure>
 <p><b>Navigation or survey lines?</b> A mapper 2.10 navigation recording holds everything the Certus sent while the mapper project was open: the static periods before and after the drive and the time between the lines as well as the lines themselves. Processed once, it gives one trajectory that covers every line, which suits PPK and tight coupling best. The survey lines hold only each line and a few seconds around it. Files are read in recording order, whatever their names. The navigation recording's hardware record has no vehicle, rear axle or coordinate system; PosPro takes those from a survey line of the same job.</p>
 <p>PosPro keeps its own settings in <code>01_PosPro/pospro.json</code> and its work in <code>01_PosPro/work/</code> (extracted data, intermediate files, results). Shared facts that the other stages need (coordinate frame, base station, antenna offsets, vehicle, the capture's hardware record, the list of captures) are written into the shared project whenever you change them in PosPro.</p>
 
 <h1><span class="num">{N}</span>Step 1 – Data</h1>
+<div class="tip"><b>Why here</b> Everything is computed from the rover files. Reading them first shows how complete the recording is (IMU and satellite coverage, gaps) before any time is spent on it; a recording with holes is better found now than after processing.</div>
 <p>The Data page holds the rover files, what they contain, the time range to process and the satellite ephemeris.</p>
 <figure><img src="fig/data_files.png"><figcaption><b>Figure {N}.1</b> The rover files of the project: the two captures found in the job folder.</figcaption></figure>
 
@@ -132,9 +260,57 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <li>Every navigation file that is not the Certus's own or the IGS broadcast file is checked first: each orbit is compared with the Certus's orbits and, with internet, the IGS broadcast orbits of the same satellite. Orbits more than 30&nbsp;m apart are left out, and the log names the file and the satellites. One bad orbit is enough to ruin a trajectory, so if the warning comes up, take the file out of the base folder. Satellites with no reference orbit (GLONASS without internet) cannot be checked and are kept.</li>
 </ul>
 
-<h1><span class="num">{N}</span>Step 2 – Base stations</h1>
+<h1><span class="num">{N}</span>Step 2 – Installation</h1>
+<div class="tip"><b>Why here</b> The antenna offsets are used in every epoch of processing. They come straight from the capture, so this step is mostly a check; but a wrong or swapped antenna cannot be repaired after processing, only by processing again. <span class="ui">Check antennas</span> confirms them from the data itself.</div>
+<p>Offsets are in metres from the Certus reference point, in the vehicle frame: <b>Forward +, Starboard +, Down +</b>. This is the same frame and the same values as the mapper's <i>Settings › Hardware</i>, and the page is laid out the same way. The offsets are filled from the capture when the rover files are read.</p>
+<figure><img src="fig/installation.png"><figcaption><b>Figure {N}.1</b> The Installation page, filled from the mapper's <code>hardware.json</code> in the capture. The green notes confirm that the values match the capture.</figcaption></figure>
+
+<h2>Mounting drawing</h2>
+<p>Choose the <span class="ui">Vehicle</span>: Van, Truck or Car, the same vehicles and sizes as in the mapper (<i>Settings › Hardware</i>). When the rover files are read, the vehicle recorded in the capture is chosen for you. The vehicle also sets the wheel constraints used in processing (below). The drawing shows the vehicle from above, from starboard and from the rear, with the Certus origin, GPS1, GPS2, the output point (Lidar) and the rear axle as you enter them, so a sign error or a swapped axis shows at a glance.</p>
+
+<h2>Positioning and motion</h2>
+<ul>
+<li><span class="ui">Positioning motion sensor</span>: the IMU model, which sets the noise and bias values the filter uses: Advanced Navigation Certus Evo (default), Advanced Navigation Certus, Generic tactical-grade MEMS, Generic industrial MEMS.</li>
+<li><span class="ui">Mounting angles</span>: the Certus alignment (roll + starboard down, pitch + bow up, heading + clockwise) from the capture. The Certus applies its alignment itself, so its output is already in the vehicle frame; the angles are shown for checking only.</li>
+<li><span class="ui">Primary GPS (GPS1)</span> and <span class="ui">Secondary GPS (GPS2)</span>: the antenna offsets. Under each row PosPro shows what the Certus or the capture reports: green <i>✓ matches</i> within 1&nbsp;cm, amber <i>≠ differs by … mm</i> otherwise. With the Certus dual antenna in automatic mode there is no GPS2 offset to read, and PosPro says so.</li>
+<li><span class="ui">Use the secondary antenna in tight coupling</span> (on by default): with both antennas, heading stays observable when parked or driving straight, and GNSS gaps are bridged better. It is greyed out when the captures hold no observations of the second antenna. GPS2 is used only when its offset is not zero.</li>
+<li><span class="ui">Measure GPS2 from the data</span>: computes the GPS1–GPS2 carrier-phase baseline from the recorded observations, turns it into the vehicle frame with the Certus attitude and adds it to GPS1. It works parked or driving, needs a few minutes with both antennas in the open, and asks before using the result (with its ± values, the antenna separation and the share of fixed epochs). Enter GPS1 first. If the antennas may be plugged in the wrong way round, run <span class="ui">Check antennas</span> first: swapped antennas also turn the Certus heading 180°, which would hide the swap from this measurement.</li>
+<li><span class="ui">Check antennas</span>: see below.</li>
+</ul>
+
+<h2>Checking the antennas</h2>
+<p>If the PRIM and SEC antenna cables were plugged in the wrong way round, GPS1 (the primary receiver) is really on the secondary antenna, and every offset is wrong by the whole distance between the antennas. The Certus does not notice: its own heading simply turns 180°. <span class="ui">Check antennas</span> finds it from the recorded data, without a base station:</p>
+<ul>
+<li>It measures the GPS1&nbsp;→&nbsp;GPS2 baseline from the carrier phase of both receivers (fixed epochs only), and while the vehicle drives straight above 11&nbsp;km/h it puts that baseline in the vehicle frame using the <b>direction of travel</b>, which does not depend on the antennas.</li>
+<li>It compares the result with the offsets above: <i>Antennas as installed</i> (green), <i>Antennas swapped</i> (red: GPS2 is where GPS1 should be) or <i>Not conclusive</i> (amber: neither, or too little straight driving; parked data cannot tell, because then only the Certus heading is available).</li>
+<li>It also reports how far the Certus heading was from the direction of travel; about 180° confirms swapped antennas.</li>
+</ul>
+<figure><img src="fig/antenna_check.png"><figcaption><b>Figure {N}.2</b> A drive recorded with the antenna cables swapped: GPS2 was measured 0.99&nbsp;m to starboard of GPS1 instead of 0.99&nbsp;m to port, and the Certus heading was 180° off.</figcaption></figure>
+<p>When the antennas look swapped, <span class="ui">Swap the GPS1 / GPS2 offsets for this project</span> processes the data as it was recorded: GPS1 gets GPS2's offset and the other way round, and when the Certus heading was turned 180° the INS is aligned from the direction of travel instead (Processing › Alignment <i>From motion</i>). Process again afterwards, and fix the cables on the unit for the next captures. In the Trajectory editor the measured GPS2 positions are drawn along the track as well (see <i>The Trajectory editor</i>).</p>
+
+<h2>Survey sensor / output point</h2>
+<p>A <span class="ui">Name</span> (for example <i>Lidar</i>) and the <span class="ui">Sensor offsets</span> of the point you may want the trajectory exported at. It appears as a choice under <span class="ui">Position of</span> on the Export page. Leave it at 0 to export at the Certus. The published trajectory for AlignPro and CloudPro is always at the IMU centre, whatever you enter here.</p>
+
+<h2>Vehicle</h2>
+<ul>
+<li><b>Wheel constraints</b> follow the vehicle chosen above: the rear axle of a van or car may slide sideways at 0.10&nbsp;m/s, of a truck at 0.15&nbsp;m/s. For a platform without wheels (a boat, a trolley), switch <span class="ui">Wheeled vehicle constraint</span> off on the Processing page, and <span class="ui">Zero velocity when parked</span> too if it never stands still.</li>
+<li><span class="ui">IMU time offset</span> (ms): a fixed time shift of the IMU data, for expert use; leave it at 0 for the Certus.</li>
+<li><span class="ui">Rear axle centre</span>: the wheeled-vehicle constraint says the rear axle does not slide sideways or lift. If the Certus is not above the axle, enter where the axle centre is: in a turn at 0.3&nbsp;rad/s each metre of offset is 0.3&nbsp;m/s of sideways speed at the Certus. Measure it once per vehicle; a tape to 5&nbsp;cm is enough. The mapper's rear-axle value is read from the capture when it is there.</li>
+</ul>
+<h2>IMU mounting correction</h2>
+<p>The wheel constraints need to know which way the vehicle points in the IMU's frame. When the alignment set in the Certus is a few degrees off how it is really mounted, PosPro estimates the difference (pitch and yaw) during every processing and writes it to the log (<i>vehicle frame against the IMU: pitch … yaw …</i>). The forward and backward passes can settle on different values, most often in yaw. Here you set them once:</p>
+<ul>
+<li><span class="ui">Pitch</span> / <span class="ui">Yaw of the vehicle against the IMU</span> (degrees). Roll does not matter for the wheel constraints.</li>
+<li><span class="ui">How processing uses them</span>: <i>Estimate them from the drive, starting at these values</i> (default; with values entered they may still move by about 1°), or <i>Use these values as they are</i> (held fixed).</li>
+<li><span class="ui">Use the values from the last processing</span> copies the estimate of the last processing (both passes weighted by their accuracy); the line under it shows that estimate and each pass's values.</li>
+</ul>
+<div class="note"><b>Which captures</b> The correction belongs to captures recorded with the current Certus alignment. Once the alignment is corrected in the Certus, its output is already in the vehicle frame: new captures need 0°.</div>
+<p><span class="ui">Use offsets from the capture</span> (shown when the capture holds offsets) sets GPS1, GPS2, the Lidar offset, the rear axle and the vehicle from the mapper's <code>hardware.json</code>, or else from the Certus installation record (packet 185) and dual-antenna set-up (packet 196), and lists what it set. The line under it says where the offsets came from (<i>Offsets from: mapper hardware.json</i>, or <i>Offsets entered by hand</i>). The Installation step turns amber while the GPS1 offset is zero.</p>
+
+<h1><span class="num">{N}</span>Step 3 – Base stations</h1>
+<div class="tip"><b>Why here</b> Every PPK position is relative to the base, so the base's own position decides where the whole trajectory sits. It is computed (PPP or CSRS-PPP) before processing; the RINEX header position is only approximate.</div>
 <p>Differential processing (PPK) and tight coupling need one base station that covers the whole drive. Every point of the trajectory inherits the base position's error and its frame, so give the base a precise position before processing. The Base page is not needed for PPP or for the real-time mode (the step then reads <i>not needed (PPP)</i> or stays grey).</p>
-<figure><img src="fig/base.png"><figcaption><b>Figure {N}.1</b> The Base page before a base station is added. The position fields are filled in once a base is selected in the table.</figcaption></figure>
+<figure><img src="fig/base.png"><figcaption><b>Figure {N}.1</b> The Base page with a Reach base station's RINEX added: 0.7&nbsp;km from the drive, 1&nbsp;s, covering the whole drive. Its position is still the approximate one from the RINEX header (amber): compute it with built-in PPP or CSRS-PPP before processing.</figcaption></figure>
 
 <h2>The base table</h2>
 <table>
@@ -181,53 +357,8 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 </ol>
 <p>Station lists are cached for a week; <span class="ui">Refresh station lists</span> loads them again. The commercial stations come from NRCan's list of networks tied to NAD83(CSRS), so they cover Canada only.</p>
 
-<h1><span class="num">{N}</span>Step 3 – Installation</h1>
-<p>Offsets are in metres from the Certus reference point, in the vehicle frame: <b>Forward +, Starboard +, Down +</b>. This is the same frame and the same values as the mapper's <i>Settings › Hardware</i>, and the page is laid out the same way. The offsets are filled from the capture when the rover files are read.</p>
-<figure><img src="fig/installation.png"><figcaption><b>Figure {N}.1</b> The Installation page, filled from the mapper's <code>hardware.json</code> in the capture. The green notes confirm that the values match the capture.</figcaption></figure>
-
-<h2>Mounting drawing</h2>
-<p>Choose the <span class="ui">Vehicle</span>: Van, Truck or Car, the same vehicles and sizes as in the mapper (<i>Settings › Hardware</i>). When the rover files are read, the vehicle recorded in the capture is chosen for you. The vehicle also sets the wheel constraints used in processing (below). The drawing shows the vehicle from above, from starboard and from the rear, with the Certus origin, GPS1, GPS2, the output point (Lidar) and the rear axle as you enter them, so a sign error or a swapped axis shows at a glance.</p>
-
-<h2>Positioning and motion</h2>
-<ul>
-<li><span class="ui">Positioning motion sensor</span>: the IMU model, which sets the noise and bias values the filter uses: Advanced Navigation Certus Evo (default), Advanced Navigation Certus, Generic tactical-grade MEMS, Generic industrial MEMS.</li>
-<li><span class="ui">Mounting angles</span>: the Certus alignment (roll + starboard down, pitch + bow up, heading + clockwise) from the capture. The Certus applies its alignment itself, so its output is already in the vehicle frame; the angles are shown for checking only.</li>
-<li><span class="ui">Primary GPS (GPS1)</span> and <span class="ui">Secondary GPS (GPS2)</span>: the antenna offsets. Under each row PosPro shows what the Certus or the capture reports: green <i>✓ matches</i> within 1&nbsp;cm, amber <i>≠ differs by … mm</i> otherwise. With the Certus dual antenna in automatic mode there is no GPS2 offset to read, and PosPro says so.</li>
-<li><span class="ui">Use the secondary antenna in tight coupling</span> (on by default): with both antennas, heading stays observable when parked or driving straight, and GNSS gaps are bridged better. It is greyed out when the captures hold no observations of the second antenna. GPS2 is used only when its offset is not zero.</li>
-<li><span class="ui">Measure GPS2 from the data</span>: computes the GPS1–GPS2 carrier-phase baseline from the recorded observations, turns it into the vehicle frame with the Certus attitude and adds it to GPS1. It works parked or driving, needs a few minutes with both antennas in the open, and asks before using the result (with its ± values, the antenna separation and the share of fixed epochs). Enter GPS1 first. If the antennas may be plugged in the wrong way round, run <span class="ui">Check antennas</span> first: swapped antennas also turn the Certus heading 180°, which would hide the swap from this measurement.</li>
-<li><span class="ui">Check antennas</span>: see below.</li>
-</ul>
-
-<h2>Checking the antennas</h2>
-<p>If the PRIM and SEC antenna cables were plugged in the wrong way round, GPS1 (the primary receiver) is really on the secondary antenna, and every offset is wrong by the whole distance between the antennas. The Certus does not notice: its own heading simply turns 180°. <span class="ui">Check antennas</span> finds it from the recorded data, without a base station:</p>
-<ul>
-<li>It measures the GPS1&nbsp;→&nbsp;GPS2 baseline from the carrier phase of both receivers (fixed epochs only), and while the vehicle drives straight above 11&nbsp;km/h it puts that baseline in the vehicle frame using the <b>direction of travel</b>, which does not depend on the antennas.</li>
-<li>It compares the result with the offsets above: <i>Antennas as installed</i> (green), <i>Antennas swapped</i> (red: GPS2 is where GPS1 should be) or <i>Not conclusive</i> (amber: neither, or too little straight driving; parked data cannot tell, because then only the Certus heading is available).</li>
-<li>It also reports how far the Certus heading was from the direction of travel; about 180° confirms swapped antennas.</li>
-</ul>
-<figure><img src="fig/antenna_check.png"><figcaption><b>Figure {N}.2</b> A drive recorded with the antenna cables swapped: GPS2 was measured 0.99&nbsp;m to starboard of GPS1 instead of 0.99&nbsp;m to port, and the Certus heading was 180° off.</figcaption></figure>
-<p>When the antennas look swapped, <span class="ui">Swap the GPS1 / GPS2 offsets for this project</span> processes the data as it was recorded: GPS1 gets GPS2's offset and the other way round, and when the Certus heading was turned 180° the INS is aligned from the direction of travel instead (Processing › Alignment <i>From motion</i>). Process again afterwards, and fix the cables on the unit for the next captures. In the Trajectory editor the measured GPS2 positions are drawn along the track as well (see <i>The Trajectory editor</i>).</p>
-
-<h2>Survey sensor / output point</h2>
-<p>A <span class="ui">Name</span> (for example <i>Lidar</i>) and the <span class="ui">Sensor offsets</span> of the point you may want the trajectory exported at. It appears as a choice under <span class="ui">Position of</span> on the Export page. Leave it at 0 to export at the Certus. The published trajectory for AlignPro and CloudPro is always at the IMU centre, whatever you enter here.</p>
-
-<h2>Vehicle</h2>
-<ul>
-<li><b>Wheel constraints</b> follow the vehicle chosen above: the rear axle of a van or car may slide sideways at 0.10&nbsp;m/s, of a truck at 0.15&nbsp;m/s. For a platform without wheels (a boat, a trolley), switch <span class="ui">Wheeled vehicle constraint</span> off on the Processing page, and <span class="ui">Zero velocity when parked</span> too if it never stands still.</li>
-<li><span class="ui">IMU time offset</span> (ms): a fixed time shift of the IMU data, for expert use; leave it at 0 for the Certus.</li>
-<li><span class="ui">Rear axle centre</span>: the wheeled-vehicle constraint says the rear axle does not slide sideways or lift. If the Certus is not above the axle, enter where the axle centre is: in a turn at 0.3&nbsp;rad/s each metre of offset is 0.3&nbsp;m/s of sideways speed at the Certus. Measure it once per vehicle; a tape to 5&nbsp;cm is enough. The mapper's rear-axle value is read from the capture when it is there.</li>
-</ul>
-<h2>IMU mounting correction</h2>
-<p>The wheel constraints need to know which way the vehicle points in the IMU's frame. When the alignment set in the Certus is a few degrees off how it is really mounted, PosPro estimates the difference (pitch and yaw) during every processing and writes it to the log (<i>vehicle frame against the IMU: pitch … yaw …</i>). The forward and backward passes can settle on different values, most often in yaw. Here you set them once:</p>
-<ul>
-<li><span class="ui">Pitch</span> / <span class="ui">Yaw of the vehicle against the IMU</span> (degrees). Roll does not matter for the wheel constraints.</li>
-<li><span class="ui">How processing uses them</span>: <i>Estimate them from the drive, starting at these values</i> (default; with values entered they may still move by about 1°), or <i>Use these values as they are</i> (held fixed).</li>
-<li><span class="ui">Use the values from the last processing</span> copies the estimate of the last processing (both passes weighted by their accuracy); the line under it shows that estimate and each pass's values.</li>
-</ul>
-<div class="note"><b>Which captures</b> The correction belongs to captures recorded with the current Certus alignment. Once the alignment is corrected in the Certus, its output is already in the vehicle frame: new captures need 0°.</div>
-<p><span class="ui">Use offsets from the capture</span> (shown when the capture holds offsets) sets GPS1, GPS2, the Lidar offset, the rear axle and the vehicle from the mapper's <code>hardware.json</code>, or else from the Certus installation record (packet 185) and dual-antenna set-up (packet 196), and lists what it set. The line under it says where the offsets came from (<i>Offsets from: mapper hardware.json</i>, or <i>Offsets entered by hand</i>). The Installation step turns amber while the GPS1 offset is zero.</p>
-
 <h1><span class="num">{N}</span>Step 4 – Processing</h1>
+<div class="tip"><b>Why here</b> With the data read, the antennas checked and the base positioned, processing has everything it needs. The defaults (tight coupling, both antennas, both passes) are the most accurate and suit almost every drive.</div>
 <figure><img src="fig/processing.png"><figcaption><b>Figure {N}.1</b> The Processing page with its default settings (tightly coupled, PPK, both passes) and the <span class="ui">Advanced</span> section opened.</figcaption></figure>
 
 <h2>Method</h2>
@@ -283,6 +414,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <p>The status line shows the stage and the progress bar the progress; <span class="ui">STOP</span> ends the run. The project box turns red and the PosPro workflow box reads <i>running</i>; another computer cannot process the same stage at the same time (<i>… is being processed by … on … since …</i>). When the run finishes, the Quality page opens. A run that fails or is stopped keeps the earlier results, and the PosPro box shows <i>failed</i>.</p>
 
 <h1><span class="num">{N}</span>Step 5 – Quality</h1>
+<div class="tip"><b>Why here</b> Judge the result before building on it. The share of fixed ambiguities, the forward/backward separation and the longest IMU-only gap say whether to go on, change a setting, or fix an input and process again.</div>
 <figure><img src="fig/quality.png"><figcaption><b>Figure {N}.1</b> The Quality page for a real-time trajectory. With one pass there is no forward/backward separation; see the note below.</figcaption></figure>
 <p>The donut shows the share of each solution type (Fixed mint, Float blue, PPP light blue, Code (DGNSS) amber, Single red, INS only violet). The cards:</p>
 <table>
@@ -309,9 +441,23 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <p>The tabs: <b>Position accuracy</b> (σ north, east, down), <b>Forward − backward separation</b> (north, east, down, where both passes have a solution), <b>Attitude accuracy</b> (σ roll, pitch, heading), <b>Satellites and solution</b> (satellites and the ambiguity ratio ÷ 10), <b>Speed</b>, <b>Ellipsoidal height</b>, <b>Roll and pitch</b> and <b>IMU bias estimates</b> (accelerometers in mg, gyros in deg/h).</p>
 <p>Wheel to zoom, drag to pan, double-click (or <span class="ui">Whole drive</span>) for the whole drive. Hover for the values at a time. A click marks the time with an orange line and shows that place on the map with an orange circle. With <span class="ui">Link zoom</span> on, all tabs follow the same time range. Under every plot a strip shows the solution type in the map colours, and GNSS gaps (INS only) are shaded violet.</p>
 
-<h1><span class="num">{N}</span>Step 6 – Trajectory Review</h1>
+<h1><span class="num">{N}</span>Step 6 – Calibration</h1>
+<div class="tip"><b>Why here</b> Solving the lever arms needs a processed drive and means processing again with the result. Doing it before any review means no hand edits are lost. It is optional: for a known installation, skip it.</div>
+<p>The lever-arm solver estimates the IMU-to-antenna offsets from the drive itself and shows them beside the ones you entered, so a mis-measured antenna shows up before it spoils a survey. It works on data you have already processed; measure the offsets as well as you can first, and let the solver check and refine them.</p>
+<figure><img src="fig/calibration.png"><figcaption><b>Figure {N}.1</b> The Calibration page before solving: the entered GPS1 offsets, nothing solved yet.</figcaption></figure>
+<ol class="steps">
+<li>Process the drive with <span class="ui">Tightly coupled</span> and a base station, fixed for most of the drive. The solver needs tight coupling; in any other mode it says so (Figure {N}.2).</li>
+<li>Press <span class="ui">Solve lever arms</span>. Both passes run again with the offsets as unknowns, about as long as a normal processing run, and are combined by their accuracy.</li>
+<li>Read the table: <span class="ui">Offset</span> (GNSS 1 and, when used, GNSS 2; X forward, Y right, Z down), <span class="ui">Entered</span>, <span class="ui">Solved</span>, <span class="ui">± 1σ</span> and <span class="ui">Change</span>. A change in amber is larger than three standard deviations and 2&nbsp;cm.</li>
+<li>Re-measure an amber offset if you can. Otherwise press <span class="ui">Apply solved offsets</span>: the solved values go to the Installation page. Process again so the trajectory uses them, and enter the same values in the Certus and the mapper Settings if you keep them.</li>
+</ol>
+<figure class="half"><img src="fig/calib_needs_tc.png"><figcaption><b>Figure {N}.2</b> The solver needs tight coupling.</figcaption></figure>
+<p>The offsets become observable when the vehicle turns and changes speed: drive a few figure-eights or loops in open sky. Horizontal offsets come out to about a centimetre; the vertical offset is weaker, so keep the tape measure for that one. A straight drive cannot separate the forward offset from the IMU's own errors.</p>
+
+<h1><span class="num">{N}</span>Step 7 – Trajectory Review</h1>
+<div class="tip"><b>Why here</b> Hand edits belong to one processed trajectory (processing again takes hand selections off the list), so they come once the processing is final. Review is for what the data cannot give, such as a wrong fix under trees; wrong inputs are fixed at their own step and processed again.</div>
 <p>Trajectory Review finds where the trajectory misses your limits, lets you look at each place in the Trajectory editor, on the map and in the plots, and records what you decide for each. Decisions are kept with the project and carried to AlignPro and CloudPro.</p>
-<figure><img src="fig/review_found.png"><figcaption><b>Figure {N}.1</b> Anomalies found on a real-time trajectory with the horizontal σ limit set to 0.015&nbsp;m. Both are still open.</figcaption></figure>
+<figure><img src="fig/review_found.png"><figcaption><b>Figure {N}.1</b> Anomalies found with the default limits on the simulated drive: the float spell under trees, the DGNSS spell with a sideways jump and the short GNSS gap. All are still open.</figcaption></figure>
 
 <h2>Limits</h2>
 <table>
@@ -385,19 +531,8 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <p>The Review step shows <i>find anomalies</i> before the first search, <i>N open</i> in amber while windows are undecided, <i>process again</i> while GNSS exclusions wait, and <i>N reviewed</i> in green when all are decided.</p>
 <div class="tip"><b>No base station?</b> Choose <span class="ui">Real-time solution (no base station)</span> on the Processing page. PosPro then uses the trajectory the Certus computed in the field (RTK when it had corrections), and Trajectory Review cleans it the same way, with the Trajectory editor for the parts it got wrong.</div>
 
-<h1><span class="num">{N}</span>Step 7 – Calibration</h1>
-<p>The lever-arm solver estimates the IMU-to-antenna offsets from the drive itself and shows them beside the ones you entered, so a mis-measured antenna shows up before it spoils a survey. It works on data you have already processed; measure the offsets as well as you can first, and let the solver check and refine them.</p>
-<figure><img src="fig/calibration.png"><figcaption><b>Figure {N}.1</b> The Calibration page before solving: the entered GPS1 offsets, nothing solved yet.</figcaption></figure>
-<ol class="steps">
-<li>Process the drive with <span class="ui">Tightly coupled</span> and a base station, fixed for most of the drive. The solver needs tight coupling; in any other mode it says so (Figure {N}.2).</li>
-<li>Press <span class="ui">Solve lever arms</span>. Both passes run again with the offsets as unknowns, about as long as a normal processing run, and are combined by their accuracy.</li>
-<li>Read the table: <span class="ui">Offset</span> (GNSS 1 and, when used, GNSS 2; X forward, Y right, Z down), <span class="ui">Entered</span>, <span class="ui">Solved</span>, <span class="ui">± 1σ</span> and <span class="ui">Change</span>. A change in amber is larger than three standard deviations and 2&nbsp;cm.</li>
-<li>Re-measure an amber offset if you can. Otherwise press <span class="ui">Apply solved offsets</span>: the solved values go to the Installation page. Process again so the trajectory uses them, and enter the same values in the Certus and the mapper Settings if you keep them.</li>
-</ol>
-<figure class="half"><img src="fig/calib_needs_tc.png"><figcaption><b>Figure {N}.2</b> The solver needs tight coupling.</figcaption></figure>
-<p>The offsets become observable when the vehicle turns and changes speed: drive a few figure-eights or loops in open sky. Horizontal offsets come out to about a centimetre; the vertical offset is weaker, so keep the tape measure for that one. A straight drive cannot separate the forward offset from the IMU's own errors.</p>
-
 <h1><span class="num">{N}</span>Step 8 – Export</h1>
+<div class="tip"><b>Why here</b> Only for other software. AlignPro and CloudPro already read the trajectory PosPro publishes every time it processes or applies a review edit.</div>
 <figure><img src="fig/export.png"><figcaption><b>Figure {N}.1</b> The Export page with SBET + SMRMSG, a text file with seven columns and a GPX track chosen.</figcaption></figure>
 <table>
 <tr><th>Setting</th><th>What it does</th></tr>
@@ -535,3 +670,26 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <li>Log a base at 1&nbsp;s, within 20&nbsp;km, for the whole drive plus 10 minutes either side. Park 1–2 minutes, then drive a few turns at the start and the end; this resolves heading and IMU biases for both passes.</li>
 <li>Measure the antenna offsets to the millimetre in the Certus aligned frame, and the rear axle to 5&nbsp;cm; then check them with the lever-arm solver.</li>
 </ul>
+<h1 id="history"><span class="num">{N}</span>Version history</h1>
+<table>
+<tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>2.0.0</b></td><td>A guided workflow in three phases: <b>Prepare</b> (Data, Installation, Base), <b>Process</b> (Processing, Quality, Calibration), <b>Finish</b> (Review, Export). Installation now comes before Base, so the antennas are checked before anything is processed, and Calibration before Review, because solving the lever arms means processing again (see <i>The workflow and why it is in this order</i>). The Base step reads <i>not needed</i> in real-time mode. This guide rebuilt: how a trajectory is made, the workflow, best practices, a <i>Why here</i> note for every step, workflow diagrams, contents and an index, and screenshots of this version.</td></tr>
+<tr><td><b>1.8.0</b></td><td><span class="ui">Check antennas</span> (Installation page and Trajectory editor): measures where GPS2 really was relative to GPS1 while driving straight, using the direction of travel rather than the Certus heading, and says whether the antennas match the installation or look swapped; one click then swaps the offsets and aligns from motion. Trajectory editor: <span class="ui">Direction</span> chevrons along the track, <span class="ui">Antennas</span> (GPS1 and GPS2 drawn along the track, and the vehicle at the point under the mouse) and the measured GPS2 positions. The QGIS map's trajectory and real-time lines show arrowheads in the direction of travel.</td></tr>
+<tr><td><b>1.7.0</b></td><td><b>Trajectory editor</b>: the trajectory in plan and in a height profile side by side, linked both ways &ndash; hover or click in one and the other shows the same moment, select bad points in either (rectangle, lasso, polygon, time range) and fix them there. <span class="ui">Interpolate</span> now works in every processing mode, as a <i>smooth curve</i> (follows bends) or a <i>straight line</i>, horizontally and/or vertically, also at the start or end of the trajectory. New decision <span class="ui">Reject</span> (bad, to fix later). See <i>Trajectory Review</i>.</td></tr>
+<tr><td><b>1.6.3</b></td><td>When DCS Core is updated while QGIS is running, PosPro says to restart QGIS instead of asking for an update.</td></tr>
+<tr><td><b>1.6.2</b></td><td>Installation: <span class="ui">IMU mounting correction</span> &ndash; the pitch and yaw of the vehicle against the IMU, as a start for the estimate or held fixed, and <span class="ui">Use the values from the last processing</span>. Trajectory Review: a <span class="ui">Show</span> filter and sorting by any column.</td></tr>
+<tr><td><b>1.6.1</b></td><td>Navigation files next to the base observations, and files you add, are checked orbit by orbit against the Certus's own orbits and the IGS broadcast orbits before processing; orbits that disagree are left out and a warning names the file and the satellites (see <i>Data</i>). Processing stops with a clear error when the solution runs away (σ above 1&nbsp;km) instead of handing over an unusable trajectory. Trajectory Review: <span class="ui">Remove from list</span> and <span class="ui">Clear hand selections</span>; one drawing on the map adds one window (or a few), not one per piece; hand selections from before are taken off the list when you process again, and the anomalies are found again on the new trajectory with your limits.</td></tr>
+<tr><td><b>1.6.0</b></td><td>Guided steps: a <span class="ui">‹ Back</span> / <span class="ui">Next ›</span> bar under the pages says whether each step is done and what to press, and <span class="ui">Continue in AlignPro ›</span> on the last step once the trajectory is published (see <i>The PosPro window</i>). The version number is shown after the plugin name in the header. Fix (DCS Core 1.5.1): QGIS 4 on Windows no longer closes when you click in a floating window. Needs DCS Core 1.6.0.</td></tr>
+<tr><td><b>1.5.3</b></td><td>Fixes from the first real field test: a cycle slip on a signal that returns after a short dropout is caught (it could pull a fixed solution metres off); short losses of IMU data are bridged and the Data step reports how much is missing; the offset between the vehicle and the IMU's aligned frame is estimated while driving and reported; tightly coupled passes start from the fixed GNSS-only position. On the test drive: under 35&nbsp;% fixed before, 99.8&nbsp;% now. New: <a href="#rec">Recording settings</a>.</td></tr>
+<tr><td><b>1.5.2</b></td><td>Fix: no more "unclosed file" warnings in the QGIS log after processing.</td></tr>
+<tr><td><b>1.5.1</b></td><td>Mapper 2.10 projects: a new project offers the navigation recordings (recommended) or the survey lines; rover files are read in recording order; a navigation recording's hardware record is completed from a survey line. Needs DCS Core 1.4.0.</td></tr>
+<tr><td><b>1.5.0</b></td><td>The same header as AlignPro and CloudPro: logo, the plugin name, the workflow boxes beside it, the project box on the right, then the Window button and the user guide button. The window title is just <i>PosPro</i>. The vehicles are the mapper's (Van, Truck, Car) and set the wheel constraints; the separate motion-constraints list is gone (older projects keep what they processed with). Captures without raw IMU take their time span from the real-time solution, and a real-time trajectory is published with the frame of the Certus RTK corrections and its own rate. This guide, rewritten with screenshots of this version. Needs DCS Core 1.3.0.</td></tr>
+<tr><td>1.4.0</td><td>Named just PosPro. Opens in DCS Core's standard window: floating the first time, docked only when you choose it from the Window menu; dragging never docks it. It comes back as you left it, also after QGIS restarts; <span class="ui">Reset window</span> returns to the default. The quality plots open in the same kind of window. Neutral graphite look with lighter view backgrounds.</td></tr>
+<tr><td>1.3.x</td><td>Trajectory Review (Review). The real-time mode (the Certus solution, no base station). GPX export. The user guide is installed with the plugin.</td></tr>
+<tr><td>1.2.x</td><td>Part of the DCS chain (needs DCS Core): projects in the job folder, the trajectory published for AlignPro and CloudPro, workflow boxes with out-of-date results, relocating a moved job folder, saving the QGIS project in the project folder. Older <code>.pospro.json</code> projects still open.</td></tr>
+<tr><td>1.1.x</td><td>Tight coupling with both antennas, atmosphere estimation, signal-strength weighting, lever-arm solver, base-station finder, Installation filled from the capture, data coverage bars, <span class="ui">Measure GPS2 from the data</span>.</td></tr>
+</table>
+
+<h1 id="index"><span class="num">{N}</span>Index</h1>
+<p>Every button, setting and term with the section that explains it (chapter.section).</p>
+<!--#index-->
