@@ -345,7 +345,9 @@ class DataView(QWidget):
         self.sub = p.view_subset(center, half)
         if self.sub is not None:
             z0 = p.georef_subset(self.sub, *self.applied)[:, 2]
-            self.zlims = tuple(np.percentile(z0, [2, 98]))
+            z0 = z0[np.isfinite(z0)]
+            if len(z0):                 # an area with no points (e.g. after a new area of interest) keeps the old limits
+                self.zlims = tuple(np.percentile(z0, [2, 98]))
         if follow:
             self.set_values(*self.applied)
         if self.opened_with is None or not keep:

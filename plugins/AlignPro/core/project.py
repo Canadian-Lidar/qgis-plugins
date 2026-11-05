@@ -25,7 +25,7 @@ import numpy as np
 
 from . import clraw, engine, geo, lines as lines_mod, trajectory
 
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 STAGE_FILE = "alignpro.json"
 PLUGIN = "AlignPro"
 CONVENTION = {"name": "navaq_hesai", "matrix": "M = Rz(heading) Ry(pitch) Rx(-roll) Z0",
@@ -37,7 +37,7 @@ class Project:
     def __init__(self, path=None):
         self.path = path
         self.cfg = {
-            "name": "", "version": VERSION, "created": dt.datetime.utcnow().isoformat() + "Z",
+            "name": "", "version": VERSION, "created": dt.datetime.now(dt.timezone.utc).replace(tzinfo=None).isoformat() + "Z",
             "files": [], "trajectory": {"type": "realtime", "path": "", "date": "", "leap": 18},
             "mount_source": "capture", "published": None,
             "settings": dict(engine.DEFAULT_SETTINGS),
@@ -542,7 +542,7 @@ class Project:
         if kinds["walls"] < 20:
             warn.append("Few vertical surfaces (%d): heading is weakly determined." % kinds["walls"])
         self.cfg["results"] = {
-            "time": dt.datetime.utcnow().isoformat() + "Z", "mount_in": mount,
+            "time": dt.datetime.now(dt.timezone.utc).replace(tzinfo=None).isoformat() + "Z", "mount_in": mount,
             "lever": list(self.cfg["lever"]), "latency_ms": self.cfg["latency_ms"],
             "trajectory": self.traj.source, "trajectory_info": dict(self.traj_info),
             "advised": adv, "sdev": sdev, "combis": rows,
@@ -799,6 +799,8 @@ class Project:
             idx = np.nonzero(m)[0]
             parts.append((i, idx))
         tot = sum(len(ix) for _, ix in parts)
+        if tot == 0:                  # no point of any line in the square (e.g. an area of interest elsewhere)
+            return None
         frac = min(1.0, max_pts / max(tot, 1))
         line, t, p, inten = [], [], [], []
         for i, idx in parts:
