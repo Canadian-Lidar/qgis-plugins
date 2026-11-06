@@ -115,11 +115,30 @@ def main():
         dz = float(np.median(z2 - z_i))
         assert 0.5 < dh < 3.0 and abs(dz) < 3.0, (dh, dz)      # ITRF2020 -> NAD83(CSRS)v8 in NB, 2026
         doc = deliver(p, dcs, las=True)
-        assert doc["crs"]["frame"] == td["to"] and abs(float(doc["crs"]["epoch"]) - 2026.843) < 1e-6, doc["crs"]
+        # the project's CRS is New Brunswick Stereographic, so the points are brought to epoch 1997.0 as well
+        assert doc["crs"]["frame"] == td["to"] and doc["crs"]["epoch"] == "1997.0", doc["crs"]
+        assert "epoch 2026.843 to 1997.0" in td["note"], td["note"]
         assert doc["built_from"]["stages"].get("pospro") == ho["id"], doc["built_from"]
         assert "Datum" in open(os.path.join(p.out_dir, "cloud_report.txt")).read()
         print("2. ITRF2020 trajectory moved to %s: cloud %.2f m horizontally, %.2f m vertically; cloud.json frame "
               "%r epoch %s" % (td["to"], dh, dz, doc["crs"]["frame"], doc["crs"]["epoch"]))
+        # 2b. a PPK trajectory in NAD83(CSRS) at the observation date (base from PosPro's own PPP): only the
+        #     epoch moves, by NRCan's velocities (cm level); "as observed" leaves it
+        _job.publish_sbet(dcs, tr, frame="NAD83(CSRS)", epoch=2026.843)
+        georef(p, dcs)
+        t3, e3, n3, z3 = track_xy(p, 0)
+        dh3 = float(np.median(np.hypot(e3 - np.interp(t3, t_rt, e_rt), n3 - np.interp(t3, t_rt, n_rt))))
+        dz3 = float(np.median(z3 - np.interp(t3, t_rt, z_rt)))
+        td3 = p.data.get("trajectory_datum")
+        assert td3 and td3["epoch"] == "1997.0" and 0.03 < dh3 < 0.15 and abs(dz3) < 0.05, (td3, dh3, dz3)
+        p.data["epoch"] = "observed"
+        georef(p, dcs)
+        t4, e4, n4, z4 = track_xy(p, 0)
+        dh4 = float(np.median(np.hypot(e4 - np.interp(t4, t_rt, e_rt), n4 - np.interp(t4, t_rt, n_rt))))
+        assert dh4 < 0.002 and not p.data.get("trajectory_datum"), (dh4, p.data.get("trajectory_datum"))
+        p.data["epoch"] = "default"
+        print("2b. NAD83(CSRS) 2026.843 -> 1997.0: %.3f m horizontally, %.3f m vertically; 'as observed' leaves "
+              "it (%.4f m)" % (dh3, dz3, dh4))
     else:
         _job.publish_sbet(dcs, tr)
         georef(p, dcs)

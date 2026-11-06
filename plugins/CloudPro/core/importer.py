@@ -14,6 +14,8 @@ import numpy as np
 
 from . import clraw
 from .georef import GeorefContext
+from dcs_core import epochs
+
 from .geodesy import Projector, needs_datum_shift, trajectory_to_datum
 from .store import REC
 from .trajectory import from_nav_states, read_sbet
@@ -314,6 +316,51 @@ def apply_edits(project, ed, progress=None, cancel=None):
     return n
 
 
+def move_epoch(inp, fr, datum, want, target_crs):
+    """Bring a NAD83(CSRS) trajectory (PPK in its base's epoch, or PPP after the move from ITRF2020, at the
+    observation date) to the deliverable epoch `want` with NRCan's velocity grid. Returns the datum record
+    to store, or None when nothing is moved (already there, real-time track, other datum, 'as observed')."""
+    if inp.traj is None or getattr(inp.traj, "epoch_moved", None) is not None:
+        return None
+    to = epochs.parse(want)
+    target_name = ""
+    try:
+        import pyproj
+        target_name = pyproj.CRS.from_user_input(target_crs).geodetic_crs.name
+    except Exception:       # noqa: BLE001
+        target_name = "NAD83(CSRS)" if "2953" in str(target_crs) else ""
+    frame = (datum or {}).get("to") or fr.get("name") or ""
+    if to is None or not epochs.is_nad83csrs(frame) or not epochs.is_nad83csrs(target_name):
+        return None
+    src = epochs.parse((datum or {}).get("epoch") or fr.get("epoch"))
+    if src is None:
+        inp.warnings.append("The trajectory's NAD83(CSRS) epoch is not known (base position without an epoch), "
+                            "so it is used as epoch %.1f as it is." % to)
+        return None
+    if abs(src - to) < 0.005:
+        return None
+    import numpy as np
+    tr = inp.traj
+    try:
+        lon, lat, h = epochs.propagate(np.degrees(tr.lon), np.degrees(tr.lat), tr.h, src, to)
+    except epochs.EpochError as e:
+        inp.warnings.append("The trajectory was left at epoch %.3f: %s" % (src, e))
+        return None
+    dn = float(np.median(np.radians(lat) - tr.lat)) * 6371000.0
+    de = float(np.median((np.radians(lon) - tr.lon) * np.cos(tr.lat))) * 6371000.0
+    du = float(np.median(h - tr.h))
+    tr.lat, tr.lon, tr.h = np.radians(lat), np.radians(lon), h
+    note = ("epoch %.3f to %.1f with NRCan's NAD83(CSRS) velocity grid: %.3f m north, %.3f m east, %.3f m up" %
+            (src, to, dn, de, du))
+    tr.epoch_moved = note
+    d = dict(datum or {"from": fr, "to": frame})
+    d["note"] = ("%s; %s" % (d["note"], note)) if d.get("note") else "trajectory moved from " + note
+    d["epoch"] = "%.1f" % to
+    if hasattr(inp, "datum_note"):
+        inp.datum_note = d["note"]
+    return d
+
+
 def import_chain(project, inp, opts, files=None, progress=None, cancel=None, keep_edits=True, settings=None):
     """(Re)georeference the job's .clraw (or the given files) with the chain inputs. The new points are built
     beside the current ones (Project.begin_rebuild) and replace them only when everything worked: on an error
@@ -343,7 +390,13 @@ def import_chain(project, inp, opts, files=None, progress=None, cancel=None, kee
         inp.datum_to = to
     if inp.traj is not None and getattr(inp.traj, "datum_moved", None):
         opts.source_crs = None
-        datum = {"from": fr, "note": inp.traj.datum_moved, "to": getattr(inp, "datum_to", "")}
+        datum = {"from": fr, "note": inp.traj.datum_moved, "to": getattr(inp, "datum_to", ""),
+                 "epoch": fr.get("epoch")}
+    # the coordinate epoch of the deliverable (New Brunswick 1997.0, federal 2010.0, or as observed)
+    want = settings.get("epoch", project.data.get("epoch", "default"))
+    if want == "default":
+        want = "%.1f" % epochs.default_epoch(target_crs)
+    datum = move_epoch(inp, fr, datum, want, target_crs) or datum
     ed = collect_edits(project) if keep_edits and project.lines else None
     project.begin_rebuild()
     try:

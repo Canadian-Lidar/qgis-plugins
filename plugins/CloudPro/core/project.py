@@ -178,7 +178,7 @@ class Project:
             self.store.save_meta()
 
     # ------------------------------------------------------------- staged rebuild (georeferencing)
-    STAGED_KEYS = ("lines", "inputs", "trajectory_datum", "crs", "vertical", "geoid", "geoid_path")
+    STAGED_KEYS = ("lines", "inputs", "trajectory_datum", "crs", "vertical", "geoid", "geoid_path", "epoch")
 
     @property
     def lines_dir(self):

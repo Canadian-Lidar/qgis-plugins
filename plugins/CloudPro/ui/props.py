@@ -171,6 +171,17 @@ class ProjectProperties(_ToolWindow):
         self.frame = QtWidgets.QLineEdit()
         self.frame.setReadOnly(True)
         f.addRow(chrome.label("Trajectory frame / epoch"), self.frame)
+        self.epoch = QtWidgets.QComboBox()
+        for label, val in (("Provincial standard for the CRS (New Brunswick 1997.0, else 2010.0)", "default"),
+                           ("1997.0 (New Brunswick)", "1997.0"),
+                           ("2010.0 (federal; Nova Scotia, PEI, Newfoundland and Labrador)", "2010.0"),
+                           ("As observed (no epoch change)", "observed")):
+            self.epoch.addItem(label, val)
+        self.epoch.setEditable(False)
+        self.epoch.setToolTip("NAD83(CSRS) coordinates move a few millimetres a year. The points are brought to "
+                              "this epoch with NRCan's velocity grid when the trajectory is in another one (a "
+                              "PPP trajectory is at the observation date; a PPK one at its base position's epoch).")
+        f.addRow(chrome.label("Coordinate epoch"), self.epoch)
         self.heights = QtWidgets.QComboBox()
         self.heights.addItems(["ellipsoidal", "orthometric (geoid grid)"])
         f.addRow(chrome.label("Heights"), self.heights)
@@ -212,6 +223,7 @@ class ProjectProperties(_ToolWindow):
         self.frame.setText("%s  %s" % (fr.get("name") or "-", fr.get("epoch") or ""))
         self.heights.setCurrentIndex(1 if p.data.get("vertical", "").startswith("ortho") else 0)
         self.geoid.setText(p.data.get("geoid_path", ""))
+        self.epoch.setCurrentIndex(max(0, self.epoch.findData(p.data.get("epoch", "default"))))
         self.share.setEnabled(p.dcs is not None)
 
     def _pick_crs(self):
@@ -233,7 +245,7 @@ class ProjectProperties(_ToolWindow):
 
     def _apply_geo(self):
         self.mw.apply_geodetics(self.crs.text().strip(), self.heights.currentIndex() == 1, self.geoid.text().strip(),
-                                self.share.isChecked())
+                                self.share.isChecked(), self.epoch.currentData())
 
     # ---------------------------------------------------------------- survey configuration
     def _build_cfg(self):
