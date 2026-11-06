@@ -155,6 +155,25 @@ def resolve(dcs, use_alignpro=True, override=None):
     return inp
 
 
+def _other_changes(project, used):
+    """Reasons that do not depend on handover ids: CRS, and the shared Lidar mounting when the points used it
+    (no AlignPro calibration)."""
+    why = []
+    if used.get("crs") and used["crs"] != project.crs:
+        why.append("the CRS changed (%s, the points are in %s)" % (project.crs, used["crs"]))
+    a = used.get("alignment") or {}
+    if a.get("source") in ("shared lidar mounting", "capture hardware record") and \
+            (used.get("override") or {}).get("source") != "entered":
+        lm = project.dcs.shared("lidar_mounting") or {}
+        md = lm.get("mount_deg") if isinstance(lm, dict) and (lm.get("convention") or CONVENTION) == CONVENTION \
+            else None
+        cur = [float(v) for v in md] if md else None
+        old = used.get("mount_deg")
+        if (cur is None) != (old is None) or (cur and old and max(abs(x - y) for x, y in zip(cur, old)) > 1e-9):
+            why.append("the job's shared Lidar mounting changed")
+    return why
+
+
 def georef_state(project, inp=None):
     """Reasons why the georeferenced points no longer match the chain's current inputs ([] = current)."""
     if project.dcs is None or not project.lines:
@@ -179,6 +198,10 @@ def georef_state(project, inp=None):
             why.append("AlignPro's calibration changed since the points were georeferenced")
         else:
             why.append("The AlignPro calibration the points used is no longer published")
+    if not ua.get("handover_id"):
+        why += [w[0].upper() + w[1:] for w in _other_changes(project, used)]
+    elif used.get("crs") and used["crs"] != project.crs:
+        why.append("The CRS changed")
     return why
 
 
@@ -213,4 +236,8 @@ def quick_state(project):
     if cur and cur != aid:
         why.append("AlignPro has published a new calibration since the points were georeferenced" if aid else
                    "AlignPro has published a calibration (the points use the recorded mounting)")
+    if not aid:
+        why += _other_changes(project, used)
+    elif used.get("crs") and used["crs"] != project.crs:
+        why.append("the CRS changed")
     return why

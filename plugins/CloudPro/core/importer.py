@@ -14,7 +14,7 @@ import numpy as np
 
 from . import clraw
 from .georef import GeorefContext
-from .geodesy import Projector
+from .geodesy import Projector, needs_datum_shift, trajectory_to_datum
 from .store import REC
 from .trajectory import from_nav_states, read_sbet
 
@@ -115,7 +115,7 @@ def import_recording(project, rec, traj, opts, progress=None, cancel=None, line_
         r["cls"] = 1                       # ASPRS 1 = unclassified
         r["line"] = lid
         r["rng"] = np.clip(np.round(d["range"] * 100), 0, 65535).astype(np.uint16)
-        r["az"] = np.round(d["azimuth"] * 100).astype(np.uint16) % 36000
+        r["az"] = np.mod(np.round(d["azimuth"] * 100), 36000).astype(np.uint16)   # negative azimuths wrap
         return r, len(P), nout
 
     with cf.ThreadPoolExecutor(max_workers=opts.threads) as ex:
@@ -181,50 +181,132 @@ def rebuild_grids(project, keys=None, progress=None):
 # DCS chain: georeference the job's captures with the chain's inputs, and
 # re-georeference after PosPro / AlignPro publish again, keeping every edit.
 # ---------------------------------------------------------------------------
+class Cancelled(Exception):
+    """The user stopped the georeferencing: the previous points and edits are kept."""
+
+
 def edit_key(t, ch, ret):
     return (np.round(np.asarray(t) * 1e6).astype(np.int64) << 7) | (np.asarray(ch).astype(np.int64) << 1) | \
         (np.asarray(ret).astype(np.int64) & 1)
 
 
-def collect_edits(project):
-    """Every edited point (status, class, height shift) keyed by firing time + laser + return."""
-    keys, flag, cls, dz = [], [], [], []
+EDIT_REC = np.dtype([("key", "<i8"), ("flag", "u1"), ("cls", "u1"), ("dz", "<i2")])
+
+
+class EditSpool:
+    """Edited points (status, class, height shift) keyed by firing time + laser + return, kept on disk in
+    5 s buckets of firing time, so carrying the edits of a classified cloud of any size over to new points
+    needs only one bucket in memory at a time."""
+
+    BUCKET_US = 5_000_000
+
+    def __init__(self, folder):
+        import shutil
+        self.dir = folder
+        shutil.rmtree(folder, ignore_errors=True)
+        os.makedirs(folder, exist_ok=True)
+        self.count = 0
+        self._sorted = False
+        self._cache = {}
+
+    def _path(self, b):
+        return os.path.join(self.dir, "b_%d.bin" % b)
+
+    @classmethod
+    def bucket(cls, key):
+        return (np.asarray(key) >> 7) // cls.BUCKET_US
+
+    def add(self, key, flag, cls_, dz):
+        r = np.empty(len(key), EDIT_REC)
+        r["key"], r["flag"], r["cls"], r["dz"] = key, flag, cls_, dz
+        b = self.bucket(key)
+        o = np.argsort(b, kind="stable")
+        b, r = b[o], r[o]
+        cuts = np.r_[0, np.flatnonzero(np.diff(b)) + 1, len(b)]
+        for s_, e_ in zip(cuts[:-1], cuts[1:]):
+            with open(self._path(int(b[s_])), "ab") as f:
+                r[s_:e_].tofile(f)
+        self.count += len(r)
+
+    def finish(self):
+        """Sort every bucket by key (once)."""
+        for fn in os.listdir(self.dir):
+            p = os.path.join(self.dir, fn)
+            a = np.fromfile(p, EDIT_REC)
+            a = a[np.argsort(a["key"], kind="stable")]
+            a.tofile(p)
+        self._sorted = True
+
+    def _load(self, b):
+        a = self._cache.get(b)
+        if a is None:
+            p = self._path(b)
+            a = np.fromfile(p, EDIT_REC) if os.path.exists(p) else np.zeros(0, EDIT_REC)
+            if len(self._cache) > 16:
+                self._cache.pop(next(iter(self._cache)))
+            self._cache[b] = a
+        return a
+
+    def lookup(self, keys):
+        """-> (positions in keys that were edited, their EDIT_REC records)."""
+        b = self.bucket(keys)
+        pos_out, rec_out = [], []
+        for bb in np.unique(b):
+            a = self._load(int(bb))
+            if len(a) == 0:
+                continue
+            m = np.flatnonzero(b == bb)
+            kk = keys[m]
+            p = np.clip(np.searchsorted(a["key"], kk), 0, len(a) - 1)
+            hit = a["key"][p] == kk
+            if hit.any():
+                pos_out.append(m[hit])
+                rec_out.append(a[p[hit]])
+        if not pos_out:
+            return np.zeros(0, np.int64), np.zeros(0, EDIT_REC)
+        return np.concatenate(pos_out), np.concatenate(rec_out)
+
+    def close(self):
+        import shutil
+        self._cache = {}
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+
+def collect_edits(project, folder=None):
+    """Every edited point of the current store into an EditSpool (None when nothing is edited)."""
+    sp = EditSpool(folder or os.path.join(project.work, "edits_pending"))
     for k in project.store.keys():
         a = project.store.tile_array(k)
         m = (a["flag"] != 0) | (a["cls"] != 1) | (a["dz"] != 0)
         if m.any():
             r = np.asarray(a[m])
-            keys.append(edit_key(r["t"], r["ch"], r["ret"]))
-            flag.append(r["flag"])
-            cls.append(r["cls"])
-            dz.append(r["dz"])
-    if not keys:
+            sp.add(edit_key(r["t"], r["ch"], r["ret"]), r["flag"], r["cls"], r["dz"])
+    project.store.close()
+    if sp.count == 0:
+        sp.close()
         return None
-    key = np.concatenate(keys)
-    o = np.argsort(key, kind="stable")
-    return {"key": key[o], "flag": np.concatenate(flag)[o], "cls": np.concatenate(cls)[o], "dz": np.concatenate(dz)[o]}
+    sp.finish()
+    return sp
 
 
-def apply_edits(project, ed, progress=None):
+def apply_edits(project, ed, progress=None, cancel=None):
     """Put collected edits back on the re-georeferenced points (same firing, laser and return)."""
-    if ed is None or len(ed["key"]) == 0:
+    if ed is None or ed.count == 0:
         return 0
     n = 0
     keys = project.store.keys()
     for i, k in enumerate(keys):
+        if cancel and cancel():
+            raise Cancelled()
         a = project.store.tile_array(k, writable=True)
         if len(a) == 0:
             continue
-        kk = edit_key(a["t"], a["ch"], a["ret"])
-        pos = np.clip(np.searchsorted(ed["key"], kk), 0, len(ed["key"]) - 1)
-        hit = ed["key"][pos] == kk
-        if hit.any():
-            j = np.flatnonzero(hit)
-            p = pos[hit]
-            a["flag"][j] = ed["flag"][p]
-            a["cls"][j] = ed["cls"][p]
-            a["dz"][j] = ed["dz"][p]
-            a["z"][j] = a["z"][j] + ed["dz"][p].astype(np.int32)
+        j, r = ed.lookup(edit_key(a["t"], a["ch"], a["ret"]))
+        if len(j):
+            a["flag"][j] = r["flag"]
+            a["cls"][j] = r["cls"]
+            a["dz"][j] = r["dz"]
+            a["z"][j] = a["z"][j] + r["dz"].astype(np.int32)
             n += len(j)
         if progress and i % 8 == 0:
             progress((i + 1) / max(1, len(keys)), "restoring edits")
@@ -232,56 +314,113 @@ def apply_edits(project, ed, progress=None):
     return n
 
 
-def import_chain(project, inp, opts, files=None, progress=None, cancel=None, keep_edits=True):
-    """(Re)georeference the job's .clraw (or the given files) with the chain inputs. Existing points are
-    replaced; with keep_edits the manual and filter edits are carried over to the new points.
-    Returns (lines [(lid, stats)], edits restored)."""
+def import_chain(project, inp, opts, files=None, progress=None, cancel=None, keep_edits=True, settings=None):
+    """(Re)georeference the job's .clraw (or the given files) with the chain inputs. The new points are built
+    beside the current ones (Project.begin_rebuild) and replace them only when everything worked: on an error
+    or Cancel (raises Cancelled) the previous points, edits and settings are kept. With keep_edits the manual
+    and filter edits are carried over to the new points. A line the trajectory does not cover is skipped with
+    a warning. settings: project values that describe the points (crs, vertical, geoid, geoid_path), applied
+    with the new points and put back with the old ones on failure. Returns (lines [(lid, stats)], edits
+    restored)."""
     from . import clraw as _clraw
     files = files or inp.files
     groups = _clraw.group_recordings(files)
     if not groups:
         raise ValueError("No .clraw files found for this job")
     old_lines = {tuple(sorted(l.get("files", []))): l for l in project.lines}
-    ed = collect_edits(project) if keep_edits and project.lines else None
-    project.reset_points()
     opts.latency = inp.latency
     if inp.source_crs:
         opts.source_crs = inp.source_crs
-    out = []
-    n = len(groups)
-    for k, (key, paths) in enumerate(groups.items()):         # in recording order (DCS Core)
-        rec = _clraw.Recording(paths)
-        traj = inp.traj if inp.traj is not None else load_trajectory(rec)
-        o = ImportOptions(**dict(opts.__dict__))
-        prev = old_lines.get(tuple(sorted(rec.paths)))
-        if prev:                      # keep the per-line point options used before
-            for f in ("returns", "rmin", "rmax", "decimate", "drop_duplicates"):
-                if f in prev:
-                    setattr(o, f, prev[f])
-        if inp.mount is not None:
-            o.mount = inp.mount
-        if inp.lever is not None:
-            o.lever = inp.lever
-        lid, st = import_recording(project, rec, traj, o,
-                                   progress=(lambda f, s, k=k: progress((k + f) / n * 0.9, "line %s: %s points" % (
-                                       rec.line, "{:,}".format(s["points"])))) if progress else None,
-                                   cancel=cancel, line_name=prev.get("name") if prev else None)
-        project.lines[lid]["calibration"] = inp.align_info.get("calibration")
-        out.append((lid, st))
-        if cancel and cancel():
-            break
-    restored = apply_edits(project, ed, progress) if ed is not None else 0
-    if progress:
-        progress(0.95, "building the project grids")
-    rebuild_grids(project)
-    project.data["inputs"] = inp.record()
-    project.data["inputs"]["georeferenced"] = _now()
-    project.data["inputs"]["warnings"] = list(inp.warnings)
-    project.log("Georeferenced %d line(s) with %s; %s%s" % (
-        len(out), inp.traj_info.get("description", "?"), inp.align_info.get("calibration"),
-        ("; %d edited points carried over" % restored) if restored else ""))
-    project.save()
+    settings = dict(settings or {})
+    target_crs = settings.get("crs") or project.crs
+    fr = (inp.traj_info or {}).get("frame") or {}
+    datum = None
+    if inp.traj is not None and needs_datum_shift(fr.get("name")) and not getattr(inp.traj, "datum_moved", None):
+        # PosPro PPP trajectories are in ITRF2020 at the observation date: move them to the target's datum
+        # (raises DatumError rather than leaving the cloud metres off)
+        inp.datum_note, to = trajectory_to_datum(inp.traj, fr.get("name"), fr.get("epoch"), target_crs)
+        inp.traj.datum_moved = inp.datum_note
+        inp.datum_to = to
+    if inp.traj is not None and getattr(inp.traj, "datum_moved", None):
+        opts.source_crs = None
+        datum = {"from": fr, "note": inp.traj.datum_moved, "to": getattr(inp, "datum_to", "")}
+    ed = collect_edits(project) if keep_edits and project.lines else None
+    project.begin_rebuild()
+    try:
+        project.data.update(settings)
+        project.store.crs = project.crs
+        if datum:
+            project.data["trajectory_datum"] = datum
+        else:
+            project.data.pop("trajectory_datum", None)
+        out = []
+        n = len(groups)
+        for k, (key, paths) in enumerate(groups.items()):         # in recording order (DCS Core)
+            if cancel and cancel():
+                raise Cancelled()
+            rec = _clraw.Recording(paths)
+            traj = inp.traj if inp.traj is not None else load_trajectory(rec)
+            o = ImportOptions(**dict(opts.__dict__))
+            prev = old_lines.get(tuple(sorted(rec.paths)))
+            if prev:                      # keep the per-line point options used before
+                for f in ("returns", "rmin", "rmax", "decimate", "drop_duplicates"):
+                    if f in prev:
+                        setattr(o, f, prev[f])
+            if inp.mount is not None:
+                o.mount = inp.mount
+            if inp.lever is not None:
+                o.lever = inp.lever
+            if not _covers(traj, rec):
+                if prev:
+                    # dropping a line that has points (and perhaps edits) now would lose them: refuse instead
+                    raise ValueError("Line %s is not covered by the trajectory (%s), but it was georeferenced "
+                                     "before: nothing was changed. Process the whole time span in PosPro." % (
+                                         rec.line, inp.traj_info.get("description") or traj.source))
+                inp.warnings.append("Line %s is not covered by the trajectory (%s): not georeferenced" % (
+                    rec.line, traj.source))
+                continue
+            lid, st = import_recording(project, rec, traj, o,
+                                       progress=(lambda f, s, k=k, rec=rec: progress((k + f) / n * 0.9,
+                                                 "line %s: %s points" % (rec.line, "{:,}".format(s["points"]))))
+                                       if progress else None,
+                                       cancel=cancel, line_name=prev.get("name") if prev else None)
+            if cancel and cancel():
+                raise Cancelled()
+            project.lines[lid]["calibration"] = inp.align_info.get("calibration")
+            out.append((lid, st))
+        if not out:
+            raise ValueError("No line could be georeferenced: the trajectory (%s) covers none of the %d line(s)"
+                             % (inp.traj_info.get("description") or "?", n))
+        restored = apply_edits(project, ed, progress, cancel) if ed is not None else 0
+        if progress:
+            progress(0.95, "building the project grids")
+        rebuild_grids(project)
+        project.data["inputs"] = inp.record()
+        project.data["inputs"]["georeferenced"] = _now()
+        project.data["inputs"]["warnings"] = list(inp.warnings)
+        project.data["inputs"]["crs"] = project.crs
+        project.log("Georeferenced %d line(s) with %s; %s%s" % (
+            len(out), inp.traj_info.get("description", "?"), inp.align_info.get("calibration"),
+            ("; %d edited points carried over" % restored) if restored else ""))
+        project.commit_rebuild()
+    except BaseException:
+        project.abort_rebuild()
+        raise
+    finally:
+        if ed is not None:
+            ed.close()
     return out, restored
+
+
+def _covers(traj, rec):
+    """Does the trajectory overlap the recording's time window at all?"""
+    try:
+        t0, t1 = rec.recording_window()
+    except Exception:           # noqa: BLE001
+        return True
+    if not t0 or not t1:
+        return True
+    return len(traj) >= 2 and traj.t[0] < t1 and traj.t[-1] > t0
 
 
 def _now():

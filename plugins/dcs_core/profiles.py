@@ -28,10 +28,13 @@ are (PosPro: antennas, rear axle, IMU, vehicle; AlignPro: Lidar).
 Frames and units as in the pipeline contract: vehicle frame X forward, Y starboard, Z down from the Certus
 reference point, metres; mounting angles in degrees, convention navaq_hesai.
 """
+import contextlib
 import datetime as _dt
 import json
 import os
 import re
+
+from . import files, locks
 
 SCHEMA = "dcs.system_profile/1"
 SECTIONS = ("antennas", "rear_axle", "imu", "vehicle", "lidar")
@@ -80,8 +83,31 @@ def set_folder(path):
 
 
 def _fname(name):
+    """A file name for a new profile called name: never one another profile's file already has (names that
+    differ only in case or in characters a file name cannot hold get " (2)", " (3)" ...)."""
     s = re.sub(r"[^A-Za-z0-9._ -]+", "_", name).strip(" .") or "profile"
-    return os.path.join(folder(), s[:80] + ".json")
+    s = s[:80]
+    d = folder()
+    taken = {f.lower() for f in os.listdir(d)}
+    cand, n = s + ".json", 2
+    while cand.lower() in taken:
+        cand = "%s (%d).json" % (s, n)
+        n += 1
+    return os.path.join(d, cand)
+
+
+@contextlib.contextmanager
+def _locked():
+    """Profiles are written by PosPro and AlignPro (and other QGIS windows): one writer at a time."""
+    lk = locks.Lock(folder(), "system profiles", "DCS Core", name=".profiles.lock", wait=10.0)
+    tl = locks.thread_lock(lk.path)
+    if not tl.acquire(timeout=10.0):
+        raise locks.Locked({"stage": "system profiles", "plugin": "another task in this QGIS"})
+    try:
+        with lk:
+            yield
+    finally:
+        tl.release()
 
 
 def new(name, system=None, notes=""):
@@ -99,7 +125,7 @@ def list_profiles():
     """All saved profiles, by name."""
     out = []
     for f in sorted(os.listdir(folder())):
-        if not f.lower().endswith(".json"):
+        if not f.lower().endswith(".json") or f.startswith("."):
             continue
         try:
             with open(os.path.join(folder(), f), "r", encoding="utf-8") as fh:
@@ -126,18 +152,46 @@ def save(profile):
     if not _valid(p):
         raise ValueError("not a system profile")
     p["updated"] = _now()
-    path = profile.get("_path") if profile.get("_path") and \
-        os.path.dirname(profile["_path"]) == folder() else _fname(p["name"])
-    old = load(p["name"])
-    if old and old.get("_path") and old["_path"] != path:
-        path = old["_path"]
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(p, fh, indent=2)
-    os.replace(tmp, path)
+    with _locked():
+        old = load(p["name"])
+        if old and old.get("_path"):
+            path = old["_path"]                 # the profile of that name keeps its file
+        elif profile.get("_path") and os.path.dirname(profile["_path"]) == folder() and \
+                os.path.exists(profile["_path"]) and (_read(profile["_path"]) or {}).get("name") == p["name"]:
+            path = profile["_path"]
+        else:
+            path = _fname(p["name"])
+        files.atomic_write_json(path, p, indent=2)
     profile["_path"] = path
     profile["updated"] = p["updated"]
     return path
+
+
+def _read(path):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def save_sections(name, sections, by="", system=None, notes=None):
+    """Put sections (name -> values) into the profile called name, creating it when there is none, and save it.
+    The file is re-read under the profiles lock and only these sections are replaced, so PosPro and AlignPro
+    saving at the same time both keep their sections. system: the recording system's identity, recorded when the
+    profile has none yet (missing keys are added). Returns the saved profile."""
+    with _locked():
+        p = load(name) or new(name, system, notes or "")
+        if system:
+            cur = p.setdefault("system", {})
+            for k, v in dict(system).items():
+                if v and not cur.get(k):
+                    cur[k] = v
+        if notes is not None:
+            p["notes"] = notes
+        update_sections(p, sections, by)
+        save(p)
+    return p
 
 
 def update_sections(profile, sections, by=""):
@@ -154,10 +208,11 @@ def update_sections(profile, sections, by=""):
 
 
 def delete(name):
-    p = load(name)
-    if p and p.get("_path"):
-        os.remove(p["_path"])
-        return True
+    with _locked():
+        p = load(name)
+        if p and p.get("_path"):
+            os.remove(p["_path"])
+            return True
     return False
 
 
@@ -217,7 +272,7 @@ def identity_of_files(paths, limit=6):
         try:
             f = clraw.ClrawFile(p)
             try:
-                got = identity(f.hardware() or {}, f.session() or {})
+                got = identity(f.hardware or {}, f.session or {})      # properties of ClrawFile
             finally:
                 close = getattr(f, "close", None)
                 if close:

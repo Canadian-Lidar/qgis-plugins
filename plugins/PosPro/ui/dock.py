@@ -1487,6 +1487,8 @@ class ProcessPage(Page):
             return "todo", ""
         r = p.cfg.get("results") or {}
         if r.get("combine") or (r.get("mode") == "gnss" and r.get("gnss")):
+            if pipeline.lever_bug_job(p):
+                return "warn", "made before 2.0.1 with an output point: process again"
             if r.get("settings_sig") and r["settings_sig"] != pipeline.settings_sig(p):
                 return "warn", "settings changed since %s: process again" % r.get("finished", "")[11:16]
             return "done", "processed %s" % r.get("finished", "")[:16]
@@ -3051,6 +3053,13 @@ class PosProDock(PluginWindow):
             pg.refresh()
         self.update_steps()
         self.refresh_map_bases()
+        if pipeline.lever_bug_job(p):
+            msg = ("This job was processed before PosPro 2.0.1 with an output point (%s) set. Its published "
+                   "trajectory is at that point although it is labelled as the IMU centre, so AlignPro and CloudPro "
+                   "apply the Lidar offset a second time. Press PROCESS to publish it again at the IMU centre."
+                   % (p.cfg["installation"].get("output_name") or "output point"))
+            self.log("warning", msg)
+            QTimer.singleShot(0, lambda: theme.msg_warn(self, "PosPro", msg))
         self.show_rt_track()
         if self.qc:
             self.show_trajectory()

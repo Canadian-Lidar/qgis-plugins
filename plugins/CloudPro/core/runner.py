@@ -11,6 +11,9 @@ from .store import parse_key
 
 def run_group_tiled(project, group, edits, buffer=10.0, lines=None, polygon=None, progress=None,
                     cancel=None, undoable_limit=20_000_000):
+    """Every tile is computed on the points as they were before the run (its buffer included), and the
+    changes are written after the last tile, so the result does not depend on the order of the tiles.
+    The grids of the changed tiles are rebuilt here (in the worker), not by the window."""
     store = project.store
     tracks = project.tracks()
     keys = store.keys()
@@ -38,25 +41,37 @@ def run_group_tiled(project, group, edits, buffer=10.0, lines=None, polygon=None
             continue
         ctx = Ctx(ps, tracks=tracks, scope_mask=core, cancel=cancel, origin=store.origin)
         group.run(ctx)
-        act = edits.apply_ctx(ctx, "Filter '%s'" % group.name, ps=ps, scope=core)
+        act = edits.apply_ctx(ctx, "Filter '%s'" % group.name, ps=ps, scope=core, write=False)
         if act is not None:
             total += act.size
             acts.append(act)
         if progress:
-            progress((n + 1) / max(1, len(keys)), "%d points changed" % total)
+            progress(0.9 * (n + 1) / max(1, len(keys)), "%d points changed" % total)
+    # write (the cores of the tiles never overlap)
+    touched = set()
+    for a in acts:
+        store.write_codes(a.codes, flag=a.new["flag"], cls=a.new["cls"], dz=a.new["dz"], z=a.new["z"])
     store.sync()
+    touched |= set(getattr(store, "dirty_tiles", set()))
+    for m, k in enumerate(sorted(touched)):
+        store.build_grid(k)
+        if progress and m % 16 == 0:
+            progress(0.9 + 0.1 * (m + 1) / max(1, len(touched)), "updating the project grids")
+    store.dirty_tiles = set()
     # merge into one undo step when small enough
     if acts:
+        from .edits import Action
         if total <= undoable_limit:
-            from .edits import Action
+            fields_old, fields_new = list(acts[0].old), list(acts[0].new)
+            codes = np.concatenate([a.codes for a in acts])
+            old = {f: np.concatenate([a.old[f] for a in acts]) for f in fields_old}
+            new = {f: np.concatenate([a.new[f] for a in acts]) for f in fields_new}
+            acts.clear()
             merged = Action("Filter '%s' (%s)" % (group.name, "selection" if polygon is not None or lines else
-                                                   "entire project"),
-                            np.concatenate([a.codes for a in acts]),
-                            {f: np.concatenate([a.old[f] for a in acts]) for f in acts[0].old},
-                            {f: np.concatenate([a.new[f] for a in acts]) for f in acts[0].new})
+                                                   "entire project"), codes, old, new)
             edits.commit(merged, True)
         else:
-            from .edits import Action
+            acts.clear()
             edits.commit(Action("Filter '%s' (entire project, %d points)" % (group.name, total),
                                 np.zeros(0, np.int64), {}, {}), False)
     return total

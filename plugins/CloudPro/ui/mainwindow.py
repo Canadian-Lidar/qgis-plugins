@@ -77,6 +77,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tracks = {}
         self._col_cache = {}
         self._busy = False
+        self._busy_tag = None
+        self._closing = False
+        self._thread = None
+        self._locked = []
+        self._pending_geo = None
+        self._why = None
         self._prev_cancel = None
         self._prev_pending = False
         self._edit_lock = None
@@ -91,8 +97,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._grid_timer.timeout.connect(self._rebuild_dirty_grids)
         self._grid_timer.start(2500)
         self._chain_timer = QtCore.QTimer(self)
-        self._chain_timer.timeout.connect(self.refresh_chain)
-        self._chain_timer.start(5000)
+        self._chain_timer.timeout.connect(lambda: self.refresh_chain(timer=True))
+        self._chain_timer.start(10000)
         self._save_timer = QtCore.QTimer(self)
         self._save_timer.timeout.connect(self._autosave)
         self._save_timer.start(120000)
@@ -465,6 +471,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # =============================================================== project
     def new_project(self):
+        if self._guard("starting another project"):
+            return
         from dcs_core import dialogs
         dcs = dialogs.new_project(self, PLUGIN)
         if dcs is None:
@@ -479,6 +487,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.georeference()
 
     def open_project(self, path=None):
+        if self._guard("opening another project"):
+            return
         if not path:
             from dcs_core import dialogs
             path = dialogs.pick_project_file(self, ";;Older CloudPro project (*.cloudpro.json)")
@@ -498,23 +508,48 @@ class MainWindow(QtWidgets.QMainWindow):
             dialogs.check_raw(self, p.dcs, PLUGIN)
         self.set_project(p)
 
+    def _reset_view_state(self):
+        """What belongs to one project only (line and class visibility, the edited line, selection,
+        preview, followed line): cleared when another project opens."""
+        self.clear_preview(refresh=False)
+        self.line_enabled = {}
+        self.class_hidden = set()
+        self.edit_line = -1
+        self.follow_line = -1
+        self.selected = None
+        self._loaded_box = None
+        self._why = None
+        self.file_idx = np.zeros(0, np.int32)
+        self.cmb_eline.blockSignals(True)
+        self.cmb_eline.setCurrentIndex(0)
+        self.cmb_eline.blockSignals(False)
+
     def set_project(self, p, reopen=False):
-        if self.project is not None and not reopen:
-            self.save_project()
-            self.project.store.close()
-            if self._edit_lock is not None:
-                self._edit_lock.release()
-                self._edit_lock = None
-        if p.dcs is not None and self._edit_lock is None:
+        if self._guard("opening another project") and not reopen:
+            return
+        same = reopen or (self.project is not None and os.path.abspath(p.path) == os.path.abspath(self.project.path))
+        new_lock = None
+        if p.dcs is not None and not (same and self._edit_lock is not None):
+            # the new project's lock first: when it is taken elsewhere the open project stays as it is
             from dcs_core import locks
             lk = locks.Lock(p.root, "CloudPro editing", PLUGIN, name=".edit.lock")
             try:
                 lk.acquire()
-                self._edit_lock = lk
+                new_lock = lk
             except locks.Locked as ex:
                 theme.msg_warn(self, "CloudPro", "This job's point cloud is open elsewhere:\n%s\n\nClose it there "
                                "first; two editors would overwrite each other's edits." % ex)
                 return
+        if self.project is not None and not same:
+            self.save_project(quiet=True)
+            self.project.store.close()
+            if self._edit_lock is not None:
+                self._edit_lock.release()
+                self._edit_lock = None
+        if new_lock is not None:
+            self._edit_lock = new_lock
+        if not same:
+            self._reset_view_state()
         self.project = p
         self._remember(p.dcs.path if p.dcs is not None else p.path)
         self.edits = EditManager(p, on_change=self._edited)
@@ -573,11 +608,16 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         try:
             self.save_project(quiet=True)
-        except Exception:       # noqa: BLE001
-            pass
+        except Exception as ex:     # noqa: BLE001
+            traceback.print_exc()
+            self.status("Automatic save failed: %s" % ex, 15000)
 
     def save_project(self, quiet=False):
         if self.project is None:
+            return
+        if self._busy:                          # the job saves the project itself when it ends
+            if not quiet:
+                self.status("Saved when the running task ends (edits are on disk already)")
             return
         sp = self.slice_pane
         self.project.data["view"] = {"box": self.box, "files_hidden": sorted(self.file_hidden),
@@ -592,16 +632,68 @@ class MainWindow(QtWidgets.QMainWindow):
         self.filters.save()
         self.status("Project saved (edits are written to disk as you make them)")
 
-    def shutdown(self):
+    def shutdown(self, wait_s=60.0):
+        """Window closed or plugin unloaded: stop a running job (Cancel) and wait for it, so nothing writes
+        into the project after its edit lock is released; save; release the lock."""
+        t = self._thread
+        if t is not None and t.is_alive():
+            self._cancel()
+            if self._prev_cancel is not None:
+                self._prev_cancel[0] = True
+            t.join(wait_s)
+        still = t is not None and t.is_alive()
+        self._closing = still or self._closing
         try:
-            self.save_project()
+            if not still:
+                self.save_project(quiet=True)
         finally:
-            if self._edit_lock is not None:
+            if self._edit_lock is not None and not still:
+                # (a job that did not stop keeps the lock; DCS Core takes it over once QGIS has exited)
                 self._edit_lock.release()
                 self._edit_lock = None
             for w in (self._props, self._area):
                 if w is not None:
                     w.close()
+
+    def ensure_lock(self):
+        """The window is shown again after being closed: take the job's edit lock again (closing released it).
+        When another editor has the job meanwhile, the project is closed here."""
+        self._closing = False
+        p = self.project
+        if p is None or p.dcs is None or self._edit_lock is not None:
+            return True
+        from dcs_core import locks
+        lk = locks.Lock(p.root, "CloudPro editing", PLUGIN, name=".edit.lock")
+        try:
+            lk.acquire()
+            self._edit_lock = lk
+            return True
+        except locks.Locked as ex:
+            theme.msg_warn(self, "CloudPro", "This job's point cloud was opened elsewhere while CloudPro was "
+                           "closed:\n%s\n\nIt is closed here." % ex)
+            self.close_project()
+            return False
+
+    def close_project(self):
+        """Nothing open (the lock could not be had)."""
+        self.clear_preview(refresh=False)
+        if self.project is not None:
+            try:
+                self.project.store.close()
+            except Exception:       # noqa: BLE001
+                pass
+        self.project = None
+        self.edits = None
+        self.ps = PointSet(0)
+        self.tracks = {}
+        self._reset_view_state()
+        self.plan.set_project(None, {}, {})
+        self.lines_w.clear()
+        self.header.set_project_name("")
+        self.workflow.hide()
+        self.lbl_inputs.hide()
+        self.btn_update.hide()
+        self.refresh_views()
 
     def closeEvent(self, e):
         try:
@@ -631,7 +723,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def relocate(self):
         p = self.project
-        if p is None or p.dcs is None:
+        if p is None or p.dcs is None or self._guard("relocating the job folder"):
             return
         d = QtWidgets.QFileDialog.getExistingDirectory(self, "New location of the job folder", p.dcs.job_folder)
         if not d:
@@ -655,7 +747,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._error("Cannot save the QGIS project", ex)
 
     def reset_points(self):
-        if self.project is None:
+        if self.project is None or self._guard("removing the points"):
             return
         if theme.msg_question(self, "CloudPro", "Remove all imported points and edits of this project? The raw "
                               "captures are not touched; Georeference rebuilds the points.") != \
@@ -663,16 +755,20 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.project.reset_points()
         self.set_project(self.project, reopen=True)
+        self.edits = EditManager(self.project, on_change=self._edited)
 
     # ------------------------------------------------------------------ chain header
-    def refresh_chain(self):
+    def refresh_chain(self, timer=False):
         p = self.project
         if p is None:
             return
+        if timer and (self._busy or not self.isVisible() or self.window().isMinimized()):
+            return              # nothing to see, or the job owns the project (it refreshes when it ends)
         if p.dcs is not None:
             self.chainbar.set_project(p.dcs)
         inp = p.data.get("inputs") or {}
         why = chain.quick_state(p) if p.dcs is not None else []
+        self._why = why
         if not p.lines:
             txt, lvl = "No points yet: Menu > Georeference", "warn"
         elif why:
@@ -701,7 +797,9 @@ class MainWindow(QtWidgets.QMainWindow):
         hist = p.data.get("history", [])
         n_edits = len(p.data.get("filter_runs", [])) + sum(1 for h in hist if str(h.get("text", "")).endswith(
             "points)") and not str(h.get("text", "")).startswith(("Undo", "Redo")))
-        self.workflow.show_states(states(p, n_edits, self.workflow.visited_clean, chain.quick_state))
+        why = getattr(self, "_why", None)
+        qs = (lambda _p: why) if why is not None else chain.quick_state      # computed once per refresh
+        self.workflow.show_states(states(p, n_edits, self.workflow.visited_clean, qs))
         self.workflow.show()
 
     def _publish_or_export(self):
@@ -745,6 +843,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if ortho and not geoid:
             theme.msg_warn(self, "CloudPro", "Choose a geoid grid for orthometric heights.")
             return
+        if self._guard("changing the geodetics"):
+            return
+        if p.lines:
+            # applied by the georeferencing, and only when it succeeds: the points and the CRS they are
+            # labelled with never disagree (cancel the dialog = nothing changes)
+            self.georeference(force=True, geo={"crs": crs, "geoid_path": geoid if ortho else "", "share": share})
+            return
         if share and p.dcs is not None:
             c = dict(p.dcs.shared("crs") or {})
             c["horizontal"] = crs
@@ -753,12 +858,10 @@ class MainWindow(QtWidgets.QMainWindow):
         p.store.crs = crs
         p.data["geoid_path"] = geoid if ortho else ""
         p.save()
-        if p.lines:
-            self.georeference(force=True)
 
     def apply_override(self, ov):
         p = self.project
-        if p is None:
+        if p is None or self._guard("changing the georeferencing values"):
             return
         p.data["override"] = ov if ov.get("source") != "alignpro" else {}
         p.save()
@@ -913,6 +1016,11 @@ class MainWindow(QtWidgets.QMainWindow):
             it.setToolTip("%s\n%s" % (ln.get("trajectory", ""), "\n".join(ln.get("files", []))))
             self.lines_w.addItem(it)
             self.cmb_eline.addItem("Only L%d" % (ln["id"] + 1), ln["id"])
+        if self.cmb_eline.findData(self.edit_line) < 0:
+            self.edit_line = -1                 # that line is gone
+        self.cmb_eline.setCurrentIndex(max(0, self.cmb_eline.findData(self.edit_line)))
+        ids = {ln["id"] for ln in self.project.lines}
+        self.line_enabled = {k: v for k, v in self.line_enabled.items() if k in ids}
         self.lines_w.blockSignals(False)
         self.cmb_eline.blockSignals(False)
         self.plan.line_enabled = dict(self.line_enabled)
@@ -972,7 +1080,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_views()
 
     # ======================================================= georeference (chain)
-    def georeference(self, force=False):
+    def georeference(self, force=False, geo=None):
+        if self._guard("georeferencing again"):
+            return
         p = self.project
         if p is None:
             if theme.msg_question(self, "CloudPro", "Create or open a job project first. Create one now?") == \
@@ -993,24 +1103,28 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         from .dialogs import GeorefDialog
         d = GeorefDialog(self, inp, p)
-        if p.data.get("geoid_path"):
-            d.geoid.setText(p.data["geoid_path"])
+        gp = (geo or {}).get("geoid_path", p.data.get("geoid_path")) if geo else p.data.get("geoid_path")
+        if gp:
+            d.geoid.setText(gp)
         if exec_(d) != QtWidgets.QDialog.DialogCode.Accepted:
             return
         opts = d.options()
         keep = d.keep_edits.isChecked()
-        if d.geoid.text().strip():
+        gtxt = d.geoid.text().strip()
+        if gtxt:
             try:
                 from ..core.export import geoid_sampler
-                opts.geoid = geoid_sampler(d.geoid.text().strip())
-                p.data["vertical"] = "orthometric"
-                p.data["geoid"] = os.path.basename(d.geoid.text().strip())
+                opts.geoid = geoid_sampler(gtxt)
             except Exception as ex:
                 self._error("Cannot read the geoid grid", ex)
                 return
-        else:
-            p.data["vertical"] = "ellipsoidal"
-            p.data["geoid"] = ""
+        # settings that describe the points: set inside the job, after Project.begin_rebuild, so a failed or
+        # cancelled georeferencing puts the previous ones back with the previous points
+        newvals = {"vertical": "orthometric" if gtxt else "ellipsoidal",
+                   "geoid": os.path.basename(gtxt) if gtxt else "", "geoid_path": gtxt}
+        if geo:
+            newvals["crs"] = geo["crs"]
+        self._pending_geo = geo
         self.clear_preview(refresh=False)
         self.edits.ps = None
         self.ps = PointSet(0)
@@ -1018,7 +1132,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def job(progress, cancel):
             with project.dcs.run("cloudpro", PLUGIN, VERSION):
-                out, rest = IM.import_chain(project, inp, opts, None, progress, cancel, keep_edits=keep)
+                out, rest = IM.import_chain(project, inp, opts, None, progress, cancel, keep_edits=keep,
+                                            settings=newvals)
             project.run_log("georeference", inp.summary() + ["warning: " + w for w in inp.warnings] +
                             ["L%d: %s points %s" % (l + 1, st["points"], st) for l, st in out] +
                             ["edits carried over: %d" % rest])
@@ -1027,7 +1142,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def publish_dialog(self):
         p = self.project
-        if p is None:
+        if p is None or self._guard("publishing"):
             return
         if p.dcs is None:
             theme.msg_info(self, "CloudPro", "Publishing is for job projects of the DCS chain; use Export for "
@@ -1059,6 +1174,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._run("publish", job, "Publishing")
 
     def import_lines(self):
+        if self._guard("adding files"):
+            return
         if self.project is None:
             if theme.msg_question(self, "CloudPro", "Create a new project first?") == \
                     QtWidgets.QMessageBox.StandardButton.Yes:
@@ -1160,6 +1277,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def load_box(self, fit=False):
         if self.project is None or self.box is None:
             return
+        if self._busy and self._busy_tag in ("georef", "import", "filter_tiled"):
+            return                              # the points are being rebuilt or edited by the job
         try:
             est = self.estimate_points(self.box)
         except Exception:       # noqa: BLE001
@@ -1534,6 +1653,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def refresh_views(self, fit=False, which=("plan", "slice", "3d")):
         ps = self.ps
+        cols = {}
+
+        def colours(mode):                      # once per colour mode, not once per view
+            if mode not in cols:
+                cols[mode] = self._colours(mode)
+            return cols[mode]
         o = self._origin()
         b = self.box or {"cx": 0, "cy": 0, "bearing": 0, "length": 1, "width": 1}
         vis = self._visible()
@@ -1546,14 +1671,14 @@ class MainWindow(QtWidgets.QMainWindow):
             sm = vis & (np.abs(u - pos) <= th / 2)
         if "plan" in which:
             idx = np.flatnonzero(vis)
-            col = self._colours(self._mode("plan"))
+            col = colours(self._mode("plan"))
             self._set_legend("plan", self.plan)
             self.plan.a_offset, self.plan.b_offset = o[0], o[1]
             self.plan.set_points(ps.x[idx], ps.y[idx], z[idx], col[idx], idx, fit=False)
             self.plan_pane.title.setText("PLAN  %s pts" % "{:,}".format(len(idx)))
         if "slice" in which:
             idx = np.flatnonzero(sm)
-            col = self._colours(self._mode("slice"))
+            col = colours(self._mode("slice"))
             self._set_legend("slice", self.slice)
             self.slice.b_offset = o[2]
             if along:
@@ -1571,7 +1696,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if "3d" in which:
             m = sm if self.v3d_pane.what.currentText() == "Slice" else vis
             idx = np.flatnonzero(m)
-            col = self._colours(self._mode("3d"))
+            col = colours(self._mode("3d"))
             self._set_legend("3d", self.v3d)
             P = np.column_stack([ps.x[idx], ps.y[idx], z[idx]])
             self.v3d.set_points(P, col[idx], idx, fit=fit or len(self.v3d.P) == 0)
@@ -1710,7 +1835,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # =============================================================== editing
     def edit_selection(self, view, mask):
-        if self.edits is None or len(self.ps) == 0:
+        if self.edits is None or len(self.ps) == 0 or self.edits.ps is None:
+            return
+        if self.action != "select" and self._guard("editing"):
             return
         if self.where == "outside":
             mask = ~mask
@@ -1729,7 +1856,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._edit_idx(idx, self.action, self.edit_class)
 
     def edit_selected(self, action, cls=None):
-        if self.selected is None or not self.selected.any():
+        if self.selected is None or not self.selected.any() or self._guard("editing"):
             return
         idx = np.flatnonzero(self.selected)
         self.selected = None
@@ -1784,30 +1911,40 @@ class MainWindow(QtWidgets.QMainWindow):
     def _update_undo(self):
         if self.edits is None:
             return
-        self.b_undo.setEnabled(self.edits.can_undo())
-        self.b_redo.setEnabled(self.edits.can_redo())
+        self.b_undo.setEnabled(self.edits.can_undo() and not self._busy)
+        self.b_redo.setEnabled(self.edits.can_redo() and not self._busy)
         self.b_undo.setToolTip("Undo " + (self.edits.undo_stack[-1].label if self.edits.undo_stack else "") +
                                " (Ctrl+Z)")
 
     def undo(self):
+        if self._guard("undoing"):
+            return
         if self.edits and self.edits.undo():
             self.after_edit()
 
     def redo(self):
+        if self._guard("redoing"):
+            return
         if self.edits and self.edits.redo():
             self.after_edit()
 
     def _rebuild_dirty_grids(self):
+        """Grids of tiles edited by hand, a few at a time (at most ~120 ms per tick, so the window stays
+        responsive; the tiled filter runs rebuild theirs in the worker)."""
         st = self.project.store if self.project else None
         if st is None or self._busy:
             return
         d = getattr(st, "dirty_tiles", set())
         if not d:
             return
-        keys = list(d)[:24]
-        for k in keys:
+        t0 = time.time()
+        keys = []
+        for k in list(d):
             st.build_grid(k)
             d.discard(k)
+            keys.append(k)
+            if time.time() - t0 > 0.12:
+                break
         self.plan.invalidate(keys)
 
     def _refresh_history(self):
@@ -1945,7 +2082,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status("%d filter settings tuned to the data" % n, 8000)
 
     def run_preview(self):
-        if self.edits is None or len(self.ps) == 0 or self.filters.group is None:
+        if self.edits is None or len(self.ps) == 0 or self.filters.group is None or self._busy:
             self.filters.preview_done()
             return
         if self._prev_cancel is not None:
@@ -2011,7 +2148,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.refresh_views()
 
     def accept_preview(self):
-        if self.preview is None:
+        if self.preview is None or self.edits is None or self.edits.ps is None or self._guard("accepting"):
             return
         g = self.filters.group
         act = self.edits.apply_ctx(self.preview, "Filter '%s' (preview accepted)" % (g.name if g else ""))
@@ -2024,7 +2161,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.after_edit()
 
     def run_scope(self, scope):
-        if self.edits is None or self.filters.group is None:
+        if self.edits is None or self.filters.group is None or self._guard("running another filter"):
             return
         g = F.FilterGroup.from_dict(self.filters.group.to_dict())
         if scope in ("Inspection Area", "Slice"):
@@ -2050,6 +2187,8 @@ class MainWindow(QtWidgets.QMainWindow):
         from ..core.runner import run_group_tiled
         project, edits = self.project, self.edits
         self.edits.ps = None
+        # the worker commits the undo step: no window callback from that thread (given back in _on_done)
+        self.edits.on_change = None
 
         def job(progress, cancel):
             def inner():
@@ -2064,7 +2203,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ================================================================== export
     def export(self):
-        if self.project is None:
+        if self.project is None or self._guard("exporting"):
             return
         d = ExportDialog(self, self.project.lines, os.path.join(self.project.root, self.project.name + ".las"))
         if exec_(d) != QtWidgets.QDialog.DialogCode.Accepted:
@@ -2112,11 +2251,44 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
 
     # ========================================================= background jobs
+    def _guard(self, what="this"):
+        """True (and a status message) while a job runs: actions that would change the points, the project or
+        start another job wait until it has finished."""
+        if self._busy:
+            self.status("Wait until '%s' has finished (or press Cancel) before %s" % (
+                (self._busy_tag or "the task").replace("_", " "), what), 6000)
+            return True
+        return False
+
+    def _lock_actions(self, busy):
+        """While a job runs, everything that would change the points or the project, or start another job, is
+        off (looking at the points, navigating, the guide and Cancel stay on)."""
+        if busy:
+            self._locked = []
+            ws = [self.btn_menu, self.btn_update, self.btn_project, self.workflow, self.filters, self.b_undo,
+                  self.b_redo, self.b_action, self.b_where, self.cmb_class, self.cmb_eline, self.infop]
+            if self._props is not None:
+                ws.append(self._props)
+            for w in ws:
+                if w is not None and w.isEnabled():
+                    w.setEnabled(False)
+                    self._locked.append(w)
+        else:
+            for w in self._locked:
+                try:
+                    w.setEnabled(True)
+                except RuntimeError:            # deleted meanwhile
+                    pass
+            self._locked = []
+            self._update_undo()
+
     def _run(self, tag, fn, label):
         if self._busy:
             theme.msg_info(self, "CloudPro", "Another task is still running.")
             return
         self._busy = True
+        self._busy_tag = tag
+        self._lock_actions(True)
         self.header.set_busy(True)              # the project box turns red while CloudPro works
         self._cancel_flag = [False]
         cancel = lambda: self._cancel_flag[0]      # noqa: E731
@@ -2134,8 +2306,12 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception as ex:     # noqa: BLE001
                 traceback.print_exc()
                 res = ex
-            self.bridge.done.emit(tag, res)
-        threading.Thread(target=work, daemon=True).start()
+            try:
+                self.bridge.done.emit(tag, res)
+            except RuntimeError:                # the window is gone (QGIS closing)
+                pass
+        self._thread = threading.Thread(target=work, daemon=True)
+        self._thread.start()
 
     def _cancel(self):
         if getattr(self, "_cancel_flag", None):
@@ -2167,19 +2343,44 @@ class MainWindow(QtWidgets.QMainWindow):
             self._props.refresh()
 
     def _on_done(self, tag, res):
+        if self._closing:
+            return
         if tag == "preview":
             self._preview_done(res)
             return
         self._busy = False
+        self._busy_tag = None
+        self._thread = None
+        self._lock_actions(False)
         self.header.set_busy(False)
         self.prog.hide()
         self.btn_cancel.hide()
         self.status("", 1)
+        if self.edits is not None and self.edits.on_change is None:
+            self.edits.on_change = self._edited             # given back after a tiled filter run
+        pend, self._pending_geo = self._pending_geo, None
+        from ..core.export import Cancelled as ExportCancelled
+        if isinstance(res, (IM.Cancelled, ExportCancelled)):
+            self.status("%s cancelled: %s" % (tag.replace("_", " ").title(),
+                                               "the previous points and edits are kept" if tag == "georef"
+                                               else "nothing was written"), 10000)
+            if tag == "filter_tiled":
+                self._after_points_changed()
+            elif tag == "georef":
+                self.load_box()
+            return
         if isinstance(res, Exception):
             self._error("%s failed" % tag.replace("_", " ").title(), res)
-            if tag in ("filter_tiled", "georef"):
+            if tag == "filter_tiled":
                 self._after_points_changed()
+            elif tag == "georef":
+                self.status("Georeferencing failed: the previous points and edits are kept", 10000)
+                self.load_box()
             return
+        if tag == "georef" and pend and pend.get("share") and self.project.dcs is not None:
+            c = dict(self.project.dcs.shared("crs") or {})
+            c["horizontal"] = self.project.crs
+            self.project.dcs.set_shared("crs", c, PLUGIN)
         if tag == "georef":
             out, rest, inp = res
             n = sum(st["points"] for _, st in out)
@@ -2223,7 +2424,9 @@ class MainWindow(QtWidgets.QMainWindow):
         elif tag == "filter_tiled":
             self.filters.set_status("%s points changed" % "{:,}".format(res))
             self.edits.ps = self.ps
+            self.plan.invalidate()                  # the worker rebuilt the changed grids
             self.load_box()
+            self._edited(None)
         elif tag == "export":
             kind, path, n, add = res
             self.status("Exported %s to %s" % ("{:,}".format(n), path), 10000)

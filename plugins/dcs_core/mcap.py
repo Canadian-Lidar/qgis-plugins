@@ -6,6 +6,7 @@ work), yields decompressed chunk record blocks and decodes the Message
 records inside them.  Damaged chunks (CRC mismatch, truncated) are skipped,
 as the mapper's own kit does.
 """
+import os
 import struct
 import zlib
 
@@ -56,6 +57,8 @@ class McapFile:
         self.attachments = {}     # name -> bytes
         self.chunk_pos = []       # (offset of compressed records, compressed length, compression, usize, ucrc, start, end)
         self.bad_chunks = 0
+        self.truncated = False    # the file ends inside a record, or a record length points past the end
+        self.size = 0
         self._scanned = False
 
     # ------------------------------------------------------------------
@@ -65,30 +68,48 @@ class McapFile:
         with open(self.path, "rb") as f:
             if f.read(8) != MAGIC:
                 raise ValueError("%s is not an MCAP/.clraw file" % self.path)
+            size = self.size = os.fstat(f.fileno()).st_size
             pos = 8
             while True:
                 hdr = f.read(9)
                 if len(hdr) < 9:
+                    self.truncated = len(hdr) > 0
                     break
                 op, ln = _rec.unpack(hdr)
                 body_pos = pos + 9
-                if op == OP_CHUNK:
-                    head = f.read(min(ln, 4096))
-                    start, end, usize, ucrc = struct.unpack_from("<QQQI", head, 0)
-                    comp, o = _str(head, 28)
-                    rlen = _u64.unpack_from(head, o)[0]
-                    o += 8
-                    self.chunk_pos.append((body_pos + o, rlen, comp, usize, ucrc, start, end))
-                    f.seek(body_pos + ln)
-                elif op in (OP_SCHEMA, OP_CHANNEL, OP_HEADER, OP_METADATA, OP_ATTACHMENT):
-                    b = f.read(ln)
-                    if len(b) < ln:
+                if body_pos + ln > size:
+                    # unfinished or damaged file: a record cannot be longer than what is left. A chunk whose
+                    # compressed records are only partly there is still listed (read_chunk counts it as bad).
+                    self.truncated = True
+                    if op != OP_CHUNK:
                         break
-                    self._record(op, b)
-                elif op == OP_FOOTER:
+                try:
+                    if op == OP_CHUNK:
+                        head = f.read(min(ln, 4096))
+                        start, end, usize, ucrc = struct.unpack_from("<QQQI", head, 0)
+                        comp, o = _str(head, 28)
+                        rlen = _u64.unpack_from(head, o)[0]
+                        o += 8
+                        if o > len(head) or rlen > ln - o:
+                            self.truncated = True
+                            break
+                        self.chunk_pos.append((body_pos + o, rlen, comp, usize, ucrc, start, end))
+                        if body_pos + ln > size:
+                            break
+                        f.seek(body_pos + ln)
+                    elif op in (OP_SCHEMA, OP_CHANNEL, OP_HEADER, OP_METADATA, OP_ATTACHMENT):
+                        b = f.read(ln)
+                        if len(b) < ln:
+                            self.truncated = True
+                            break
+                        self._record(op, b)
+                    elif op == OP_FOOTER:
+                        break
+                    else:
+                        f.seek(body_pos + ln)
+                except (struct.error, UnicodeDecodeError, MemoryError, OverflowError):
+                    self.truncated = True       # a damaged record: keep what was read before it
                     break
-                else:
-                    f.seek(body_pos + ln)
                 if op == OP_DATA_END:
                     break       # summary section follows: everything needed is already known
                 pos = body_pos + ln
@@ -107,11 +128,14 @@ class McapFile:
                 if data is None:
                     continue
                 o, n = 0, len(data)
-                while o + 9 <= n:
-                    op, ln = _rec.unpack_from(data, o)
-                    if op in (OP_SCHEMA, OP_CHANNEL):
-                        self._record(op, bytes(data[o + 9:o + 9 + ln]))
-                    o += 9 + ln
+                try:
+                    while o + 9 <= n:
+                        op, ln = _rec.unpack_from(data, o)
+                        if op in (OP_SCHEMA, OP_CHANNEL):
+                            self._record(op, bytes(data[o + 9:o + 9 + ln]))
+                        o += 9 + ln
+                except (struct.error, UnicodeDecodeError):
+                    continue
                 if self.channels:
                     return
 
@@ -155,6 +179,9 @@ class McapFile:
     def read_chunk(self, f, i):
         """Return the decompressed records of chunk i (bytes) or None."""
         off, rlen, comp, usize, ucrc, _s, _e = self.chunk_pos[i]
+        if self.size and off + rlen > self.size:
+            self.bad_chunks += 1
+            return None
         f.seek(off)
         raw = f.read(rlen)
         if len(raw) < rlen:

@@ -1054,6 +1054,21 @@ def _finish_review(project, ctx):
         ctx.log("info", "Trajectory Review edits applied to %d records" % n)
 
 
+def lever_bug_job(project):
+    """True for a job processed before 2.0.1 with an output point set: its published trajectory is at that
+    point (labelled IMU centre), so downstream adds the Lidar offset twice. 2.0.1+ results carry settings_sig;
+    real-time and GNSS-only runs ignored the output lever as well (written at the IMU then too)."""
+    r = project.cfg.get("results") or {}
+    if not r or r.get("settings_sig"):
+        return False
+    if r.get("mode") in ("rt", "gnss"):
+        return False
+    if not (r.get("combine") or r.get("ins")):
+        return False
+    lo = project.cfg["installation"].get("lever_output") or [0, 0, 0]
+    return any(abs(float(x)) > 1e-6 for x in lo)
+
+
 def settings_sig(project):
     """What the processed trajectory depends on: when it changes the trajectory is out of date."""
     c = project.cfg

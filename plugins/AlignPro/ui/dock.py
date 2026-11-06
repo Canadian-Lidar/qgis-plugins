@@ -58,6 +58,10 @@ class AlignProDock(PluginWindow):
         self.prev_tool = None
         self.combi_row = 0
         self._log_lines = []
+        self._pending = []              # actions waiting for the stopped full-density read to end
+        self._dense_stopped = False
+        self._fine_job = False
+        self._tool = None
         self._build()
         self._build_dataview(parent)
         self.set_enabled(False)
@@ -360,10 +364,40 @@ class AlignProDock(PluginWindow):
         d.exec()
 
     # ================================================================ jobs
-    def _run(self, title, fn, done, failed=None):
+    def _when_free(self, fn, what):
+        """Run fn now; while the background full-density read runs, stop it and run fn when it has ended.
+        Returns False (fn not run, nothing changed) while another job runs."""
+        if self.job is None:
+            fn()
+            return True
+        if self._fine_job:
+            self._pending.append(fn)
+            self._dense_stopped = True
+            try:
+                self.job.cancel()
+            except RuntimeError:
+                pass
+            self.status.setText("Stopping the full-density read, then %s\u2026" % what)
+            return True
+        self.toast("Wait for \u201c%s\u201d to finish (or stop it); %s was not done." % (
+            self.job.description().replace("AlignPro: ", ""), what), "warn")
+        return False
+
+    def _run(self, title, fn, done, failed=None, warm=True):
         if self.job is not None:
             self.toast("Wait for the current job to finish (or stop it).", "warn")
-            return
+            return False
+        if warm:                # the error the window shows is computed here, not on the GUI thread
+            p, inner = self.p, fn
+
+            def fn(prog, canc):
+                out = inner(prog, canc)
+                try:
+                    if p is not None and p.lines and p.P is not None and len(p.P):
+                        p.current_error()
+                except Exception as e:  # noqa: BLE001
+                    log("error now: %s" % e)
+                return out
         self.prog.setValue(0)
         self.prog.setVisible(True)
         self.b_cancel.setVisible(True)
@@ -391,6 +425,12 @@ class AlignProDock(PluginWindow):
                 self.chain.refresh()
                 self.pg_cal.refresh_publish()
             self.update_steps()
+            pend, self._pending = self._pending, []
+            for f in pend:
+                f()
+            if self._dense_stopped and self.job is None and self.p is not None and self.p.lines:
+                self._dense_stopped = False
+                self.dv.reload_region()          # the stopped full-density read, again
 
         def progress(v, msg):
             self.prog.setValue(int(v))
@@ -399,6 +439,7 @@ class AlignProDock(PluginWindow):
 
         self.job = run_job("AlignPro: " + title, fn, finished, progress)
         self.set_enabled(True)
+        return True
 
     # ============================================================ project
     def _fill_recent(self):
@@ -449,7 +490,18 @@ class AlignProDock(PluginWindow):
             self.open_project(f)
 
     def open_project(self, path):
-        """A .dcsproj (or its folder), 02_AlignPro/alignpro.json, or an older .alignpro.json."""
+        """A .dcsproj (or its folder), 02_AlignPro/alignpro.json, or an older .alignpro.json. A running job is
+        stopped first and the project opens when it has ended (nothing of the current project changes before)."""
+        if self.job is not None:
+            self._pending.append(lambda: self.open_project(path))
+            self._dense_stopped = False
+            try:
+                self.job.cancel()
+            except RuntimeError:
+                pass
+            self.status.setText("Stopping \u201c%s\u201d, then opening %s\u2026" % (
+                self.job.description().replace("AlignPro: ", ""), os.path.basename(path)))
+            return True
         try:
             p = Project.open_any(path)
         except Exception as e:  # noqa: BLE001
@@ -469,8 +521,6 @@ class AlignProDock(PluginWindow):
         self.goto_page(0)
         self._run("Reading %s" % p.name, lambda prog, canc: (p.load(prog, canc), p.find_system(), p)[-1],
                   self._loaded)
-        if self.job is None:
-            self.p = None
         return True
 
     def _loaded(self, p):
@@ -486,18 +536,26 @@ class AlignProDock(PluginWindow):
 
     # -------------------------------------------------------------- system profiles
     def _apply_profile(self, secs, prof):
+        """Use a system profile's Lidar values. Returns False when another job runs (nothing changed; DCS Core's
+        profiles_ui then does not record the profile as applied)."""
         li = secs.get("lidar") or {}
         if not self.p or not li:
-            return
-        c = self.p.cfg
+            return False
+        p = self.p
+        c = p.cfg
         lever = [float(x) for x in (li.get("lever_m") or c["lever"])]
         mount = [float(x) for x in (li.get("mount_deg") or c["mount"])]
         lat = float(li.get("latency_ms") if li.get("latency_ms") is not None else c.get("latency_ms", 0.0))
-        self.p.log("System profile %s used: lever %.4f %.4f %.4f m, mounting %.4f %.4f %.4f, latency %.3f ms" % (
-            tuple([prof["name"]] + lever + mount + [lat])))
-        # the profile's mounting becomes this job's starting mounting (shared with CloudPro)
-        self.p.share_mounting(mount, "system profile %s" % prof["name"])
-        self.apply_installation(lever, lat, mount)
+
+        def go():
+            if self.p is not p:
+                return
+            p.log("System profile %s used: lever %.4f %.4f %.4f m, mounting %.4f %.4f %.4f, latency %.3f ms" % (
+                tuple([prof["name"]] + lever + mount + [lat])))
+            # the profile's mounting becomes this job's starting mounting (shared with CloudPro)
+            p.share_mounting(mount, "system profile %s" % prof["name"])
+            self._apply_values(lever, lat, mount)
+        return bool(self._when_free(go, "applying system profile %s" % prof["name"]))
 
     def open_profiles(self):
         if not self.p:
@@ -511,8 +569,14 @@ class AlignProDock(PluginWindow):
         if not self.p or not self.p.lines:
             return
         from dcs_core import profiles_ui
-        ans, rec = profiles_ui.suggest(self, "AlignPro", self.p.cfg.get("system") or {}, self.p.profile_current(),
-                                       ("lidar",), self._apply_profile, self.p.cfg.get("profiles_asked"))
+        ans, rec = profiles_ui.suggest(self, "AlignPro", self.p.cfg.get("system") or {},
+                                       self.p.profile_current(), ("lidar",), self._apply_profile,
+                                       self.p.cfg.get("profiles_asked"))
+        if ans == "not_applied":           # busy: nothing changed, not recorded; offered again when the job ends
+            p = self.p
+            self._pending.append(lambda: self.p is p and self.suggest_profile())
+            self.message("The system profile was not applied while a job runs; it is offered again when the job "
+                         "has finished.", "warning")
         if rec != self.p.cfg.get("profiles_asked"):
             self.p.cfg["profiles_asked"] = rec
             self.p.save()
@@ -563,8 +627,11 @@ class AlignProDock(PluginWindow):
                 return fn(prog, canc)
             p.start_run_log(what)
             from ..core.project import VERSION
-            with p.dcs.run("alignpro", "AlignPro", VERSION):
-                return fn(prog, canc)
+            try:
+                with p.dcs.run("alignpro", "AlignPro", VERSION):
+                    return fn(prog, canc)
+            finally:
+                p.end_run_log()
         return work
 
     def _publish_after(self, fn):
@@ -580,12 +647,19 @@ class AlignProDock(PluginWindow):
         return work
 
     def set_line_use(self, i, on):
-        self.p.lines[i].use = on
-        self.p.save()
+        p = self.p
 
-        def fn(prog, canc):
-            self.p.analyse()
-        self._run("Pairs and surfaces", fn, lambda _: self.refresh_all())
+        def go():
+            if self.p is not p:
+                return
+            p.lines[i].use = on
+            p.save()
+
+            def fn(prog, canc):
+                p.analyse()
+            self._run("Pairs and surfaces", fn, lambda _: self.refresh_all())
+        if not self._when_free(go, "changing the lines used"):
+            self.pg_data.fill_lines()          # show the line as it still is
 
     # ============================================================ refresh
     def refresh_all(self, zoom=False, view=True):
@@ -652,8 +726,7 @@ class AlignProDock(PluginWindow):
             self._fine_job = False
             self.dv.set_dense(region, None, "stopped" if err == "Cancelled" else err.split("\n")[0])
         self._fine_job = True
-        self._run("Full-density points", fn, done, failed)
-        if self.job is None:
+        if not self._run("Full-density points", fn, done, failed, warm=False):
             self._fine_job = False
 
     def _view_area(self, region):
@@ -724,33 +797,47 @@ class AlignProDock(PluginWindow):
             self.dv.compare.setCurrentIndex(2)
             self.dv.load_values("advised")
             self.show_dataview("float")
-        self._run("Auto calibration", self._stage_run(lambda prog, canc: self.p.calibrate(prog, canc),
-                                                      "auto_calibration"), done)
-        if self.job is None:
+        if not self._run("Auto calibration", self._stage_run(lambda prog, canc: self.p.calibrate(prog, canc),
+                                                             "auto_calibration"), done,
+                         lambda _err: self.pg_cal.busy(False)):
             self.pg_cal.busy(False)
 
     def apply_angles(self, angles):
+        p = self.p
+
         def done(_):
             self.message("Applied mounting angles %.4f / %.4f / %.4f" % tuple(angles))
             self.toast("Applied %.4f  %.4f  %.4f%s \u2013 copy them to the mapper when you are happy" % (
-                tuple(angles) + (" and published for CloudPro" if self.p.dcs else "",)))
+                tuple(angles) + (" and published for CloudPro" if p.dcs else "",)))
             self.refresh_all()
-        self._run("Apply and publish", self._stage_run(self._publish_after(
-            lambda prog, canc: self.p.apply_mount(angles)), "apply"), done)
+
+        def go():
+            if self.p is p:
+                self._run("Apply and publish", self._stage_run(self._publish_after(
+                    lambda prog, canc: p.apply_mount(angles)), "apply"), done)
+        return self._when_free(go, "applying the angles")
 
     def apply_installation(self, lever, latency, mount):
-        c = self.p.cfg
+        """Apply lever arm, latency and mounting (re-georeference, surfaces, publish). Nothing changes while
+        another job runs (returns False); the background full-density read is stopped first."""
+        p = self.p
+        return self._when_free(lambda: self.p is p and self._apply_values(lever, latency, mount),
+                               "applying the values")
+
+    def _apply_values(self, lever, latency, mount):
+        p = self.p
+        c = p.cfg
         c["lever"], c["latency_ms"], c["mount"] = list(lever), float(latency), list(mount)
 
         def fn(prog, canc):
-            self.p.log("Applied lever %.4f %.4f %.4f m, latency %.3f ms, mounting %.4f %.4f %.4f" % (
+            p.log("Applied lever %.4f %.4f %.4f m, latency %.3f ms, mounting %.4f %.4f %.4f" % (
                 tuple(lever) + (latency,) + tuple(mount)))
-            self.p.georeference()
-            self.p.analyse()
-            self.p.save()
-        self._run("Apply and publish", self._stage_run(self._publish_after(fn), "apply"),
-                  lambda _: (self.refresh_all(), self.toast("Applied and published for CloudPro" if self.p.dcs
-                                                            else "Applied")))
+            p.georeference()
+            p.analyse()
+            p.save()
+        return self._run("Apply and publish", self._stage_run(self._publish_after(fn), "apply"),
+                         lambda _: (self.refresh_all(), self.toast("Applied and published for CloudPro" if p.dcs
+                                                                   else "Applied")))
 
     def analyze(self, key, center, rng, steps):
         self.pg_an.running(True)
@@ -758,30 +845,66 @@ class AlignProDock(PluginWindow):
         def done(pts):
             self.pg_an.running(False)
             self.pg_an.show_result(pts)
-        self._run("Analyze", lambda prog, canc: self.p.sweep(key, center, rng, steps, prog, canc), done)
-        if self.job is None:
+
+        def failed(_err):
             self.pg_an.running(False)
-        else:
-            self.job.taskTerminated.connect(lambda: self.pg_an.running(False))
+        if not self._run("Analyze", lambda prog, canc: self.p.sweep(key, center, rng, steps, prog, canc), done,
+                         failed):
+            self.pg_an.running(False)
 
     def adjust_apply(self, key, value):
+        p = self.p
+
         def done(_):
             self.message("Adjust: %s = %.4f" % (Project.PARAMS[key], value))
-            if key == "latency_ms" or key.startswith("lever"):
-                self.p.analyse()
             self.refresh_all()
-        self._run("Adjust and publish", self._stage_run(self._publish_after(
-            lambda prog, canc: self.p.set_value(key, value)), "adjust"), done)
+
+        def fn(prog, canc):
+            p.set_value(key, value)
+            if key == "latency_ms" or key.startswith("lever"):
+                p.analyse()                  # in the job (not on the GUI thread), before publishing
+                p.save()
+        self._run("Adjust and publish", self._stage_run(self._publish_after(fn), "adjust"), done)
 
     def settings_dialog(self):
         d = dialogs.SettingsDialog(self.p.settings, self)
         themed(d)
         if not d.exec():
             return
-        ch = d.changed()
+        self.change_settings(d.values())
+
+    def memory_check(self, settings):
+        """(level, text) for these settings on this computer: ok | warn | refuse (core/memory.py)."""
+        from ..core import memory
+        p = self.p
+        n = len(getattr(p, "datas", None) or []) or len({l.info.get("capture", l.name) for l in p.lines}) or 6
+        s = dict(p.settings)
+        s.update(settings)
+        return memory.check(s, n)
+
+    def change_settings(self, values):
+        """New settings: re-read the lines, re-split the passes or only rebuild the surfaces, as needed.
+        Returns False when refused (the settings would not fit in this computer's memory)."""
+        ch = {k for k, v in values.items() if v != self.p.settings.get(k)}
         if not ch:
-            return
-        self.p.settings.update(d.values())
+            return True
+        level, txt = self.memory_check(values)
+        if level == "refuse":
+            from ..core import memory
+            cur = memory.estimate(self.p.settings, 1)["total"]
+            new = memory.estimate(dict(self.p.settings, **values), 1)["total"]
+            if new > cur:
+                warn(self, "These point densities need %s, more than this computer can hold. They were not "
+                           "applied: choose a lower density (or lower the points kept per line, points per patch "
+                           "or patches in Settings)." % txt)
+                return False
+        elif level == "warn":
+            self.message("These point densities need %s; other programs may slow down while AlignPro "
+                         "calibrates." % txt, "warning")
+        if self.job is not None and not self._fine_job and not (ch & dialogs.RELOAD_KEYS or ch & dialogs.PASS_KEYS):
+            self.toast("Wait for the current job to finish (or stop it); the settings were not changed.", "warn")
+            return False
+        self.p.settings.update(values)
         self.p.save()
         if ch & dialogs.RELOAD_KEYS or ch & dialogs.PASS_KEYS:
             self.p.cfg["boxes"] = {}
@@ -791,9 +914,14 @@ class AlignProDock(PluginWindow):
             self.layers.update_grid(self.p)
             self.refresh_status()
         else:
-            def fn(prog, canc):
-                self.p.analyse()
-            self._run("Pairs and surfaces", fn, lambda _: self.refresh_all())
+            p = self.p
+
+            def go():
+                def fn(prog, canc):
+                    p.analyse()
+                self._run("Pairs and surfaces", fn, lambda _: self.refresh_all())
+            self._when_free(go, "finding the surfaces again")
+        return True
 
     def _grid_attr(self):
         if self.p is not None and self.p.lines:
@@ -805,7 +933,7 @@ class AlignProDock(PluginWindow):
             return
         crs = local_crs(self.p.frame)
         tool = DragLineTool(self.iface.mapCanvas(), crs, BOX_COLORS.get(kind, theme.AMBER))
-        self._tool = tool
+        self._set_tool(tool)
 
         def done(a, b):
             boxes = self.p.cfg.setdefault("boxes", {})
@@ -821,11 +949,8 @@ class AlignProDock(PluginWindow):
                 self.p.save()
                 self.layers.update_boxes(self.p)
                 self.refresh_slices(kind)
-            self.iface.mapCanvas().unsetMapTool(tool)
-            if self.prev_tool:
-                self.iface.mapCanvas().setMapTool(self.prev_tool)
+            self._end_tool(tool)
         tool.done.connect(done)
-        self.prev_tool = self.iface.mapCanvas().mapTool()
         self.iface.mapCanvas().setMapTool(tool)
         self.toast("Drag the %s box on the map: press at the start, release at the end" % kind)
 
@@ -882,29 +1007,66 @@ class AlignProDock(PluginWindow):
 
     def draw_aoi(self):
         tool = PolygonTool(self.iface.mapCanvas())
-        self._tool = tool
+        self._set_tool(tool)
+        p = self.p
 
         def done(ring):
-            self.p.cfg["aoi"] = ring
-            self.p.settings["use_aoi"] = True
-            self.p.save()
-            self.iface.mapCanvas().unsetMapTool(tool)
+            self._end_tool(tool)
 
-            def fn(prog, canc):
-                self.p.analyse()
-            self._run("Area of interest", fn, lambda _: (self.refresh_all(), self.dv.reload("aoi")))
+            def go():
+                if self.p is not p:
+                    return
+                p.cfg["aoi"] = ring
+                p.settings["use_aoi"] = True
+                p.save()
+
+                def fn(prog, canc):
+                    p.analyse()
+                self._run("Area of interest", fn, lambda _: (self.refresh_all(), self.dv.reload("aoi")))
+            self._when_free(go, "using the area of interest")
         tool.done.connect(done)
         self.iface.mapCanvas().setMapTool(tool)
         self.toast("Click around the target on the map; right-click to finish")
 
     def clear_aoi(self):
-        self.p.cfg["aoi"] = None
-        self.p.settings["use_aoi"] = False
-        self.p.save()
+        p = self.p
 
-        def fn(prog, canc):
-            self.p.analyse()
-        self._run("Area of interest", fn, lambda _: (self.refresh_all(), self.dv.reload(None)))
+        def go():
+            p.cfg["aoi"] = None
+            p.settings["use_aoi"] = False
+            p.save()
+
+            def fn(prog, canc):
+                p.analyse()
+            self._run("Area of interest", fn, lambda _: (self.refresh_all(), self.dv.reload(None)))
+        self._when_free(go, "clearing the area of interest")
+
+    def _set_tool(self, tool):
+        """A map tool of AlignPro's becomes the canvas tool; the previous one is restored when it ends."""
+        canvas = self.iface.mapCanvas()
+        cur = canvas.mapTool()
+        if self._tool is not None:
+            self._end_tool(self._tool, restore=False)
+        if cur is not None and cur is not self._tool:
+            self.prev_tool = cur
+        self._tool = tool
+
+    def _end_tool(self, tool, restore=True):
+        canvas = self.iface.mapCanvas()
+        try:
+            if canvas.mapTool() is tool:
+                canvas.unsetMapTool(tool)
+            tool.release()                     # its rubber band leaves the canvas
+        except RuntimeError:
+            pass
+        if self._tool is tool:
+            self._tool = None
+        if restore and self.prev_tool is not None:
+            try:
+                canvas.setMapTool(self.prev_tool)
+            except RuntimeError:
+                pass
+            self.prev_tool = None
 
     # ================================================================ output
     def make_report(self, pdf_path, header, shots, clip):
@@ -1022,18 +1184,17 @@ class AlignProDock(PluginWindow):
                     t.stop()
             except RuntimeError:
                 pass
+        self._pending = []
         try:
             if self.job is not None:
+                self.job.detach()              # its callbacks must not touch this window after unload
                 self.job.cancel()
         except RuntimeError:
             pass
-        try:
-            canvas = self.iface.mapCanvas()
-            tool = canvas.mapTool()
-            if tool is not None and tool is getattr(self, "_tool", None):
-                canvas.unsetMapTool(tool)
-        except RuntimeError:
-            pass
+        self.job = None
+        if self._tool is not None:
+            self._end_tool(self._tool, restore=False)
+        self.prev_tool = None
         try:
             self.cursor.hide()
         except RuntimeError:

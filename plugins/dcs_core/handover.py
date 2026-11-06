@@ -18,10 +18,15 @@ def out_dir(project, stage):
     return project.stage_dir(stage, "out")
 
 
-def publish(project, stage, data_files, fields, plugin, version="", engine=""):
+def publish(project, stage, data_files, fields, plugin, version="", engine="", used=None, inputs=None):
     """data_files: {"sbet": abs path, ...} all inside the stage's out/ folder
     and already complete. fields: the stage-specific content (time, frame,
-    quality, ...). Returns the handover dict."""
+    quality, ...). Returns the handover dict.
+
+    used (1.8.0): {upstream stage: handover id} of the handovers this result was really computed from (the
+    "id" of the doc handover.read returned); without it the ids now in the project are recorded.
+    inputs (1.8.0, AlignPro / CloudPro): the survey-line .clraw files read; default = the job's survey files.
+    Both go into built_from (see DcsProject.built_from_now)."""
     od = out_dir(project, stage)
     key, folder, label, schema, fname = STAGE[stage]
     rel = {}
@@ -33,7 +38,7 @@ def publish(project, stage, data_files, fields, plugin, version="", engine=""):
             raise HandoverError("%s: %s is not in %s" % (label, p, od))
         rel[k] = os.path.basename(p)
     hid = files.content_id([data_files[k] for k in sorted(data_files)])
-    built = project.built_from_now(stage)
+    built = project.built_from_now(stage, used=used, inputs=inputs)
     doc = {"schema": schema, "id": hid, "producer": {"plugin": plugin, "version": version, "engine": engine},
            "created": now(), "project": project.name, "built_from": built, "files": rel}
     doc.update(fields)

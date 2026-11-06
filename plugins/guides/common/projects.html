@@ -15,7 +15,7 @@
 <tr><td><code>Deck_Test/lines/Deck_Test_L001_20261104_124512/</code></td><td>One survey line (one Start/Stop), its files named <code>Deck_Test_L001_20261104_124512_0001.clraw</code>, <code>_0002</code> … Captures made before 2.10 that the mapper grouped into the project keep their old names here.</td></tr>
 <tr><td><code>Deck_Test/nav/Deck_Test_NAV_20261104_120000_0001.clraw</code></td><td>A navigation recording: everything the Certus sent while the project was open (no Lidar). A new one starts at each power-on, project opening, UTC date change and every 2 GB.</td></tr>
 </table>
-<p>If you pick the project's <code>lines</code> or <code>nav</code> folder, or a line folder, the New project dialog takes the mapper project's folder as the job folder and its name as the project name. The survey lines are recognised from what the files record (their line number and capture), not from their names, so a line split over several files is one line and old and new captures mix freely, in recording order. Navigation recordings are never taken as survey lines.</p>
+<p>If you pick the project's <code>lines</code> or <code>nav</code> folder, or a line folder, the New project dialog takes the mapper project's folder as the job folder. The survey lines are recognised from what the files record (their line number and capture), not from their names, so a line split over several files is one line and old and new captures mix freely, in recording order. Navigation recordings are never taken as survey lines.</p>
 
 <p>The Processing folder can also live on another drive (choose <b>Elsewhere…</b> when you create the project). Paths are stored relative to the job folder where possible, so a job can be copied or moved as a whole.</p>
 
@@ -26,7 +26,7 @@
 <h2>Creating a project</h2>
 <ol class="steps">
 <li>Choose <span class="ui">New project…</span> in the project box.</li>
-<li><b>Job folder</b>: the folder that holds the mapper's capture folders. The project name defaults to the folder's name.</li>
+<li><b>Job folder</b>: the folder that holds the mapper's capture folders. The project name defaults to the date of the first capture with a number, for example <i>2026-11-03_1</i>; when that project exists already the next number is offered (<i>2026-11-03_2</i>), so a second processing of the same job (another base station, other settings) gets its own folder. Type any other name if you prefer.</li>
 <li><b>Processing folder</b>: inside the job folder by default; <b>Elsewhere…</b> to put it on another drive.</li>
 <li>Press OK. The project is created and opened. {AFTER_CREATE}</li>
 </ol>

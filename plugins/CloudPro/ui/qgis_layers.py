@@ -11,17 +11,28 @@ def _group(name="CloudPro"):
     return g or root.insertGroup(0, name)
 
 
+def _field(name, kind):
+    """QgsField for QGIS 4 / Qt6 (QMetaType) and QGIS 3 (QVariant), as PosPro and AlignPro do."""
+    from qgis.core import QgsField
+    try:
+        from qgis.PyQt.QtCore import QMetaType
+        t = {"i": QMetaType.Type.Int, "s": QMetaType.Type.QString, "l": QMetaType.Type.LongLong}[kind]
+        return QgsField(name, t)
+    except (TypeError, AttributeError, ImportError):
+        from qgis.PyQt.QtCore import QVariant
+        t = {"i": QVariant.Int, "s": QVariant.String, "l": QVariant.LongLong}[kind]
+        return QgsField(name, t)
+
+
 def add_project_layers(iface, project, tracks, box):
-    from qgis.core import (QgsFeature, QgsField, QgsGeometry, QgsPointXY, QgsProject, QgsVectorLayer,
+    from qgis.core import (QgsFeature, QgsGeometry, QgsPointXY, QgsProject, QgsVectorLayer,
                            QgsLineSymbol, QgsFillSymbol, QgsSingleSymbolRenderer)
-    from qgis.PyQt.QtCore import QVariant
     o = project.store.origin
     crs = project.crs
     grp = _group()
     lay = QgsVectorLayer("LineString?crs=%s" % crs, "%s - drive lines" % project.name, "memory")
     pr = lay.dataProvider()
-    pr.addAttributes([QgsField("line", QVariant.Int), QgsField("name", QVariant.String),
-                      QgsField("points", QVariant.LongLong)])
+    pr.addAttributes([_field("line", "i"), _field("name", "s"), _field("points", "l")])
     lay.updateFields()
     feats = []
     for ln in project.lines:

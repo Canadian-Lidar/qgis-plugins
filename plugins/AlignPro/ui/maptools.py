@@ -35,12 +35,14 @@ class DragLineTool(QgsMapTool):
         return t.transform(pt)
 
     def canvasPressEvent(self, e):
+        if self.rb is None:
+            return
         self.p0 = e.mapPoint()
         self.rb.reset(_LINE)
         self.rb.addPoint(self.p0)
 
     def canvasMoveEvent(self, e):
-        if self.p0 is not None:
+        if self.p0 is not None and self.rb is not None:
             self.rb.reset(_LINE)
             self.rb.addPoint(self.p0)
             self.rb.addPoint(e.mapPoint())
@@ -50,13 +52,20 @@ class DragLineTool(QgsMapTool):
             return
         a, b = self._tr(self.p0), self._tr(e.mapPoint())
         self.p0 = None
-        self.rb.reset(_LINE)
+        if self.rb is not None:
+            self.rb.reset(_LINE)
         if a.distance(b) > 0.5:
             self.done.emit((a.x(), a.y()), (b.x(), b.y()))
 
     def deactivate(self):
-        self.rb.reset(_LINE)
+        if self.rb is not None:
+            self.rb.reset(_LINE)
         super().deactivate()
+
+    def release(self):
+        """Remove the rubber band from the canvas (the tool is finished)."""
+        _drop_band(self.canvas, self.rb)
+        self.rb = None
 
 
 class PolygonTool(QgsMapTool):
@@ -74,6 +83,8 @@ class PolygonTool(QgsMapTool):
         self.setCursor(Qt.CursorShape.CrossCursor)
 
     def canvasReleaseEvent(self, e):
+        if self.rb is None:
+            return
         if e.button() == Qt.MouseButton.RightButton:
             self._finish()
             return
@@ -84,7 +95,7 @@ class PolygonTool(QgsMapTool):
         self._finish()
 
     def canvasMoveEvent(self, e):
-        if self.pts:
+        if self.pts and self.rb is not None:
             self.rb.reset(_POLY)
             for p in self.pts + [e.mapPoint()]:
                 self.rb.addPoint(p)
@@ -96,12 +107,28 @@ class PolygonTool(QgsMapTool):
             ring = [(t.transform(p).x(), t.transform(p).y()) for p in self.pts]
             self.done.emit(ring)
         self.pts = []
-        self.rb.reset(_POLY)
+        if self.rb is not None:
+            self.rb.reset(_POLY)
 
     def deactivate(self):
-        self.rb.reset(_POLY)
+        if self.rb is not None:
+            self.rb.reset(_POLY)
         self.pts = []
         super().deactivate()
+
+    def release(self):
+        _drop_band(self.canvas, self.rb)
+        self.rb = None
+
+
+def _drop_band(canvas, rb):
+    if rb is None:
+        return
+    try:
+        rb.reset()
+        canvas.scene().removeItem(rb)
+    except RuntimeError:
+        pass
 
 
 class SliceCursor:

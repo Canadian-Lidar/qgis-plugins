@@ -6,6 +6,7 @@ Two forms of the same data:
   nav_states    numpy structured array of packet 20 (CloudPro)
 """
 import struct
+from binascii import crc_hqx
 
 import numpy as np
 
@@ -28,16 +29,12 @@ EULER_SD = np.dtype([("sd_roll", "<f4"), ("sd_pitch", "<f4"), ("sd_heading", "<f
 
 def crc16(data):
     """CRC16-CCITT of a packet payload, as in the ANPP header."""
-    crc = 0xFFFF
-    for b in data:
-        crc ^= b << 8
-        for _ in range(8):
-            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
-    return crc
+    return crc_hqx(bytes(data), 0xFFFF)
 
 
-def split(msg):
-    """-> (packet id, payload bytes), or None when the header LRC or length is wrong."""
+def split(msg, check_crc=True):
+    """-> (packet id, payload bytes), or None when the header LRC, the length or (1.8.0) the payload CRC is
+    wrong."""
     b = bytes(msg)
     if len(b) < 5:
         return None
@@ -46,6 +43,8 @@ def split(msg):
     pid, ln = b[1], b[2]
     pl = b[5:5 + ln]
     if len(pl) != ln:
+        return None
+    if check_crc and crc_hqx(pl, 0xFFFF) != (b[3] | (b[4] << 8)):
         return None
     return pid, pl
 
@@ -56,10 +55,12 @@ class NavCollector:
     def __init__(self):
         self.s20 = []
         self.s26 = []
+        self.rejected = 0       # packets with a bad header LRC, length or payload CRC (1.8.0)
 
     def add(self, msg, pub_ns):
         sp = split(msg)
         if sp is None:
+            self.rejected += 1
             return
         pid, pl = sp
         if pid == 20 and len(pl) >= 100:
@@ -90,16 +91,24 @@ class NavCollector:
         return out
 
 
-def nav_states(payloads):
+def nav_states(payloads, stats=None):
     """Every packet 20 in payloads (iterable of message payloads) -> (structured SYS_STATE array,
-    t UTC s), time sorted with repeated times dropped; None when there is none."""
-    rows = []
+    t UTC s), time sorted with repeated times dropped; None when there is none. Packets with a bad header LRC,
+    length or payload CRC are left out (1.8.0) and counted in stats["rejected"] when a dict is given."""
+    buf = bytearray()
+    bad = 0
     for p in payloads:
         if len(p) >= 105 and p[1] == 20:
-            rows.append(bytes(p[5:105]))
-    if not rows:
+            if (p[0] + p[1] + p[2] + p[3] + p[4]) & 0xFF or p[2] < 100 or len(p) < 5 + p[2] or \
+                    crc_hqx(p[5:5 + p[2]], 0xFFFF) != (p[3] | (p[4] << 8)):
+                bad += 1
+                continue
+            buf += p[5:105]
+    if stats is not None:
+        stats["rejected"] = stats.get("rejected", 0) + bad
+    if not buf:
         return None
-    a = np.frombuffer(b"".join(rows), SYS_STATE)
+    a = np.frombuffer(buf, SYS_STATE)
     t = a["sec"].astype(np.float64) + a["usec"] * 1e-6
     order = np.argsort(t, kind="stable")
     a = a[order]

@@ -19,6 +19,7 @@
 <h2>What's new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>1.6.1</b></td><td><b>Point density</b> on the Calibration page (section <a href="#density">Point density</a>): Standard, Dense (now the default for new projects), Very dense or Custom, with an estimate of the memory it needs on this PC; a density that would not fit is refused. Fixes: Apply or a system profile during the full-density read waits for it instead of half-applying; opening a project while a job runs waits for it; STOP no longer shows as an error or saves a partial calibration; holes longer than 1 s in the trajectory are no longer bridged (their points are left out); the Data View places only the points it shows (faster nudges, less memory); drawing tools give the previous map tool back. Needs DCS Core 1.8.0.</td></tr>
 <tr><td><b>1.6.0</b></td><td><b>System profiles.</b> <span class="ui">System profile…</span> on the Installation page (and <span class="ui">Save to system profile…</span> on the Calibration page) keeps the applied Lidar lever arm, mounting angles and latency as the profile of the mapper system that recorded the lines, on this computer. When you open a job from a system that has a profile whose values differ, AlignPro offers to use them (section <a href="#profiles">System profiles</a>). PosPro keeps the antenna offsets in the same profile. Needs DCS Core 1.7.0.</td></tr>
 <tr><td><b>1.5.0</b></td><td>Guided steps: a <span class="ui">‹ Back</span> / <span class="ui">Next ›</span> bar under the pages says whether each step is done and what to press, and <span class="ui">Continue in CloudPro ›</span> on the last step once the calibration is applied and published. The version number is shown after the plugin name in the header. Needs DCS Core 1.6.0.</td></tr>
 <tr><td>1.4.4</td><td>One SBET per capture: the trajectory can be several SBET files (older MapPro captures, where each Start/Stop made its own project folder and SBET); each capture uses the SBET that covers it, and nothing is interpolated between them.</td></tr>
@@ -219,6 +220,17 @@
 </table>
 <figure><img src="fig/free_profile.png" style="max-height:62mm"><figcaption><b>Figure {N}.2</b> A free profile through a wall before calibration, at the recorded angles: the two passes (red and violet) show the wall a few centimetres apart.</figcaption></figure>
 
+<h2 id="density">Point density</h2>
+<p>The <span class="ix">point density</span> chooser beside <span class="ui">Auto calibrate</span> sets how many points the calibration and the Data View use. More points define each plane better and give steadier angles, at the cost of time and memory. The note under it lists the numbers in force and an estimate of the memory needed, as a share of this PC's memory; it turns amber when the job would use more than about 40 % and AlignPro refuses a density that would need more than about 80 %.</p>
+<table>
+<tr><th>Density</th><th>Points kept per line</th><th>Points per line in each patch</th><th>Patches</th><th>Use</th></tr>
+<tr><td>Standard</td><td>1,500,000</td><td>80</td><td>4,000</td><td>A quick look; what AlignPro used before 1.6.1.</td></tr>
+<tr><td>Dense (default)</td><td>3,000,000</td><td>250</td><td>8,000</td><td>Calibration for delivery.</td></tr>
+<tr><td>Very dense</td><td>6,000,000</td><td>600</td><td>15,000</td><td>Sparse scenes or long ranges; slow, needs a PC with plenty of memory.</td></tr>
+<tr><td>Custom</td><td colspan="3">The individual numbers in <span class="ui">Settings…</span> (tab Data and Patches).</td><td>Your own balance.</td></tr>
+</table>
+<p>Changing the points kept per line reads the lines again; the other numbers only rebuild the surfaces. Projects made before 1.6.1 keep their settings (Standard) until you choose another density.</p>
+
 <h2>Settings</h2>
 <p>The defaults suit the mapper; change them only for a reason. <span class="ui">Restore defaults</span> puts every value back. What happens on OK depends on what changed: data and pass settings read the lines again (and place the boxes again); the grid cell size only redraws the map grid; anything else finds the pairs and patches again.</p>
 <div style="display:flex;gap:4mm"><figure style="flex:1;margin:2mm 0"><img src="fig/settings_passes.png"></figure><figure style="flex:1;margin:2mm 0"><img src="fig/settings_patches.png"></figure></div>
@@ -292,7 +304,7 @@
 <h2>Which points are shown</h2>
 <p>The Data View loads a square area around the roll, pitch and heading boxes, and loads again whenever a box is drawn or moved, on the map (Pairs page) or in the Data View. Drawing an area of interest moves it there. The loaded area is outlined on the QGIS map as <b>Data View area</b>, and the line under the views says what is loaded.</p>
 <p>Inside the boxes (and 1.5&nbsp;m around them) you see <b>every point the Lidar recorded there</b>, not the thinned set the calibration reads. AlignPro re-reads the raw <code>.clraw</code> for just the seconds each pass was at a box. The first time takes a few seconds per box; the views show the thinned points meanwhile and fill in when the job ends. After that the points come from the project's <code>work/</code> folder. Outside the boxes the plan shows the thinned points, at most 700,000.</p>
-<div class="note"><b>Note</b> <span class="ui">Settings › Fine Tune: points per inspection box</span> (default 1,500,000) caps a very large box; above it the box's points are thinned at random and the line under the views says so. If the raw files cannot be found the views keep the thinned points.</div>
+<div class="note"><b>Note</b> <span class="ui">Settings › Fine Tune: points per inspection box</span> (default 3,000,000) caps a very large box; above it the box's points are thinned at random and the line under the views says so. If the raw files cannot be found the views keep the thinned points.</div>
 
 <h2>The toolbar</h2>
 <table>
@@ -493,7 +505,7 @@
 <tr><td>Range min (m) (<code>range_min</code>)</td><td>1.5</td><td></td></tr>
 <tr><td>Range max (m) (<code>range_max</code>)</td><td>60</td><td>Far points carry the most angle signal but also the most noise; 60 m suits the XT-32.</td></tr>
 <tr><td>Intensity min (<code>intensity_min</code>)</td><td>0</td><td></td></tr>
-<tr><td>Points kept per line (<code>points_per_line</code>)</td><td>1,500,000</td><td>Random thinning budget; reads the lines again.</td></tr>
+<tr><td>Points kept per line (<code>points_per_line</code>)</td><td>3,000,000</td><td>Random thinning budget; reads the lines again.</td></tr>
 <tr><td rowspan="8">Passes and pairs</td><td>Split captures into passes at turns (<code>split_turns</code>)</td><td>on</td><td></td></tr>
 <tr><td>Minimum speed (m/s) (<code>min_speed</code>)</td><td>1.0</td><td>Slower periods (statics) are dropped.</td></tr>
 <tr><td>Turn limit (deg) (<code>turn_deg</code>)</td><td>35</td><td></td></tr>
@@ -502,12 +514,13 @@
 <tr><td>Same direction: heading difference ≤ (deg) (<code>same_dir_deg</code>)</td><td>30</td><td></td></tr>
 <tr><td>Minimum overlap (%) (<code>min_overlap_pct</code>)</td><td>20</td><td></td></tr>
 <tr><td>Latency pair: speed difference ≥ (m/s) (<code>speed_margin</code>)</td><td>2.0</td><td></td></tr>
-<tr><td rowspan="7">Patches</td><td>Patch size (m) (<code>voxel_m</code>)</td><td>2.0</td><td>Voxel edge; 1.5–3 m for roadside scenes.</td></tr>
+<tr><td rowspan="8">Patches</td><td>Patch size (m) (<code>voxel_m</code>)</td><td>2.0</td><td>Voxel edge; 1.5–3 m for roadside scenes.</td></tr>
 <tr><td>Max thickness per line (m) (<code>thickness_m</code>)</td><td>0.04</td><td>A patch must be planar within this in every line that sees it.</td></tr>
 <tr><td>Min points per line (<code>min_pts_line</code>)</td><td>20</td><td></td></tr>
-<tr><td>Max points per line per patch (<code>max_pts_patch_line</code>)</td><td>80</td><td></td></tr>
+<tr><td>Max points per line per patch (<code>max_pts_patch_line</code>)</td><td>250</td><td>Set with the others by Point density.</td></tr>
 <tr><td>Flat patches per non-flat patch (<code>flat_ratio</code>)</td><td>1.0</td><td>Caps ground so walls drive heading.</td></tr>
-<tr><td>Max patches (<code>max_patches</code>)</td><td>4000</td><td></td></tr>
+<tr><td>Max patches (<code>max_patches</code>)</td><td>8000</td><td></td></tr>
+<tr><td>Solver memory limit (points) (<code>max_solve_points</code>)</td><td>12,000,000</td><td>Above this many patch points the solver keeps a random subset.</td></tr>
 <tr><td>Use only the area of interest (<code>use_aoi</code>)</td><td>off</td><td>Set by Draw area of interest and Clear area.</td></tr>
 <tr><td rowspan="4">Solver</td><td>Huber threshold (sigma) (<code>huber_k</code>)</td><td>2.0</td><td>Down-weights residuals beyond this.</td></tr>
 <tr><td>Reject after convergence (sigma, 0 = off) (<code>reject_sigma</code>)</td><td>3.5</td><td></td></tr>

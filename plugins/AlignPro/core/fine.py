@@ -16,7 +16,7 @@ import numpy as np
 
 from . import clraw, engine, hesai
 
-DENSE_VERSION = 1
+DENSE_VERSION = 2
 BOX_KINDS = ("roll", "pitch", "heading")
 PAD_M = 1.5                 # dense points kept this far outside a box (room for live adjustments)
 WIN_GAP_S = 0.5             # a pass's visits to a box closer than this are read as one window
@@ -211,11 +211,14 @@ def dense_points(project, boxes, progress=None, cancelled=None):
         if wins:
             per_capture.setdefault(id(ln.data), (ln.data, []))[1].extend((a, b, i) for a, b in wins)
     stats = {"windows": 0, "seconds": 0.0, "packets": 0, "decoded": 0, "kept": 0, "missing": [], "per_box": {}}
-    parts = {k: [] for k in ("t", "p", "i", "line")}
+    blist = sorted(boxes.items())
+    counts = np.zeros(len(blist), np.int64)
+    parts = {k: [] for k in ("t", "p", "i", "line", "owner")}
     caps = list(per_capture.values())
     rs, rmin, rmax = (project.settings.get("returns", "strongest"), project.settings.get("range_min", 1.5),
                       project.settings.get("range_max", 60.0))
     imin = project.settings.get("intensity_min", 0)
+    mount, lever, lat = project.cfg["mount"], project.cfg["lever"], project.cfg["latency_ms"]
     for ci, (data, wins) in enumerate(caps):
         wins.sort()
         stats["windows"] += len(wins)
@@ -236,55 +239,57 @@ def dense_points(project, boxes, progress=None, cancelled=None):
 
             def prog(fr, ci=ci, fi=fi):
                 if progress:
-                    progress((ci + (fi + fr) / max(len(paths), 1)) / max(len(caps), 1) * 0.9,
+                    progress((ci + (fi + fr) / max(len(paths), 1)) / max(len(caps), 1) * 0.95,
                              "Reading full-density points: %s" % os.path.basename(pth))
             for chunk in _window_chunks(f, clraw.CH_POINTS, lw, prog):
                 if cancelled and cancelled():
                     raise clraw_cancelled()
-                pk, tp = [], []
-                for ch, _lt, pt, payload in chunk:
-                    ts = pt * 1e-9
-                    k = np.searchsorted(wa, ts, side="right") - 1
-                    if k >= 0 and ts <= wb[k] + 1e-3:
-                        pk.append(payload)
-                        tp.append(pt)
-                if not pk:
+                ts = np.array([m[2] for m in chunk], np.float64) * 1e-9
+                k = np.searchsorted(wa, ts, side="right") - 1
+                ok = (k >= 0) & (ts <= wb[np.clip(k, 0, None)] + 1e-3)
+                if not ok.any():
                     continue
-                a = hesai.packets_to_array(pk)
+                sel = np.nonzero(ok)[0]
+                a = hesai.packets_to_array([chunk[j][3] for j in sel])
                 stats["packets"] += len(a)
-                dec = hesai.decode(a, np.array(tp, np.float64) * 1e-9, cal, rs, rmin, rmax, imin, keep=None)
+                dec = hesai.decode(a, ts[sel], cal, rs, rmin, rmax, imin, keep=None)
                 if dec is None or not len(dec["t"]):
                     continue
                 k = np.searchsorted(wa, dec["t"], side="right") - 1
                 ok = (k >= 0) & (dec["t"] <= wb[np.clip(k, 0, None)] + 1e-3)
                 stats["decoded"] += int(ok.sum())
-                parts["t"].append(dec["t"][ok])
-                parts["p"].append(dec["p"][ok])
-                parts["i"].append(dec["i"][ok])
-                parts["line"].append(wl[k[ok]])
+                if not ok.any():
+                    continue
+                # keep only what lands inside a box (+ pad) with the applied values, chunk by chunk, so the
+                # returns in every other direction are never held in memory
+                t_, p_, i_, l_ = dec["t"][ok], dec["p"][ok], dec["i"][ok], wl[k[ok]]
+                x = georef_points(project, t_, p_, mount, lever, lat)
+                good = np.isfinite(x[:, 0])
+                owner = np.full(len(x), -1, np.int8)
+                for bi, (_k, bx) in enumerate(blist):
+                    inb = good & in_box(x[:, :2], bx, PAD_M)
+                    counts[bi] += int(inb.sum())
+                    owner[inb & (owner < 0)] = bi
+                keep = owner >= 0
+                if keep.any():
+                    for kk, v in (("t", t_), ("p", p_), ("i", i_), ("line", l_), ("owner", owner)):
+                        parts[kk].append(v[keep])
+    for bi, (k, _b) in enumerate(blist):
+        stats["per_box"][k] = {"points": int(counts[bi])}
     if not parts["t"]:
         out = {"t": np.zeros(0), "p": np.zeros((0, 3), np.float32), "i": np.zeros(0, np.uint8),
                "line": np.zeros(0, np.int16)}
     else:
-        out = {k: np.concatenate(v) for k, v in parts.items()}
         if progress:
-            progress(0.92, "Placing the points")
-        # 2 keep what lands inside a box (+ pad) with the applied values
-        x = georef_points(project, out["t"], out["p"], project.cfg["mount"], project.cfg["lever"],
-                          project.cfg["latency_ms"])
-        good = np.isfinite(x[:, 0])
-        xy = x[:, :2]
-        owner = np.full(len(xy), -1, np.int8)
-        for bi, (k, b) in enumerate(sorted(boxes.items())):
-            m = good & (owner < 0) & in_box(xy, b, PAD_M)
-            owner[m] = bi
+            progress(0.96, "Placing the points")
+        out = {k: np.concatenate(v) for k, v in parts.items()}
+        owner = out.pop("owner")
         keep = []
         rng = np.random.default_rng(3)
-        for bi, (k, b) in enumerate(sorted(boxes.items())):
+        for bi, (k, b) in enumerate(blist):
             idx = np.nonzero(owner == bi)[0]
-            stats["per_box"][k] = {"points": int((good & in_box(xy, b, PAD_M)).sum())}
             if len(idx) > budget:
-                idx = np.sort(rng.choice(idx, budget, replace=False))
+                idx = rng.choice(idx, budget, replace=False)
                 stats["per_box"][k]["thinned_to"] = budget
             keep.append(idx)
         keep = np.sort(np.concatenate(keep)) if keep else np.zeros(0, int)
@@ -355,18 +360,14 @@ def clraw_cancelled():
 
 
 def georef_points(project, t, p, mount, lever, latency_ms, batch=1000000):
+    """Local ENU of sensor points at times t; NaN where the trajectory has no data."""
     from . import geo
     M = geo.lidar_matrix(*mount)
     x = np.full((len(t), 3), np.nan)
-    tr = project.traj
-    for s in range(0, len(t), batch):
-        tt = t[s:s + batch]
-        ins = tr.inside(tt)
-        if not ins.any():
-            continue
+    ins = project.traj.inside(t)
+    if ins.any():
         ii = np.nonzero(ins)[0]
-        pos, C = engine.pose_fast(tr, project.frame, tt[ii], latency_ms * 1e-3)
-        x[s + ii] = engine.georef(pos, C, p[s:s + batch][ii].astype(float) @ M.T, lever)
+        x[ii] = engine.georef_times(project.traj, project.frame, t[ii], p[ii], M, lever, latency_ms * 1e-3, batch)
     return x
 
 

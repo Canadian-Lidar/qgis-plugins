@@ -148,9 +148,9 @@ SPEC = [
         ("range_max", "Range max (m)", (5, 200, 5), "Far points carry the most angle signal but also the most "
                                                    "noise; 60 m suits the XT-32"),
         ("intensity_min", "Intensity min", (0, 255, 1), ""),
-        ("points_per_line", "Points kept per line", (100000, 8000000, 250000), "Random thinning budget; "
-                                                                              "re-reads the lines"),
-        ("fine_points_per_box", "Fine Tune: points per inspection box", (100000, 8000000, 250000),
+        ("points_per_line", "Points kept per line", (100000, 30000000, 250000), "Random thinning budget; "
+                                                                               "re-reads the lines"),
+        ("fine_points_per_box", "Fine Tune: points per inspection box", (100000, 30000000, 250000),
          "Inside the roll / pitch / heading boxes the Data View re-reads every recorded point from the raw "
          ".clraw; above this many a box is thinned at random"),
     ]),
@@ -169,9 +169,12 @@ SPEC = [
         ("thickness_m", "Max thickness per line (m)", (0.005, 0.5, 0.005), "A patch must be planar within this "
                                                                            "in every line that sees it"),
         ("min_pts_line", "Min points per line", (5, 500, 5), ""),
-        ("max_pts_patch_line", "Max points per line per patch", (10, 2000, 10), ""),
+        ("max_pts_patch_line", "Max points per line per patch", (10, 5000, 10),
+         "More points define each plane better (Point density on the Calibration page sets this with the others)"),
         ("flat_ratio", "Flat patches per non-flat patch", (0, 10, 0.25), "Caps ground so walls drive heading"),
         ("max_patches", "Max patches", (50, 50000, 250), ""),
+        ("max_solve_points", "Solver memory limit (points)", (500000, 60000000, 500000),
+         "Above this many patch points the solver keeps a random subset (about 130 bytes per point)"),
         ("use_aoi", "Use only the area of interest", bool, "Draw it with the AOI tool (pole, building corner)"),
     ]),
     ("Solver", [

@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import time
 
 from . import files, locks
 
@@ -31,6 +32,10 @@ DEPENDS = {"pospro": ["crs", "base_station", "antennas"],
            "alignpro": ["crs", "lidar_mounting"],
            "cloudpro": ["crs", "lidar_mounting"]}
 SHARED_KEYS = ("crs", "base_station", "antennas", "lidar_mounting", "vehicle", "hardware")
+# stages that read the job's survey-line .clraw themselves (built_from records them as "inputs", 1.8.0)
+READS_SURVEY = ("alignpro", "cloudpro")
+MODIFY_WAIT_S = 10.0            # how long modify() waits for another writer of the project file
+_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {"COM%d" % i for i in range(1, 10)} | {"LPT%d" % i for i in range(1, 10)}
 
 
 class ProjectError(Exception):
@@ -45,25 +50,53 @@ def safe_name(name):
     n = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", (name or "").strip()).strip(". ")
     if not n:
         raise ProjectError("enter a project name")
-    return n[:80]
+    n = n[:80].rstrip(". ")
+    if n.split(".")[0].upper() in _RESERVED:        # Windows device names
+        n = "_" + n
+    return n
 
 
 def value_hash(v):
     return hashlib.sha256(json.dumps(v, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
-_FP_CACHE = {}
+_FP_CACHE = {}          # abs path -> (size, mtime_ns, fingerprint): the latest only, so it cannot grow
 
 
-def cached_fingerprint(path):
+def _stat(path):
     try:
         st = os.stat(path)
     except OSError:
         return None
-    key = (os.path.abspath(path), st.st_size, st.st_mtime_ns)
-    if key not in _FP_CACHE:
-        _FP_CACHE[key] = files.fingerprint(path)
-    return _FP_CACHE[key]
+    return [st.st_size, st.st_mtime_ns]
+
+
+def cached_fingerprint(path):
+    st = _stat(path)
+    if st is None:
+        return None
+    p = os.path.abspath(path)
+    c = _FP_CACHE.get(p)
+    if c is None or c[0] != st[0] or c[1] != st[1]:
+        c = _FP_CACHE[p] = (st[0], st[1], files.fingerprint(path))
+    return c[2]
+
+
+def _raw_reasons(recorded, stats, base, kind="raw file"):
+    """Reasons a set of recorded raw-file fingerprints no longer holds. stats = {rel: [size, mtime_ns]} recorded
+    beside them (1.8.0): a file with the same size and time is not hashed again."""
+    out = []
+    for rel, fp in (recorded or {}).items():
+        path = files.resolve(rel, base)
+        st = _stat(path)
+        if st is None:
+            out.append("%s not found: %s (relocate the job folder?)" % (kind, os.path.basename(rel)))
+            continue
+        if not fp or (stats or {}).get(rel) == st:
+            continue
+        if not files.fingerprint_matches(path, fp, cached_fingerprint(path)):
+            out.append("%s changed: %s" % (kind, os.path.basename(rel)))
+    return out
 
 
 class DcsProject:
@@ -101,7 +134,7 @@ class DcsProject:
                 raise ProjectError("no %s file in %s" % (SUFFIX, path))
             path = os.path.join(path, sorted(cands)[0])
         try:
-            data = files.read_json(path)
+            data = files.read_json_retry(path)
         except (OSError, ValueError) as e:
             bak = path + ".bak"
             if os.path.exists(bak):
@@ -142,18 +175,37 @@ class DcsProject:
     def modify(self, fn, plugin="DCS"):
         """Apply fn(data) to a freshly read copy under the project lock and
         write it back atomically (previous version kept as .bak)."""
-        with locks.Lock(self.folder, "project file", plugin, name=".dcsproj.lock"):
+        lk = locks.Lock(self.folder, "project file", plugin, name=".dcsproj.lock", wait=MODIFY_WAIT_S)
+        tl = locks.thread_lock(lk.path)
+        if not tl.acquire(timeout=MODIFY_WAIT_S):
+            raise locks.Locked({"stage": "project file", "plugin": "another task in this QGIS"})
+        try:
+            with lk:
+                return self._modify_locked(fn)
+        finally:
+            tl.release()
+
+    def _modify_locked(self, fn):
+        """modify() body, run while holding both the thread lock and the project lock file."""
+        backup = True
+        try:
+            fresh = files.read_json_retry(self.path)
+        except FileNotFoundError:
+            fresh = self.data
+        except (OSError, ValueError) as e:
+            backup = False              # keep the good .bak; the damaged file is replaced
+            # never write back the in-memory copy over someone else's changes: use the last good version
             try:
-                fresh = files.read_json(self.path)
+                fresh = files.read_json(self.path + ".bak")
             except (OSError, ValueError):
-                fresh = self.data
-            for k in ("captures", "shared", "shared_meta", "stages"):
-                fresh.setdefault(k, [] if k == "captures" else {})
-            out = fn(fresh)
-            fresh["modified"] = now()
-            files.atomic_write_json(self.path, fresh, backup=True)
-            self.data = fresh
-            return out
+                raise ProjectError("cannot read %s (%s); not changed" % (self.path, e))
+        for k in ("captures", "shared", "shared_meta", "stages"):
+            fresh.setdefault(k, [] if k == "captures" else {})
+        out = fn(fresh)
+        fresh["modified"] = now()
+        files.atomic_write_json(self.path, fresh, backup=backup)
+        self.data = fresh
+        return out
 
     # ------------------------------------------------------------- basics
     @property
@@ -207,17 +259,27 @@ class DcsProject:
                              for folder, fs in groups.items()]
         self.modify(fn, plugin)
 
-    def survey_clraw_files(self):
+    def survey_clraw_files(self, max_age=0.0):
         """The .clraw files of the job's survey lines: those in the captures' folders (and the captures'
         own .clraw files), else (no captures, or captures that are only mapper 2.10 navigation recordings)
-        the whole job folder. Never anything under the Processing folder, never a navigation recording."""
+        the whole job folder. Never anything under the Processing folder, never a navigation recording.
+        max_age: reuse the previous answer when it is younger than this many seconds (state() polling)."""
         from . import clraw
+        c = getattr(self, "_survey_cache", None)
+        if max_age and c and time.monotonic() - c[0] < max_age:
+            return list(c[1])
+
+        proc = os.path.normcase(os.path.abspath(self.folder)) + os.sep
 
         def walk(paths):
             found = clraw.find_clraw([p for p in paths if os.path.exists(p)])
-            proc = os.path.abspath(self.folder) + os.sep
-            return [f for f in found if not os.path.abspath(f).startswith(proc)
-                    and os.sep + "Processing" + os.sep not in os.path.abspath(f)]
+            out = []
+            for f in found:
+                a = os.path.normcase(os.path.abspath(f))
+                if a.startswith(proc) or "processing" in [x.lower() for x in a.split(os.sep)[:-1]]:
+                    continue
+                out.append(f)
+            return out
         paths = []
         for c in self.captures():
             paths.append(c["path"])
@@ -225,7 +287,9 @@ class DcsProject:
         lines = clraw.split_navigation(walk(paths))[0] if paths else []
         if not lines:
             lines = clraw.split_navigation(walk([self.job_folder]))[0]
-        return sorted(set(lines), key=lambda x: os.path.basename(x))
+        out = sorted(set(lines), key=lambda x: os.path.basename(x))
+        self._survey_cache = (time.monotonic(), list(out))
+        return out
 
     def sonar_clraw_files(self):
         """The job's marine sonar recordings (.clraw of kind "sonar", 1.5.0), in recording order: in the captures'
@@ -305,15 +369,31 @@ class DcsProject:
         successful run ends with handover.publish, which marks it done)."""
         return _Run(self, key, plugin, version)
 
-    def built_from_now(self, key):
-        """What a stage would record as built_from if it published now."""
+    def built_from_now(self, key, used=None, inputs=None):
+        """What a stage would record as built_from if it published now.
+
+        used (1.8.0): {upstream stage: handover id} the stage really used (read from the handover it loaded);
+        replaces the ids currently in the project for those stages. inputs (1.8.0, AlignPro / CloudPro): the raw
+        survey-line .clraw files the stage read; default = survey_clraw_files(). They are recorded with their
+        fingerprints ("inputs"), and the job's survey files at that moment ("survey"), so a changed or added
+        survey line makes the stage stale even when PosPro used navigation recordings."""
         up = {u: self.stage(u).get("handover_id") for u in UPSTREAM[key] if self.stage(u).get("handover_id")}
-        caps = {f: cached_fingerprint(f) for f in self.capture_files()}
+        if used is not None:
+            up = {u: h for u, h in dict(used).items() if u in UPSTREAM[key] and h}
+        job = self.job_folder
+        caps = self.capture_files()
         shared = {k: self.data.get("shared_meta", {}).get(k, {}).get("hash") for k in DEPENDS[key]
                   if k in self.data.get("shared", {})}
         # raw files keyed relative to the job folder, so moving the job folder (relocate) is not a change
-        return {"stages": up, "captures": {files.portable(f, self.job_folder): fp for f, fp in caps.items()},
-                "shared": shared}
+        out = {"stages": up, "captures": {files.portable(f, job): cached_fingerprint(f) for f in caps},
+               "captures_stat": {files.portable(f, job): _stat(f) for f in caps}, "shared": shared}
+        if key in READS_SURVEY:
+            survey = self.survey_clraw_files()
+            ins = survey if inputs is None else [os.path.abspath(p) for p in inputs]
+            out["inputs"] = {files.portable(f, job): cached_fingerprint(f) for f in ins}
+            out["inputs_stat"] = {files.portable(f, job): _stat(f) for f in ins}
+            out["survey"] = sorted(files.portable(f, job) for f in survey)
+        return out
 
     def state(self, key):
         """(state, reasons): state is none, running, failed, done or stale."""
@@ -333,18 +413,28 @@ class DcsProject:
             return "failed", ["the published results are missing"]
         bf = s.get("built_from") or {}
         for u, hid in (bf.get("stages") or {}).items():
+            if hid == "ignored":        # deliberately not used (CloudPro with the recorded/entered mounting)
+                continue
             us = self.stage(u)
             if us.get("status") != "done" or us.get("handover_id") != hid:
                 reasons.append("%s results changed since this was computed" % STAGE[u][2])
         for u in UPSTREAM[key]:
             if u not in (bf.get("stages") or {}) and self.stage(u).get("status") == "done":
                 reasons.append("%s results were added since this was computed" % STAGE[u][2])
-        for rel, fp in (bf.get("captures") or {}).items():
-            cur = cached_fingerprint(files.resolve(rel, self.job_folder))
-            if cur is None:
-                reasons.append("raw file not found: %s (relocate the job folder?)" % os.path.basename(rel))
-            elif fp and cur != fp:
-                reasons.append("raw file changed: %s" % os.path.basename(rel))
+        job = self.job_folder
+        reasons += _raw_reasons(bf.get("captures"), bf.get("captures_stat"), job)
+        # 1.8.0: the survey lines AlignPro / CloudPro read (absent in older projects: nothing to check)
+        reasons += _raw_reasons(bf.get("inputs"), bf.get("inputs_stat"), job, "survey line")
+        if bf.get("survey") is not None:
+            had = {os.path.normcase(r) for r in bf["survey"]} | {os.path.normcase(r) for r in (bf.get("inputs") or {})}
+            try:
+                now_files = self.survey_clraw_files(max_age=5.0)
+            except OSError:
+                now_files = []
+            added = [f for f in now_files if os.path.normcase(files.portable(f, job)) not in had]
+            if added:
+                reasons.append("survey line added: %s%s" % (os.path.basename(added[0]),
+                                                             (" and %d more" % (len(added) - 1)) if len(added) > 1 else ""))
         for k, h in (bf.get("shared") or {}).items():
             if self.data.get("shared_meta", {}).get(k, {}).get("hash") != h:
                 m = self.data.get("shared_meta", {}).get(k, {})
@@ -362,8 +452,12 @@ class _Run:
 
     def __enter__(self):
         self.lock.acquire()
-        self.p.update_stage(self.key, self.plugin, status="running", plugin=self.plugin, version=self.version,
-                            started=now())
+        try:
+            self.p.update_stage(self.key, self.plugin, status="running", plugin=self.plugin, version=self.version,
+                                started=now())
+        except BaseException:
+            self.lock.release()         # __exit__ does not run when __enter__ raises
+            raise
         return self
 
     def __exit__(self, et, ev, tb):

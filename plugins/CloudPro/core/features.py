@@ -373,23 +373,46 @@ class Poles(Filter):
         np.maximum.at(zmax, comp, vz[cand])
         good = ((zmax - zmin + 1) * v >= self.v("height")) & ((zmin - 1) * v <= self.v("base"))
         if self.v("trunks") and good.any():
-            # voxels of large sections (crowns) just above the top of a stack
+            # voxels of large sections (crowns) just above the top of a stack: one sort of the stacks and a
+            # coarse-cell index of the large sections, so the cost no longer grows with stacks x voxels
             big = ~small
-            occ_big = set(uk[big].tolist())
+            uk_big = np.sort(uk[big])
+            bx, by, bz = vx[big], vy[big], vz[big]
+            B = max(1, int(math.ceil(3 / v)))                 # coarse cell = the 3 m search half-width
+            ck = (by // B) * (dims[0] // B + 2) + (bx // B)
+            co = np.argsort(ck, kind="stable")
+            ck_s = ck[co]
+            corder = np.argsort(comp, kind="stable")
+            cstart = np.searchsorted(comp[corder], np.arange(nz))
+            cend = np.searchsorted(comp[corder], np.arange(nz), side="right")
+            ndz = max(2, int(round(1.0 / v)))
+            up = int(round(2.0 / v))
             for k in np.flatnonzero(good):
-                mk = cand[comp == k]
+                mk = cand[corder[cstart[k]:cend[k]]]
                 top = vz[mk] == zmax[k]
-                hit = 0
-                for dz in range(1, max(2, int(round(1.0 / v))) + 1):
-                    for xx, yy in zip(vx[mk][top], vy[mk][top]):
-                        for ddx in (-1, 0, 1):
-                            for ddy in (-1, 0, 1):
-                                if ((zmax[k] + dz) * dims[1] + yy + ddy) * dims[0] + xx + ddx in occ_big:
-                                    hit += 1
+                xx, yy = vx[mk][top], vy[mk][top]
+                # crown voxels over the stack's top (1 m up, 3 x 3 neighbourhood)
+                dz_ = np.arange(1, ndz + 1)[:, None, None, None]
+                dd = np.array([-1, 0, 1])
+                q = (((zmax[k] + dz_) * dims[1] + yy[None, :, None, None] + dd[None, None, :, None]) * dims[0] +
+                     xx[None, :, None, None] + dd[None, None, None, :]).ravel()
+                p_ = np.clip(np.searchsorted(uk_big, q), 0, max(0, len(uk_big) - 1))
+                hit = int((uk_big[p_] == q).sum()) if len(uk_big) else 0
                 if hit >= 3:
-                    lid = np.flatnonzero(big & (vz > zmax[k]) & (vz <= zmax[k] + int(round(2.0 / v))) &
-                                         (np.abs(vx - vx[mk].mean()) < 3 / v) & (np.abs(vy - vy[mk].mean()) < 3 / v))
-                    if len(lid) * v * v > 1.5 / v * v * 4:      # a crown, not a sign or a lamp head
+                    mx, my = vx[mk].mean(), vy[mk].mean()
+                    cx0, cy0 = int(mx // B), int(my // B)
+                    sel_ = []
+                    for gy in (cy0 - 1, cy0, cy0 + 1):
+                        for gx in (cx0 - 1, cx0, cx0 + 1):
+                            c_ = gy * (dims[0] // B + 2) + gx
+                            a_, b_ = np.searchsorted(ck_s, c_), np.searchsorted(ck_s, c_, side="right")
+                            sel_.append(co[a_:b_])
+                    cidx = np.concatenate(sel_) if sel_ else np.zeros(0, np.int64)
+                    n_lid = int(((bz[cidx] > zmax[k]) & (bz[cidx] <= zmax[k] + up) &
+                                 (np.abs(bx[cidx] - mx) < 3 / v) & (np.abs(by[cidx] - my) < 3 / v)).sum())
+                    # a crown, not a sign or a lamp head (same test as before: the expression
+                    # "1.5 / v * v * 4" it replaces always equals 6)
+                    if n_lid * v * v > 6.0:
                         good[k] = False
         vox_ok = np.zeros(len(uk), bool)
         vox_ok[cand[good[comp]]] = True

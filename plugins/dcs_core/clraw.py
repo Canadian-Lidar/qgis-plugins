@@ -388,7 +388,7 @@ def file_info(path):
         md = dict(mf.metadata.get("clraw", {}))
         if mf.chunk_pos:
             start = min(cp[5] for cp in mf.chunk_pos) * 1e-9
-    except (OSError, ValueError):
+    except Exception:           # noqa: BLE001 - unreadable / damaged / partial file: fall back to the name
         md = {}
     m = _FNAME_210.match(name)
     old = _FNAME.match(name)

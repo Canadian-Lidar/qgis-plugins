@@ -75,9 +75,7 @@ def anpp20(t, lat=0.8, lon=-1.15, h=20.0):
     fs = (7 << 4) | 0b1010                  # filter status: RTK fixed, navigation and time initialised
     pl = struct.pack("<HHII3d3f3ff3f3f3f", 0, fs, int(t), int(round((t - int(t)) * 1e6)), lat, lon, h,
                      *([0.0] * 3), *([0.0] * 3), 9.8, 0.01, 0.02, 1.5, *([0.0] * 3), 0.02, 0.02, 0.03)
-    hdr = bytes([0, 20, len(pl), 0, 0])
-    lrc = (-(hdr[1] + hdr[2] + hdr[3] + hdr[4])) & 0xFF
-    return bytes([lrc]) + hdr[1:] + pl
+    return anpp.build(20, pl)                   # header LRC and payload CRC as the Certus sends them
 
 
 CAL = "Laser id,Elevation,Azimuth\n" + "\n".join("%d,%.3f,%.3f" % (i + 1, 15 - i, 0.5) for i in range(32))

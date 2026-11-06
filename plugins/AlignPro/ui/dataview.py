@@ -102,6 +102,8 @@ class DataView(QWidget):
         self.focus = None
         self.active = "heading"
         self.near = {}                   # box kind -> indices of loaded points near that box
+        self.show = None                 # indices the views show (None: all)
+        self._gbuf = None
         self._gcut = {}                  # ghost positions cut into each box (only redone when they change)
         self.loader = None               # callable(region) that loads full density in the background
         self.dense_state = ""
@@ -398,6 +400,15 @@ class DataView(QWidget):
         self._prepare()
         self._schedule()
 
+    def reload_region(self):
+        """Load the same area again (e.g. after the full-density read was stopped to apply values)."""
+        if self.p is None or not self.p.lines or self.region is None:
+            return
+        r = self.region
+        region = self.p.area_region(r["center"], r["half"], r["source"]) if self.manual else \
+            self.p.view_region(self.focus)
+        self._load(region)
+
     def reload(self, focus=None):
         """Around the boxes (focus: the box just drawn, or 'aoi' for the area of interest)."""
         if self.p is None or not self.p.lines:
@@ -550,15 +561,27 @@ class DataView(QWidget):
         self.boxes_edited.emit(self.active)
 
     def _prepare(self):
-        """Indices of the loaded points near each box (so a nudge only cuts those)."""
+        """Indices of the loaded points near each box (so a nudge only cuts those), and the points the views
+        show (the plan's first PLAN_MAX of the random order + the points near the boxes): a nudge places only
+        those. The other rows stay NaN."""
         self.near = {}
+        self.show = None
+        self._gbuf = None
         if self.p is None or self.sub is None:
             return
         x = self.p.georef_subset(self.sub, *self.values())
-        self.x = x
         for k, b in self._boxes().items():
             if k in KEYS and fine.box_frame(b) is not None:
                 self.near[k] = np.nonzero(fine.in_box(x[:, :2], b, fine.PAD_M))[0]
+        n = len(x)
+        keep = np.zeros(n, bool)
+        keep[:min(n, PLAN_MAX)] = True
+        for ix in self.near.values():
+            keep[ix] = True
+        self.show = None if keep.all() else np.nonzero(keep)[0]
+        if self.show is not None:
+            x[~keep] = np.nan
+        self.x = x
 
     def _hover(self, view, x, y):
         self.hint.setText("%s  %.3f, %.3f m" % (view.upper(), x, y))
@@ -572,14 +595,21 @@ class DataView(QWidget):
         if self.p is None or self.sub is None:
             return
         mount, lever, lat = self.values()
-        self.x = self.p.georef_subset(self.sub, mount, lever, lat)
+        if self.x is None or len(self.x) != len(self.sub["t"]):
+            self._prepare()
+        self.x = self.p.georef_subset(self.sub, mount, lever, lat, idx=self.show, out=self.x)
         ref = self._ghost_values()
         if ref is None:
             self.ghost = None
         else:
             key = (tuple(ref[0]), tuple(ref[1]), ref[2], id(self.sub))
             if key != self.ghost_key:
-                self.ghost = self.p.georef_subset(self.sub, *ref)
+                if self.show is None:
+                    self.ghost = self.p.georef_subset(self.sub, *ref)
+                else:
+                    if getattr(self, "_gbuf", None) is None or len(self._gbuf) != len(self.sub["t"]):
+                        self._gbuf = np.full((len(self.sub["t"]), 3), np.nan)
+                    self.ghost = self.p.georef_subset(self.sub, *ref, idx=self.show, out=self._gbuf)
                 self.ghost_key = key
         try:
             e = self.p.live_error(mount, lever, lat)

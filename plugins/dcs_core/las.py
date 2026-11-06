@@ -13,16 +13,18 @@ point source id = line + 1, scan angle 0 (not known per point), GPS time =
 adjusted standard GPS time.
 """
 import datetime as _dt
+import os
 import struct
 
 import numpy as np
+
+from .timeutil import LEAP
 
 PDRF6 = np.dtype([("X", "<i4"), ("Y", "<i4"), ("Z", "<i4"), ("intensity", "<u2"), ("returns", "u1"),
                   ("flags", "u1"), ("classification", "u1"), ("user_data", "u1"), ("scan_angle", "<i2"),
                   ("point_source_id", "<u2"), ("gps_time", "<f8")])
 assert PDRF6.itemsize == 30
 GPS_UNIX = 315964800.0
-LEAP = 18
 
 
 def utc_to_adjusted_gps(t, leap=LEAP):
@@ -32,6 +34,7 @@ def utc_to_adjusted_gps(t, leap=LEAP):
 
 class LasWriter:
     def __init__(self, path, offset, scale=0.001, wkt="", system="DCS", software="DCS Core (QGIS)"):
+        self.path = path
         self.f = open(path, "wb")
         self.offset = np.asarray(offset, float)
         self.scale = scale
@@ -83,7 +86,8 @@ class LasWriter:
     def close(self):
         today = _dt.date.today()
         h = bytearray(375)
-        struct.pack_into("<4sHH", h, 0, b"LASF", 0, 0x0001 | (0x0010 if self.wkt else 0))
+        # global encoding: bit 0 = adjusted standard GPS time, bit 4 = CRS as WKT (required for PDRF 6-10)
+        struct.pack_into("<4sHH", h, 0, b"LASF", 0, 0x0001 | 0x0010)
         struct.pack_into("<BB32s32sHHHII", h, 24, 1, 4, self.system.encode()[:32], self.software.encode()[:32],
                          today.timetuple().tm_yday, today.year, 375, self.offset_to_points, 1 if self.wkt else 0)
         struct.pack_into("<BHI", h, 104, 6, 30, 0)                      # legacy count 0 for PDRF 6
@@ -102,9 +106,21 @@ class LasWriter:
     def __enter__(self):
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, et, ev, tb):
+        if et is not None:
+            # an export that failed part way: never leave a LAS file that looks complete
+            try:
+                self.f.close()
+            except OSError:
+                pass
+            try:
+                os.remove(self.path)
+            except OSError:
+                pass
+            return False
         if not self.f.closed:
             self.close()
+        return False
 
 
 def read_las(path):
@@ -121,9 +137,16 @@ def read_las(path):
 
 
 def write_las(path, x, y, z, intensity, source_id, gps_time, epsg=None, scale=0.001,
-              system="AlignPro", software="AlignPro Lidar patch test"):
-    """LAS 1.2 point format 1 in one call, with an EPSG GeoKey when given."""
+              system="AlignPro", software="AlignPro Lidar patch test", date=None):
+    """LAS 1.2 point format 1 in one call, with an EPSG GeoKey when given. gps_time: seconds of the GPS week,
+    or adjusted standard GPS time (negative or above one week; the global encoding then says so). The header
+    date is `date`, else the date of the data when the times are adjusted standard GPS time, else today."""
     n = len(x)
+    gt = np.asarray(gps_time, float)
+    adjusted = bool(n) and (float(np.min(gt)) < 0 or float(np.min(gt)) > 604800.0)
+    if date is None:
+        date = (_dt.datetime.fromtimestamp(float(np.min(gt)) + 1e9 + GPS_UNIX - LEAP, _dt.timezone.utc).date()
+                if adjusted else _dt.date.today())
     off = [float(np.floor(np.min(v))) if n else 0.0 for v in (x, y, z)]
     vlrs = b""
     nvlr = 0
@@ -153,9 +176,9 @@ def write_las(path, x, y, z, intensity, source_id, gps_time, epsg=None, scale=0.
     mins = [float(np.min(v)) if n else 0.0 for v in (x, y, z)]
     maxs = [float(np.max(v)) if n else 0.0 for v in (x, y, z)]
     h = bytearray(hdr_size)
-    struct.pack_into("<4sHH16sBB32s32sHHHIIBHI5I", h, 0, b"LASF", 0, 0, b"\0" * 16, 1, 2,
+    struct.pack_into("<4sHH16sBB32s32sHHHIIBHI5I", h, 0, b"LASF", 0, 1 if adjusted else 0, b"\0" * 16, 1, 2,
                      system.encode()[:32].ljust(32, b"\0"), software.encode()[:32].ljust(32, b"\0"),
-                     1, 2026, hdr_size, point_off, nvlr, 1, rec, n, n, 0, 0, 0, 0)
+                     date.timetuple().tm_yday, date.year, hdr_size, point_off, nvlr, 1, rec, n, n, 0, 0, 0, 0)
     struct.pack_into("<3d3d6d", h, 131, scale, scale, scale, off[0], off[1], off[2],
                      maxs[0], mins[0], maxs[1], mins[1], maxs[2], mins[2])
     with open(path, "wb") as f:

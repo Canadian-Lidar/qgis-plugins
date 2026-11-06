@@ -19,7 +19,7 @@ plugins (PosPro, AlignPro, CloudPro, RemixPro).
   theme, widgets, stepbar, dialogs, registry   the shared look and UI
 
 The plugins import it as `dcs_core`; it has no window of its own."""
-__version__ = "1.7.0"
+__version__ = "1.8.0"
 # API 2 (1.1.0): adds clraw, hesai, anpp, sbet, las, mcap, zstd and widgets.align_flags.
 # API 3 (1.2.0): adds window.PluginWindow (the standard plugin window) and theme.FAINT, DISABLED, VIEW_BG, GRID.
 # API 4 (1.3.0): adds header.PluginHeader (the same header bar in every plugin).
@@ -35,7 +35,12 @@ __version__ = "1.7.0"
 # API 8 (1.7.0): profiles (system profiles: folder, list_profiles, load, save, new, update_sections, delete, export,
 # import_file, identity, identity_of_files, describe_system, match, differences, fmt, SECTIONS, SECTION_TITLES,
 # FIELDS) and profiles_ui (ProfilesDialog, open_dialog, suggest).
-API = 8
+# API 9 (1.8.0): handover.publish(..., used=, inputs=) and DcsProject.built_from_now(key, used=, inputs=) - built_from
+# names the upstream handovers really used and fingerprints the survey lines AlignPro / CloudPro read ("inputs",
+# "survey"), so a changed or added survey line makes them stale; profiles.save_sections; locks.thread_lock,
+# Lock(wait=); files.replace, read_json_retry, fingerprint_matches; anpp.nav_states(stats=), NavCollector.rejected;
+# timeutil.LEAP. Locks are exclusive (O_EXCL) and DcsProject.modify waits for another writer.
+API = 9
 
 
 def classFactory(iface):  # noqa: N802 - QGIS API

@@ -1,6 +1,6 @@
 """Run the DCS plugins outside QGIS to take user-guide screenshots of the real windows.
 
-Real Qt (PyQt5) widgets, a stand-in for the parts of QGIS the plugins call (no map canvas
+Real Qt widgets (PyQt5, or PyQt6 with DCS_QT=6; see ../qtshim.py), a stand-in for the parts of QGIS the plugins call (no map canvas
 drawing), and QGIS background tasks run straight away on the main thread so processing
 finishes before the next line. Only for the guides and tests; the plugins do not use it.
 
@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 _app = None
+QT = None               # the Qt namespace from qtshim (QtCore, QtGui, QtWidgets, QtSvg, sip, QT6, binding)
 CRS_NAMES = {"EPSG:2953": "NAD83(CSRS) / New Brunswick Stereographic", "EPSG:4617": "NAD83(CSRS)",
              "EPSG:4326": "WGS 84", "EPSG:2036": "NAD83(CSRS98) / New Brunswick Stereo",
              "EPSG:22620": "NAD83(CSRS)v6 / UTM zone 20N", "EPSG:2961": "NAD83(CSRS) / UTM zone 20N",
@@ -25,19 +26,14 @@ CRS_NAMES = {"EPSG:2953": "NAD83(CSRS) / New Brunswick Stereographic", "EPSG:461
 
 
 def _install_qgis():
-    from PyQt5 import QtCore, QtGui, QtSvg, QtWidgets, sip
-    q = types.ModuleType("qgis")
-    qp = types.ModuleType("qgis.PyQt")
-    q.PyQt = qp
-    for n, m in (("QtCore", QtCore), ("QtGui", QtGui), ("QtWidgets", QtWidgets), ("QtSvg", QtSvg), ("sip", sip)):
-        setattr(qp, n, m)
-        sys.modules["qgis.PyQt." + n] = m
-    try:
-        from PyQt5 import QtPrintSupport
-        qp.QtPrintSupport = QtPrintSupport
-        sys.modules["qgis.PyQt.QtPrintSupport"] = QtPrintSupport
-    except ImportError:
-        pass
+    global QT
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))      # plugins/ (qtshim)
+    import qtshim
+    if os.environ.get("DCS_QT") is None:
+        os.environ["DCS_QT"] = "5"      # always the stand-in here (the harness replaces qgis.core / gui too)
+    QT = qtshim.install()
+    QtCore, QtWidgets = QT.QtCore, QT.QtWidgets
+    q = sys.modules["qgis"]
 
     class Auto(types.ModuleType):
         def __getattr__(self, n):
@@ -265,7 +261,7 @@ def _install_qgis():
             self._c = None
 
         def paintEvent(self, e):               # noqa: N802
-            from PyQt5.QtGui import QColor, QPainter
+            QColor, QPainter = QT.QtGui.QColor, QT.QtGui.QPainter
             p = QPainter(self)
             p.fillRect(self.rect(), self._c or QColor("#2a2d31"))
             p.end()
@@ -278,15 +274,13 @@ def _install_qgis():
     for name, mod in (("core", core), ("gui", gui), ("utils", utils)):
         setattr(q, name, mod)
         sys.modules["qgis." + name] = mod
-    sys.modules["qgis"] = q
-    sys.modules["qgis.PyQt"] = qp
 
 
 class Iface:
     """The bits of QgisInterface the plugins call; the main window is a plain QMainWindow."""
 
     def __init__(self):
-        from PyQt5 import QtWidgets
+        QtWidgets = QT.QtWidgets
         self.mw = QtWidgets.QMainWindow()
         self.mw.setCentralWidget(QtWidgets.QLabel(""))
         self.mw.resize(1600, 1000)
@@ -321,10 +315,11 @@ def start(plugins_root, settings_dir):
     _install_qgis()
     sys.path.insert(0, plugins_root)
     os.environ["DCS_HARNESS_SETTINGS"] = settings_dir
-    from PyQt5 import QtCore, QtWidgets
-    QtCore.QSettings.setDefaultFormat(QtCore.QSettings.IniFormat)
-    QtCore.QSettings.setPath(QtCore.QSettings.IniFormat, QtCore.QSettings.UserScope, settings_dir)
-    QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, False)
+    QtCore, QtWidgets = QT.QtCore, QT.QtWidgets
+    QtCore.QSettings.setDefaultFormat(QtCore.QSettings.Format.IniFormat)
+    QtCore.QSettings.setPath(QtCore.QSettings.Format.IniFormat, QtCore.QSettings.Scope.UserScope, settings_dir)
+    if not QT.QT6:          # Qt 6 always scales for high DPI (the attribute is deprecated there)
+        QtCore.QCoreApplication.setAttribute(QtCore.Qt.ApplicationAttribute.AA_EnableHighDpiScaling, False)
     _app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     _app.setOrganizationName("dcs-guide")
     _app.setApplicationName("dcs-guide")
@@ -339,9 +334,8 @@ def load(key, iface):
 
 
 def settle(n=6):
-    from PyQt5 import QtWidgets
     for _ in range(n):
-        QtWidgets.QApplication.processEvents()
+        QT.QtWidgets.QApplication.processEvents()
 
 
 def wait(cond, timeout=600):
@@ -357,15 +351,16 @@ def wait(cond, timeout=600):
 
 def grab(widget, path, scale=2):
     """PNG of a widget (and its children) at `scale` x pixel ratio."""
-    from PyQt5 import QtCore, QtGui
+    QtCore, QtGui, QtWidgets = QT.QtCore, QT.QtGui, QT.QtWidgets
     settle()
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     sz = widget.size() * scale
-    img = QtGui.QImage(sz, QtGui.QImage.Format_ARGB32)
+    img = QtGui.QImage(sz, QtGui.QImage.Format.Format_ARGB32)
     img.setDevicePixelRatio(scale)
-    img.fill(QtCore.Qt.transparent)
+    img.fill(QtCore.Qt.GlobalColor.transparent)
     p = QtGui.QPainter(img)
-    widget.render(p, QtCore.QPoint(0, 0), QtGui.QRegion(), widget.RenderFlags(widget.DrawChildren | widget.DrawWindowBackground))
+    rf = QtWidgets.QWidget.RenderFlag
+    widget.render(p, QtCore.QPoint(0, 0), QtGui.QRegion(), rf.DrawChildren | rf.DrawWindowBackground)
     p.end()
     img.save(path)
     return path
@@ -375,7 +370,7 @@ def grab_menu(menu, path, scale=2):
     """PNG of a QMenu as it looks when open."""
     menu.adjustSize()
     menu.popup(menu.parentWidget().mapToGlobal(menu.parentWidget().rect().bottomLeft()) if menu.parentWidget() else
-               __import__("PyQt5").QtCore.QPoint(100, 100))
+               QT.QtCore.QPoint(100, 100))
     settle()
     out = grab(menu, path, scale)
     menu.hide()

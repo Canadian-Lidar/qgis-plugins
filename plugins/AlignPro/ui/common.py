@@ -69,7 +69,8 @@ def themed(w):
 
 # ------------------------------------------------------------------ tasks
 class Job(QgsTask):
-    """Runs fn(progress, cancelled) on a QGIS worker thread; on_done(result, error) on the main thread."""
+    """Runs fn(progress, cancelled) on a QGIS worker thread; on_done(result, error) on the main thread.
+    error is "Cancelled" when the user stopped it. detach() drops the callbacks (the window is closing)."""
 
     def __init__(self, title, fn, on_done, on_progress=None):
         super().__init__(title, QgsTask.Flag.CanCancel)
@@ -79,23 +80,41 @@ class Job(QgsTask):
         self.result_value = None
         self.error = None
         self.message = ""
-        if on_progress:
-            self.progressChanged.connect(lambda v: on_progress(v, self.message))
+        self.progressChanged.connect(self._progress_changed)
+
+    def _progress_changed(self, v):
+        cb = self.on_progress
+        if cb is not None:
+            try:
+                cb(v, self.message)
+            except RuntimeError:          # the widget went away
+                self.on_progress = None
+
+    def detach(self):
+        self.on_done = None
+        self.on_progress = None
 
     def run(self):
+        from ..core.lines import Cancelled
         try:
             def prog(f, msg=""):
                 self.message = msg
                 self.setProgress(max(0.0, min(100.0, f * 100.0)))
             self.result_value = self.fn(prog, self.isCanceled)
             return True
+        except Cancelled:
+            self.error = "Cancelled"
+            return False
         except Exception as e:  # noqa: BLE001
             self.error = "%s\n\n%s" % (e, traceback.format_exc())
             return False
 
     def finished(self, ok):
+        cb = self.on_done
+        if cb is None:
+            return
         try:
-            self.on_done(self.result_value if ok else None, None if ok else (self.error or "Cancelled"))
+            cb(self.result_value if ok else None, None if ok else (self.error or "Cancelled"))
         except Exception:  # noqa: BLE001
             log(traceback.format_exc(), Qgis.Critical)
 

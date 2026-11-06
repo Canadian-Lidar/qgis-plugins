@@ -556,10 +556,21 @@ class CalibPage(Page):
                                  "Survey sensor › Mounting angles)."))
         self.b_run = _primary("Auto calibrate")
         self.b_run.clicked.connect(self.dock.autopatch)
+        self.density = QComboBox()
+        for k, t in engine.DENSITY_TITLES.items():
+            self.density.addItem(t, k)
+        self.density.setToolTip("How many points the calibration and the Data View use. Denser finds the planes "
+                                "more precisely but takes longer and needs more memory; changing it re-reads the "
+                                "lines when the points kept per line change. Custom: the numbers in Settings.")
+        self.density.activated.connect(self._density)
+        self.density_note = QLabel("")
+        self.density_note.setObjectName("ppHint")
+        self.density_note.setWordWrap(True)
         b_view = QPushButton("Data View \u00b7 Fine Tune")
         b_view.setToolTip("Plan, profile and section of the points, live while you adjust the values by hand")
         b_view.clicked.connect(lambda: self.dock.show_dataview("float"))
-        self.lay.addLayout(_row(self.b_run, b_view, None))
+        self.lay.addLayout(_row(self.b_run, b_view, None, "Point density", self.density))
+        self.lay.addWidget(self.density_note)
         cards = QHBoxLayout()
         self.cards = [Card("Roll"), Card("Pitch"), Card("Heading")]
         self.c_err = Card("Error before → after")
@@ -633,6 +644,7 @@ class CalibPage(Page):
         if p is None:
             return
         self.refresh_publish()
+        self._show_density()
         for lb, v in zip(self.pre, p.cfg.get("mount_preset") or [0, 0, 0]):
             lb.setText("%.4f" % v)
         for s, v in zip(self.edit, p.cfg.get("mount") or [0, 0, 0]):
@@ -705,6 +717,37 @@ class CalibPage(Page):
                          "final result." % ("real-time" if p.traj_info.get("source") == "realtime" else "SBET file"))
         self.pub_warn.setText("\n".join("\u26a0 " + w for w in notes))
         self.b_pub.setEnabled(bool(p.lines) and (st != "done" or differs))
+
+    def _show_density(self):
+        p = self.p
+        if p is None:
+            return
+        s = p.settings
+        name = engine.density_of(s)
+        self.density.blockSignals(True)
+        self.density.setCurrentIndex(max(0, self.density.findData(name)))
+        self.density.blockSignals(False)
+        n, mem = engine.solve_points_estimate(s)
+        used = len(p.P.pt_line) if p.P is not None and getattr(p.P, "pt_line", None) is not None else None
+        level, mtxt = self.dock.memory_check({})
+        self.density_note.setText(
+            "%s points kept per line, up to %d points per line in each %.1f m patch, at most %s patches "
+            "(the solver holds up to about %s points, %.1f GB)%s. In all %s.%s" % (
+                "{:,}".format(int(s["points_per_line"])), int(s["max_pts_patch_line"]), float(s["voxel_m"]),
+                "{:,}".format(int(s["max_patches"])), "{:,}".format(n), mem / 1e9,
+                ("; now %s points in %d patches" % ("{:,}".format(used), len(p.P))) if used else "", mtxt,
+                {"warn": " \u26a0 Close other programs while calibrating, or choose a lower density.",
+                 "refuse": " \u26a0 More than this computer can hold: choose a lower density."}.get(level, "")))
+        self.density_note.setStyleSheet("color: %s;" % theme.AMBER if level != "ok" else "")
+
+    def _density(self, *_):
+        name = self.density.currentData()
+        if name == "custom":
+            self.dock.settings_dialog()
+            self._show_density()
+            return
+        if not self.dock.change_settings(dict(engine.DENSITIES[name])):
+            self._show_density()              # refused: back to the density in use
 
     def _apply_adv(self):
         r = self.p.cfg.get("results") if self.p else None

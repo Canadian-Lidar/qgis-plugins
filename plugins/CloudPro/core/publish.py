@@ -50,8 +50,11 @@ def report_text(project, stats, outputs, warnings):
          "  Mounting     %s deg (navaq_hesai)" % (inp.get("mount_deg") or "as recorded in each capture"),
          "  Lever        %s m" % (inp.get("lidar_lever_m") or "as recorded in each capture"),
          "  Latency      %.4f s" % float(inp.get("latency_s") or 0.0),
-         "  CRS          %s, heights %s" % (project.crs, project.data.get("vertical", "ellipsoidal")), "",
-         "LINES"]
+         "  CRS          %s, heights %s" % (project.crs, project.data.get("vertical", "ellipsoidal"))]
+    td = project.data.get("trajectory_datum")
+    if td:
+        L.append("  Datum        %s" % td.get("note"))
+    L += ["", "LINES"]
     for ln in project.lines:
         L.append("  L%-3d %-24s %12s points  %s" % (ln["id"] + 1, ln.get("name", ""), "{:,}".format(ln.get("points", 0)),
                                                     ", ".join(os.path.basename(f) for f in ln.get("files", []))))
@@ -74,6 +77,36 @@ def report_text(project, stats, outputs, warnings):
     return "\n".join(L) + "\n"
 
 
+def used_frame(project, dcs=None):
+    """(frame, epoch) of the coordinates of the points: the datum the trajectory was moved to (ITRF2020 PPP
+    trajectories), else the frame of the trajectory actually used, as georeferenced (not the shared crs fact,
+    which follows PosPro's latest run)."""
+    td = project.data.get("trajectory_datum")
+    if td:
+        return td.get("to") or None, (td.get("from") or {}).get("epoch")
+    t = (project.data.get("inputs") or {}).get("trajectory") or {}
+    fr = t.get("frame") or {}
+    if t.get("source") == "pospro" and fr:
+        return fr.get("name"), fr.get("epoch")
+    if t.get("source") == "realtime":
+        return "Certus real-time solution (frame of the RTK corrections)", None
+    c = (dcs.shared("crs") if dcs is not None else None) or {}
+    return c.get("frame"), c.get("epoch")
+
+
+def used_stages(inp):
+    """built_from.stages: the handover ids the points were georeferenced with. "ignored" for AlignPro when
+    the project properties chose the recorded or entered mounting on purpose."""
+    used = {}
+    if (inp.get("trajectory") or {}).get("handover_id"):
+        used["pospro"] = inp["trajectory"]["handover_id"]
+    if (inp.get("alignment") or {}).get("handover_id"):
+        used["alignpro"] = inp["alignment"]["handover_id"]
+    elif (inp.get("override") or {}).get("source") in ("recorded", "entered"):
+        used["alignpro"] = "ignored"
+    return used
+
+
 def publish(project, outputs, warnings=(), version=""):
     """outputs: {key: {"path": abs path in out/, "format": ..., ...}} already written there.
     Writes cloud_report.txt, then cloud.json through DCS Core. Returns the handover."""
@@ -94,7 +127,8 @@ def publish(project, outputs, warnings=(), version=""):
     dfiles.atomic_write_bytes(rep, report_text(project, stats, outs, warnings).encode("utf-8"))
     data_files = {k: v["path"] for k, v in outputs.items()}
     data_files["report"] = rep
-    crs_fact = dcs.shared("crs") or {}
+    td = project.data.get("trajectory_datum")
+    frame, epoch = used_frame(project, dcs)
     fields = {
         "calibration": (inp.get("alignment") or {}).get("calibration", "no calibration"),
         "trajectory": inp.get("trajectory") or {},
@@ -102,7 +136,8 @@ def publish(project, outputs, warnings=(), version=""):
         "georeferencing": {"mount_deg": inp.get("mount_deg"), "lidar_lever_m": inp.get("lidar_lever_m"),
                            "latency_s": inp.get("latency_s"), "convention": "navaq_hesai",
                            "georeferenced": inp.get("georeferenced")},
-        "crs": {"horizontal": project.crs, "frame": crs_fact.get("frame"), "epoch": crs_fact.get("epoch"),
+        "crs": {"horizontal": project.crs, "frame": frame, "epoch": epoch,
+                "trajectory_datum": (td or {}).get("note"),
                 "height": project.data.get("vertical", "ellipsoidal"), "geoid": project.data.get("geoid") or None},
         "lines": [{"id": l["id"] + 1, "name": l.get("name"), "points": l.get("points"),
                    "files": [dfiles.portable(f, dcs.job_folder) for f in l.get("files", [])],
@@ -112,21 +147,11 @@ def publish(project, outputs, warnings=(), version=""):
         "outputs": outs,
         "warnings": warnings,
     }
-    doc = handover.publish(dcs, "cloudpro", data_files, fields, PLUGIN, version, "CloudPro core")
-    # built_from must name the upstream results the points were really georeferenced with, so CloudPro
-    # shows as out of date when PosPro / AlignPro published again after the georeferencing.
-    used = {}
-    if (inp.get("trajectory") or {}).get("handover_id"):
-        used["pospro"] = inp["trajectory"]["handover_id"]
-    if (inp.get("alignment") or {}).get("handover_id"):
-        used["alignpro"] = inp["alignment"]["handover_id"]
-    bf = dict(doc["built_from"])
-    if bf.get("stages") != used:
-        bf["stages"] = used
-        doc["built_from"] = bf
-        path = os.path.join(od, "cloud.json")
-        dfiles.atomic_write_json(path, {k: v for k, v in doc.items()})
-        dcs.update_stage("cloudpro", by=PLUGIN, built_from=bf)
+    # built_from.stages = the upstream results really used ("ignored" = AlignPro left out on purpose:
+    # Project properties > recorded or entered mounting); inputs = the survey-line files the points came from
+    doc = handover.publish(dcs, "cloudpro", data_files, fields, PLUGIN, version, "CloudPro core",
+                           used=used_stages(inp),
+                           inputs=sorted({f for l in project.lines for f in l.get("files", [])}))
     project.data.setdefault("published", []).append({"utc": doc["created"], "id": doc["id"],
                                                      "outputs": list(outs)})
     project.log("Published cloud.json (%s) with %s" % (doc["id"][:19], ", ".join(outs)))
@@ -158,7 +183,13 @@ def deliver(project, las=True, per_line=False, dem_cell=0.0, include_rejected=Fa
             outputs["ground_grid"] = {"format": "GeoTIFF" if ext == ".tif" else "ESRI ASCII grid",
                                       "cell_m": dem_cell, "statistic": "mean of class 2"}
         if cancel and cancel():
-            raise RuntimeError("cancelled")
+            raise EX.Cancelled("cancelled: nothing was published")
+        # the published cloud.json goes first: a publish that fails from here on reads as "not published",
+        # never as a cloud.json describing other files
+        try:
+            os.unlink(os.path.join(od, "cloud.json"))
+        except OSError:
+            pass
         for k, (a, b) in tmp_paths.items():
             os.replace(a, b)
             outputs[k]["path"] = b
@@ -170,5 +201,6 @@ def deliver(project, las=True, per_line=False, dem_cell=0.0, include_rejected=Fa
                 pass
         raise
     from . import chain
-    warnings = chain.georef_state(project) + list((project.data.get("inputs") or {}).get("warnings") or [])
+    warnings = chain.georef_state(project) + list((project.data.get("inputs") or {}).get("warnings") or []) + \
+        list(getattr(project, "last_export_warnings", []) or [])
     return publish(project, outputs, warnings, version)

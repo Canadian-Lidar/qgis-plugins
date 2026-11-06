@@ -3,8 +3,27 @@ import hashlib
 import json
 import os
 import tempfile
+import time
 
 MB = 1 << 20
+# os.replace on Windows fails (WinError 5 / 32) while another process has the target open (a reader in another
+# QGIS, an antivirus scanner, OneDrive, an SMB oplock); such holds are short, so the rename is retried.
+REPLACE_TRIES_S = 3.0
+
+
+def replace(src, dst, timeout=REPLACE_TRIES_S):
+    """os.replace, retried for up to `timeout` seconds while the target is held open (Windows)."""
+    t0 = time.monotonic()
+    delay = 0.01
+    while True:
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if time.monotonic() - t0 >= timeout:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.2)
 
 
 def atomic_write_bytes(path, data, backup=False):
@@ -25,7 +44,7 @@ def atomic_write_bytes(path, data, backup=False):
                 atomic_write_bytes(path + ".bak", old)
             except OSError:
                 pass
-        os.replace(tmp, path)
+        replace(tmp, path)
     except BaseException:
         try:
             os.unlink(tmp)
@@ -34,8 +53,8 @@ def atomic_write_bytes(path, data, backup=False):
         raise
 
 
-def atomic_write_json(path, obj, backup=False):
-    atomic_write_bytes(path, (json.dumps(obj, indent=1, ensure_ascii=False) + "\n").encode("utf-8"), backup)
+def atomic_write_json(path, obj, backup=False, indent=1):
+    atomic_write_bytes(path, (json.dumps(obj, indent=indent, ensure_ascii=False) + "\n").encode("utf-8"), backup)
 
 
 def read_json(path):
@@ -43,14 +62,25 @@ def read_json(path):
         return json.load(fh)
 
 
-def fingerprint(path):
-    """Size + sha256 of the first and last megabyte: fast on multi-gigabyte
-    captures and enough to notice a replaced, re-copied or truncated file.
-    None when the file does not exist."""
-    try:
-        size = os.path.getsize(path)
-    except OSError:
-        return None
+def read_json_retry(path, timeout=2.0):
+    """read_json, retried for up to `timeout` s on PermissionError (Windows: the file is being replaced) and on
+    an incomplete read; FileNotFoundError is raised at once."""
+    t0 = time.monotonic()
+    delay = 0.01
+    while True:
+        try:
+            return read_json(path)
+        except FileNotFoundError:
+            raise
+        except (OSError, ValueError):
+            if time.monotonic() - t0 >= timeout:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.2)
+
+
+def _fingerprint_v1(path, size):
+    """1.0-1.7 fingerprint: size + sha256 of the first MB and (files over 2 MB) the last MB."""
     h = hashlib.sha256()
     h.update(str(size).encode())
     with open(path, "rb") as fh:
@@ -59,6 +89,42 @@ def fingerprint(path):
             fh.seek(size - MB)
             h.update(fh.read(MB))
     return "fp:" + h.hexdigest()[:32]
+
+
+def fingerprint(path):
+    """Size + sha256 of the first and last megabyte: fast on multi-gigabyte
+    captures and enough to notice a replaced, re-copied or truncated file.
+    Files of 2 MB or less are hashed whole ("fp2:", 1.8.0); larger files give the
+    same "fp:" value as before. None when the file does not exist."""
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return None
+    if size > 2 * MB:
+        return _fingerprint_v1(path, size)
+    h = hashlib.sha256()
+    h.update(str(size).encode())
+    with open(path, "rb") as fh:
+        h.update(fh.read())
+    return "fp2:" + h.hexdigest()[:32]
+
+
+def fingerprint_matches(path, recorded, current=None):
+    """True when the file still has the recorded fingerprint. A fingerprint recorded before 1.8.0 ("fp:" for a
+    file of 2 MB or less) is compared with the old method, so old projects do not go stale."""
+    if not recorded:
+        return True
+    cur = current if current is not None else fingerprint(path)
+    if cur is None:
+        return False
+    if cur == recorded:
+        return True
+    if recorded.startswith("fp:") and cur.startswith("fp2:"):
+        try:
+            return _fingerprint_v1(path, os.path.getsize(path)) == recorded
+        except OSError:
+            return False
+    return False
 
 
 def content_id(paths):

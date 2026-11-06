@@ -19,7 +19,10 @@ CACHE_VERSION = 4
 
 
 class Cancelled(Exception):
-    pass
+    """The user pressed STOP."""
+
+    def __init__(self, msg="Cancelled"):
+        super().__init__(msg)
 
 
 def cache_key(files, s):
@@ -39,8 +42,13 @@ def read_line(files, settings, cache_dir=None, progress=None, cancelled=None):
     cpath = os.path.join(cache_dir, "line_%s.npz" % key) if cache_dir else None
     if cpath and os.path.isfile(cpath):
         try:
-            return _load(cpath)
-        except Exception:
+            out = _load(cpath)
+            try:
+                os.utime(cpath)            # most recently used (prune_caches keeps the recent ones)
+            except OSError:
+                pass
+            return out
+        except Exception:  # noqa: BLE001 - a damaged cache is read again from the .clraw
             pass
     first = files[0]
     cal = None
@@ -154,6 +162,36 @@ def read_line(files, settings, cache_dir=None, progress=None, cancelled=None):
         np.savez(tmp, **out)
         os.replace(tmp, cpath)
     return _unpack(out)
+
+
+def prune_caches(cache_dir, keep, budget_bytes=2e9):
+    """Delete line caches not in `keep` (paths), oldest first, until the others take at most budget_bytes.
+    Caches from earlier settings (another density, range gate...) are kept while they fit, so switching
+    back is quick, but they no longer grow without limit."""
+    try:
+        fs = [os.path.join(cache_dir, f) for f in os.listdir(cache_dir) if f.startswith("line_") and f.endswith(".npz")]
+    except OSError:
+        return 0
+    keep = {os.path.abspath(k) for k in keep}
+    other = sorted((f for f in fs if os.path.abspath(f) not in keep), key=os.path.getmtime, reverse=True)
+    total, removed = 0, 0
+    for f in other:
+        try:
+            sz = os.path.getsize(f)
+        except OSError:
+            continue
+        total += sz
+        if total > budget_bytes:
+            try:
+                os.remove(f)
+                removed += 1
+            except OSError:
+                pass
+    return removed
+
+
+def cache_path(files, settings, cache_dir):
+    return os.path.join(cache_dir, "line_%s.npz" % cache_key([f.path for f in files], settings))
 
 
 def _load(path):
