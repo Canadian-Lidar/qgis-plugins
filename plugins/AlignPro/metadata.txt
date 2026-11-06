@@ -5,7 +5,7 @@ qgisMaximumVersion=4.99
 supportsQt6=True
 description=Lidar boresight calibration (patch test) for the Canadian Lidar mobile mapper: stage 02 of the Data Collection Systems chain (PosPro, AlignPro, CloudPro).
 about=AlignPro calibrates the Lidar mounting angles of the mobile mapper from its .clraw captures. It opens the job's shared processing project, uses the trajectory PosPro published, pairs the passes, finds planar surfaces seen by several passes and solves roll, pitch and heading with a point-to-plane adjustment; leaving each line out in turn gives the SDEV. A Data View shows plan, profile and section of the points live while roll, pitch, heading, lever arm and latency are adjusted by hand. The applied values are published for CloudPro (alignment.json) and given in the mapper's mounting convention, ready for Settings > Hardware > Survey sensor. Quality control, sweeps, PDF and text reports and calibration history. Needs the DCS Core plugin. Menu: Plugins > Canadian Lidar > Data Systems.
-version=1.5.1
+version=1.6.0
 author=Canadian Lidar
 email=seantobrien@gmail.com
 category=Plugins
@@ -15,7 +15,8 @@ experimental=False
 deprecated=False
 hasProcessingProvider=no
 plugin_dependencies=DCS Core
-changelog=1.5.1 Start-up: when DCS Core is upgraded while QGIS is running, the message now says to restart QGIS (not to update DCS Core again), and the menu entry stays under Plugins > Canadian Lidar > Data Systems with the other plugins even then (it no longer makes a second Canadian Lidar menu).
+changelog=1.6.0 System profiles: System profile... (Installation) and Save to system profile... (Calibration) keep the applied Lidar lever arm, mounting angles and latency as the profile of the mapper system that recorded the lines, on this computer; when a job from that system is opened and its values differ, AlignPro offers to use the profile (applied and published like Apply). PosPro keeps the antenna offsets in the same profile. Needs DCS Core 1.7.0.
+    1.5.1 Start-up: when DCS Core is upgraded while QGIS is running, the message now says to restart QGIS (not to update DCS Core again), and the menu entry stays under Plugins > Canadian Lidar > Data Systems with the other plugins even then (it no longer makes a second Canadian Lidar menu).
     1.5.0 Guided steps: a Back / Next bar under the pages says whether each step is done and what to press next, and Continue in CloudPro on the last step once the calibration is applied and published. The version number is shown after the plugin name in the header. Needs DCS Core 1.6.0.
     1.4.4 One SBET per capture: the SBET trajectory can be several files (older MapPro captures, where each Start/Stop made its own project folder and SBET). Each SBET is placed by its GPS time and used for the captures it covers; nothing is interpolated between them; the Data page lists which lines each SBET covers and warns about a line no SBET covers.
     1.4.3 Data View & Fine Tuning: the loaded area follows the inspection boxes (drawn on the map or in the Data View), the area of interest, the plan view (Load view area) or the QGIS map (Load map extent), and is outlined on the map as "Data View area". Inside the roll, pitch and heading boxes every recorded point is shown, re-read from the raw .clraw for just the seconds each pass was there (cached; limit per box in Settings). Four live views: plan, roll, pitch and heading; click a view to make its box active, right-drag in the plan to redraw it, width for the active box. Faster pose interpolation and point drawing.

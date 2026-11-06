@@ -19,6 +19,7 @@
 <h2>What's new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>1.6.0</b></td><td><b>System profiles.</b> <span class="ui">System profile…</span> on the Installation page (and <span class="ui">Save to system profile…</span> on the Calibration page) keeps the applied Lidar lever arm, mounting angles and latency as the profile of the mapper system that recorded the lines, on this computer. When you open a job from a system that has a profile whose values differ, AlignPro offers to use them (section <a href="#profiles">System profiles</a>). PosPro keeps the antenna offsets in the same profile. Needs DCS Core 1.7.0.</td></tr>
 <tr><td><b>1.5.0</b></td><td>Guided steps: a <span class="ui">‹ Back</span> / <span class="ui">Next ›</span> bar under the pages says whether each step is done and what to press, and <span class="ui">Continue in CloudPro ›</span> on the last step once the calibration is applied and published. The version number is shown after the plugin name in the header. Needs DCS Core 1.6.0.</td></tr>
 <tr><td>1.4.4</td><td>One SBET per capture: the trajectory can be several SBET files (older MapPro captures, where each Start/Stop made its own project folder and SBET); each capture uses the SBET that covers it, and nothing is interpolated between them.</td></tr>
 <tr><td>1.4.3</td><td>Data View: the views follow the inspection boxes (drawn on the map or in the Data View), the area of interest, the plan (<span class="ui">Load view area</span>) or the QGIS map (<span class="ui">Load map extent</span>); the loaded area is outlined on the map. Inside the boxes every recorded point is shown, re-read from the raw data. Four views at once: plan, roll, pitch and heading.</td></tr>
@@ -152,9 +153,20 @@
 <li><span class="ui">Mounting angles (deg)</span>: roll, pitch and heading in the mapper's convention (Chapter <a href="#reference">Reference</a>), with the recorded values under them.</li>
 <li><span class="ui">Lidar latency (ms)</span>: added to the Lidar time. Leave it at 0 while the PPS time lock is good.</li>
 <li><span class="ui">Revert to recorded</span> puts the recorded lever arm and angles back in the fields and sets the latency to 0. Nothing changes until you press Apply.</li>
+<li><span class="ui">System profile…</span> saves the applied values as the profile of this system, or uses a saved profile (below).</li>
 <li><span class="ui">Apply</span> re-georeferences every line with the values in the fields, finds the planar surfaces again, and publishes <code>alignment.json</code> for CloudPro.</li>
 <li><span class="ui">Certus as recorded</span>: the Certus model, the alignment the Certus applies, both antenna offsets and the Lidar model, for reference.</li>
 </ul>
+<h3 id="profiles">System profiles</h3>
+<p>A <span class="ix">system profile</span> keeps what is true of the hardware rather than of one job &ndash; the Lidar lever arm, mounting angles and latency here, the antenna offsets, rear axle, IMU and vehicle in PosPro &ndash; so once you have checked them (a patch test here, <span class="ui">Check antennas</span> in PosPro) the next job from the same system starts with them. Profiles are kept on this computer and can be exported to a file and imported on another.</p>
+<ul>
+<li>A profile knows the system it was made for: the mapper unit's serial number (from the survey line's <code>session.json</code>) and the Certus serial number (from <code>hardware.json</code>).</li>
+<li><b>Save:</b> after <span class="ui">Apply advised</span>, press <span class="ui">Save to system profile…</span> (Calibration) or <span class="ui">System profile…</span> (Installation). <span class="ui">New…</span> makes a profile for this job's system; <span class="ui">Save this job's values to the profile</span> updates the selected one. Only the Lidar section is written; the antenna offsets PosPro saved stay as they are.</li>
+<li><b>Use:</b> when the lines are read and a profile matches the system that recorded them, AlignPro shows the values that differ and asks whether to use them. <span class="ui">Use profile values</span> applies them as if you had typed them and pressed <span class="ui">Apply</span>: the lines are georeferenced again, the profile's mounting becomes the job's starting mounting (shared with CloudPro) and the result is published. You are asked once per job for each version of a profile.</li>
+<li>The table in the System profiles window shows the profile beside this job; values that differ are amber. A profile made for another system can still be used, after a question.</li>
+<li>Keep the profile up to date when the hardware changes (the Lidar is remounted, an antenna is moved): save the new values after the next patch test.</li>
+</ul>
+
 <div class="note"><b>Note</b> A corrected lever arm goes to <code>alignment.json</code> only. To make it permanent, enter it in the mapper as well. If the lines were recorded with different mountings or lever arms, AlignPro warns and uses the first line's values for all.</div>
 
 <h1 id="quality"><span class="num">{N}</span>3 Quality</h1>

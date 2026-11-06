@@ -948,6 +948,11 @@ class InstallPage(Page):
         self.b_hw = QPushButton("Use offsets from the capture")
         self.b_hw.clicked.connect(lambda: self.use_hardware(ask=True))
         br.addWidget(self.b_hw)
+        self.b_profile = QPushButton("System profile\u2026")
+        self.b_profile.setToolTip("Save these checked offsets as the profile of the system that recorded the job, "
+                                  "or use a saved profile for this job")
+        self.b_profile.clicked.connect(self.open_profiles)
+        br.addWidget(self.b_profile)
         br.addStretch(1)
         v.addLayout(br)
         self.src = _hint("")
@@ -1192,6 +1197,97 @@ class InstallPage(Page):
         if not quiet:
             theme.msg_info(self, "PosPro", "Offsets set from %s:\n\n%s" % (cap["source"], "\n".join(msg)))
         return msg
+
+    # -------------------------------------------------------------- system profiles
+    PROFILE_SECTIONS = ("antennas", "rear_axle", "imu", "vehicle")
+
+    def profile_current(self):
+        """This job's values in system-profile form (the Lidar section is the capture's, for comparison)."""
+        p = self.project
+        inst = p.cfg["installation"]
+        ant = {"gnss1_m": [round(float(x), 4) for x in inst["lever_antenna"]],
+               "gnss2_m": [round(float(x), 4) for x in inst["lever_antenna2"]]}
+        ac = getattr(self.dock, "antenna_check", None)
+        if ac and ac.get("verdict"):
+            ant["note"] = "Check antennas: %s" % {"ok": "as installed", "swapped": "swapped",
+                                                  "unclear": "not conclusive"}.get(ac["verdict"], ac["verdict"])
+        veh = p.cfg["vehicle"]
+        cur = {"antennas": ant,
+               "rear_axle": {"axle_m": [round(float(x), 4) for x in inst["lever_nhc"]]},
+               "imu": {"preset": p.cfg["imu"].get("preset", "certus_evo"),
+                       "custom": dict(p.cfg["imu"].get("custom") or {})},
+               "vehicle": {"type": veh.get("type", "van"), "length": veh.get("length"), "width": veh.get("width"),
+                           "outline": dict(veh.get("outline") or {})}}
+        hw = p.cfg["rover"].get("hardware") or {}
+        cap = pipeline.capture_offsets(p)
+        mnt = hw.get("lidar_mount_navaq_deg")
+        if cap["lidar"] is not None or isinstance(mnt, dict):
+            cur["lidar"] = {"lever_m": cap["lidar"],
+                            "mount_deg": [float(mnt.get(k, 0) or 0) for k in ("roll", "pitch", "heading")]
+                            if isinstance(mnt, dict) else None}
+        return cur
+
+    def apply_profile(self, secs, prof):
+        """Put a profile's sections into this job (from the System profiles window or the question)."""
+        p = self.project
+        inst = p.cfg["installation"]
+        got = []
+        a = secs.get("antennas") or {}
+        if a.get("gnss1_m"):
+            inst["lever_antenna"] = [float(x) for x in a["gnss1_m"]]
+            got.append("GPS1")
+        if a.get("gnss2_m"):
+            inst["lever_antenna2"] = [float(x) for x in a["gnss2_m"]]
+            got.append("GPS2")
+        r = secs.get("rear_axle") or {}
+        if r.get("axle_m"):
+            inst["lever_nhc"] = [float(x) for x in r["axle_m"]]
+            got.append("rear axle")
+        im = secs.get("imu") or {}
+        if im.get("preset") in IMU_PRESETS:
+            p.cfg["imu"]["preset"] = im["preset"]
+            if im.get("custom"):
+                p.cfg["imu"]["custom"] = dict(im["custom"])
+            got.append("IMU")
+        ve = secs.get("vehicle") or {}
+        if ve.get("type") in VEHICLE_PRESETS:
+            p.cfg["vehicle"]["type"] = ve["type"]
+            for k in ("length", "width"):
+                if ve.get(k):
+                    p.cfg["vehicle"][k] = ve[k]
+            if ve.get("outline"):
+                p.cfg["vehicle"]["outline"] = dict(ve["outline"])
+            got.append("vehicle")
+        if got:
+            inst["source"] = "system profile %s" % prof["name"]
+            self.dock.log("info", "system profile %s used: %s" % (prof["name"], ", ".join(got)))
+            self.dock.save()
+            self.refresh()
+            self.dock.update_steps()
+        return got
+
+    def open_profiles(self):
+        from dcs_core import profiles_ui
+        p = self.project
+        if not p:
+            return
+        profiles_ui.open_dialog(self, "PosPro", p.cfg["rover"].get("system") or {}, self.profile_current(),
+                                self.PROFILE_SECTIONS, self.apply_profile, pipeline.plugin_version())
+
+    def suggest_profile(self):
+        """After the rover files are read: offer the saved profile of the system that recorded the job."""
+        from dcs_core import profiles_ui
+        p = self.project
+        ident = p.cfg["rover"].get("system") or {}
+        if not ident:
+            return
+        ans, rec = profiles_ui.suggest(self, "PosPro", ident, self.profile_current(), self.PROFILE_SECTIONS,
+                                       self.apply_profile, p.cfg.get("profiles_asked"))
+        if rec != p.cfg.get("profiles_asked"):
+            p.cfg["profiles_asked"] = rec
+            self.dock.save()
+        if ans == "open":
+            self.open_profiles()
 
     def state(self):
         p = self.project
@@ -3044,7 +3140,7 @@ class PosProDock(PluginWindow):
 
     def _merge_back(self, work_p):
         src, dst = work_p.cfg, self.project.cfg
-        for k in ("extract", "extract_files", "hardware"):
+        for k in ("extract", "extract_files", "hardware", "system"):
             dst["rover"][k] = src["rover"].get(k)
         dst["results"] = src.get("results") or {}
         sr, dr = src.get("review") or {}, dst.setdefault("review", {})
@@ -3068,7 +3164,19 @@ class PosProDock(PluginWindow):
         work_p = self._work_copy()
 
         def work(ctx):
-            return pipeline.extract(work_p, ctx, force)
+            out = pipeline.extract(work_p, ctx, force)
+            try:            # which system recorded the job (for its saved profile)
+                from dcs_core import profiles
+                ident = profiles.identity(work_p.cfg["rover"].get("hardware") or {})
+                files = list(work_p.cfg["rover"]["files"])
+                if work_p.dcs is not None:
+                    files = list(work_p.dcs.survey_clraw_files())[:3] + files
+                for k, val in profiles.identity_of_files(files).items():
+                    ident.setdefault(k, val)
+                work_p.cfg["rover"]["system"] = ident
+            except Exception as e:      # noqa: BLE001
+                ctx.log("warning", "could not tell which system recorded the job: %s" % e)
+            return out
 
         def done(ok, res):
             if ok:
@@ -3083,6 +3191,7 @@ class PosProDock(PluginWindow):
                     if got:
                         self.toast("Installation offsets filled from the capture (%s)" % inst.get("source"))
                 self.page["install"].refresh()
+                QTimer.singleShot(0, self.page["install"].suggest_profile)
         self.start_task("Reading rover files", work, done)
 
     def run_processing(self):

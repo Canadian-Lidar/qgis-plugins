@@ -3,7 +3,7 @@ name=DCS Core
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Shared base of the Canadian Lidar Data Collection Systems plugins (PosPro, AlignPro, CloudPro, RemixPro): one project per job, handover files between stages, stale-result detection, shared menu and look. Menu: Plugins > Canadian Lidar > Data Systems.
-version=1.6.1
+version=1.7.0
 author=Canadian Lidar
 email=seantobrien@gmail.com
 about=Install this before PosPro, AlignPro, CloudPro and RemixPro. It keeps one project per job in Processing/<Name>/ beside the captures, records what each stage published and what it was built from, flags results that are out of date when an earlier stage is re-run, and gives every plugin the same menu, look, chain bar and readers for the mapper's .clraw captures, SBET trajectories and LAS. It has no window of its own.
@@ -15,7 +15,8 @@ experimental=False
 deprecated=False
 hasProcessingProvider=no
 tags=canadian lidar,mobile mapping,dcs
-changelog=1.6.1 Description names the menu correctly: Plugins > Canadian Lidar > Data Systems. No change for the plugins (still API 7).
+changelog=1.7.0 System profiles (API 8): a mapper system's checked antenna offsets, rear axle, IMU, vehicle, Lidar lever arm, mounting angles and latency saved on this computer, matched to a job by the mapper unit and Certus serial numbers, with a shared System profiles window for PosPro and AlignPro.
+    1.6.1 Description names the menu correctly: Plugins > Canadian Lidar > Data Systems. No change for the plugins (still API 7).
     1.6.0 Guided steps for every plugin (API 7): a Back / Next bar under the step pages that says whether the step is done and what to press, with Continue in <next plugin> on the last step; the plugin's version is shown after its name in the header (read from the plugin's metadata, so RemixPro shows it too). Plugins that use the Back / Next bar need DCS Core 1.6.0 (PosPro 1.6.0, AlignPro 1.5.0, CloudPro 1.6.0).
     1.5.1 Fix: QGIS 4 on Windows could close with an access violation when you clicked or dragged in a DCS plugin window (PosPro, its quality plots, AlignPro, CloudPro, RemixPro) while it was a floating window. The window's title bar now moves the window itself, and clicks never reach the docking code meant for docked panels. Docked panels behave as before. No change for the plugins (API 6).
     1.5.0 Reads the raw Certus stream for RemixPro (API 6): .anpp files and the /ins/anpp packets of a .clraw, with the raw IMU, raw satellite observations, ephemerides and device information decoded exactly as the mapper decoded them. Marine sonar recordings: reads SonarView .svlog / .svlz (Cerulean Ping packets) and .clraw of kind sonar made by RemixPro; PosPro, AlignPro and CloudPro leave sonar recordings out of their line lists. Nothing else changes for PosPro, AlignPro and CloudPro.
