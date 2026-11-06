@@ -83,7 +83,7 @@ def used_frame(project, dcs=None):
     which follows PosPro's latest run)."""
     td = project.data.get("trajectory_datum")
     if td:
-        return td.get("to") or None, (td.get("from") or {}).get("epoch")
+        return td.get("to") or None, td.get("epoch") or (td.get("from") or {}).get("epoch")
     t = (project.data.get("inputs") or {}).get("trajectory") or {}
     fr = t.get("frame") or {}
     if t.get("source") == "pospro" and fr:

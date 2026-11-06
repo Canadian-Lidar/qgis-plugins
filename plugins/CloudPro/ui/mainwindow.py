@@ -836,7 +836,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._area.show()
         self._area.raise_()
 
-    def apply_geodetics(self, crs, ortho, geoid, share):
+    def apply_geodetics(self, crs, ortho, geoid, share, epoch=None):
         p = self.project
         if p is None:
             return
@@ -848,7 +848,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if p.lines:
             # applied by the georeferencing, and only when it succeeds: the points and the CRS they are
             # labelled with never disagree (cancel the dialog = nothing changes)
-            self.georeference(force=True, geo={"crs": crs, "geoid_path": geoid if ortho else "", "share": share})
+            g = {"crs": crs, "geoid_path": geoid if ortho else "", "share": share}
+            if epoch is not None:
+                g["epoch"] = epoch
+            self.georeference(force=True, geo=g)
             return
         if share and p.dcs is not None:
             c = dict(p.dcs.shared("crs") or {})
@@ -857,6 +860,8 @@ class MainWindow(QtWidgets.QMainWindow):
         p.data["crs"] = crs
         p.store.crs = crs
         p.data["geoid_path"] = geoid if ortho else ""
+        if epoch is not None:
+            p.data["epoch"] = epoch
         p.save()
 
     def apply_override(self, ov):
@@ -1124,6 +1129,8 @@ class MainWindow(QtWidgets.QMainWindow):
                    "geoid": os.path.basename(gtxt) if gtxt else "", "geoid_path": gtxt}
         if geo:
             newvals["crs"] = geo["crs"]
+            if "epoch" in geo:
+                newvals["epoch"] = geo["epoch"]
         self._pending_geo = geo
         self.clear_preview(refresh=False)
         self.edits.ps = None

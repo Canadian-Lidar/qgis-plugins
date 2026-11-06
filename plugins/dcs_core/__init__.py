@@ -14,12 +14,13 @@ plugins (PosPro, AlignPro, CloudPro, RemixPro).
   menu      Plugins > Canadian Lidar > Data Systems (menu.TOP, menu.GROUP)
   header    the header bar: logo, name, workflow boxes, project box, window and guide buttons
   window    the standard plugin window: floating by default, docked only on request, remembered
+  epochs    NAD83(CSRS) reference epochs (New Brunswick 1997.0, federal 2010.0) with NRCan's velocity grid
   profiles  system profiles: a mapper system's checked offsets and mounting, saved on this computer
   profiles_ui  the System profiles window and the "profile found for this system" question
   theme, widgets, stepbar, dialogs, registry   the shared look and UI
 
 The plugins import it as `dcs_core`; it has no window of its own."""
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 # API 2 (1.1.0): adds clraw, hesai, anpp, sbet, las, mcap, zstd and widgets.align_flags.
 # API 3 (1.2.0): adds window.PluginWindow (the standard plugin window) and theme.FAINT, DISABLED, VIEW_BG, GRID.
 # API 4 (1.3.0): adds header.PluginHeader (the same header bar in every plugin).
@@ -40,7 +41,9 @@ __version__ = "1.8.0"
 # "survey"), so a changed or added survey line makes them stale; profiles.save_sections; locks.thread_lock,
 # Lock(wait=); files.replace, read_json_retry, fingerprint_matches; anpp.nav_states(stats=), NavCollector.rejected;
 # timeutil.LEAP. Locks are exclusive (O_EXCL) and DcsProject.modify waits for another writer.
-API = 9
+# API 10 (1.9.0): epochs (NAD83(CSRS) reference epochs with NRCan's NAD83v70VG velocity grid, bundled in grids/):
+# parse, default_epoch, is_nad83csrs, available, propagate, EpochError, ADOPTED, CRS_EPOCH.
+API = 10
 
 
 def classFactory(iface):  # noqa: N802 - QGIS API
