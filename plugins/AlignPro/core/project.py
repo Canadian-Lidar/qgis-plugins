@@ -25,7 +25,7 @@ import numpy as np
 
 from . import clraw, engine, geo, lines as lines_mod, trajectory
 
-VERSION = "1.5.1"
+VERSION = "1.6.0"
 STAGE_FILE = "alignpro.json"
 PLUGIN = "AlignPro"
 CONVENTION = {"name": "navaq_hesai", "matrix": "M = Rz(heading) Ry(pitch) Rx(-roll) Z0",
@@ -425,6 +425,37 @@ class Project:
         except handover.HandoverError as e:
             self.warnings.append(str(e))
             return None
+
+    def find_system(self):
+        """Which mapper system recorded the lines (for its saved system profile): cfg["system"]."""
+        try:
+            from dcs_core import profiles
+            hw = (self.lines[0].info.get("hardware") or {}) if self.lines else {}
+            ident = profiles.identity(hw)
+            for k, v in profiles.identity_of_files(self.resolve_files()).items():
+                ident.setdefault(k, v)
+            self.cfg["system"] = ident
+        except Exception as e:      # noqa: BLE001
+            self.log("Could not tell which system recorded the lines: %s" % e)
+        return self.cfg.get("system") or {}
+
+    def profile_current(self):
+        """The job's values in system-profile form: the Lidar section AlignPro owns, the capture's antennas
+        for comparison."""
+        c = self.cfg
+        res = c.get("results") or {}
+        adv = res.get("advised") or {}
+        calibrated = bool(adv) and c.get("mount") and all(
+            abs(float(adv.get(k, 1e9)) - float(m)) < 5e-5 for k, m in zip(("roll", "pitch", "heading"), c["mount"]))
+        cur = {"lidar": {"lever_m": [round(float(x), 4) for x in (c.get("lever") or [0, 0, 0])],
+                         "mount_deg": [round(float(x), 5) for x in (c.get("mount") or [0, 0, 0])],
+                         "latency_ms": float(c.get("latency_ms") or 0.0), "convention": CONVENTION["name"],
+                         "source": "calibration" if calibrated else "entered"}}
+        hw = (self.lines[0].info.get("hardware") or {}) if self.lines else {}
+        if hw.get("ins_to_primary_antenna_m"):
+            cur["antennas"] = {"gnss1_m": hw.get("ins_to_primary_antenna_m"),
+                               "gnss2_m": hw.get("ins_to_secondary_antenna_m")}
+        return cur
 
     def share_mounting(self, mount, source):
         """The starting Lidar mounting for this job, as a shared fact (AlignPro owns it). The solved

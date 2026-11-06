@@ -336,9 +336,13 @@ class InstallPage(Page):
                                  "Z0; roll + starboard down, pitch + bow up, heading + clockwise."))
         b_rev = QPushButton("Revert to recorded")
         b_rev.clicked.connect(self.revert)
+        b_prof = QPushButton("System profile\u2026")
+        b_prof.setToolTip("Save the applied lever arm, mounting and latency as the profile of the system that "
+                          "recorded these lines, or use a saved profile")
+        b_prof.clicked.connect(lambda: self.dock.open_profiles())
         self.b_apply = _primary("Apply")
         self.b_apply.clicked.connect(self.apply)
-        self.lay.addLayout(_row(b_rev, None, self.b_apply))
+        self.lay.addLayout(_row(b_rev, b_prof, None, self.b_apply))
         g2, gl2 = _group("Certus as recorded")
         self.kv = KV()
         gl2.addWidget(self.kv)
@@ -585,7 +589,11 @@ class CalibPage(Page):
         self.b_pub.clicked.connect(self.dock.publish_now)
         gl0.addLayout(_row(None, self.b_pub))
         self._pub_group = g0
-        self.lay.addLayout(_row(self.b_copy, None, b_adv))
+        b_prof = QPushButton("Save to system profile\u2026")
+        b_prof.setToolTip("Keep the applied (calibrated) mounting as this system's profile, so the next job "
+                          "from it starts there")
+        b_prof.clicked.connect(lambda: self.dock.open_profiles())
+        self.lay.addLayout(_row(self.b_copy, b_prof, None, b_adv))
         self.lay.addWidget(self._pub_group)
         g, gl = _group("Current angles", QGridLayout)
         self.edit, self.pre = [], []

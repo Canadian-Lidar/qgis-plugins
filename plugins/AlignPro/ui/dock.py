@@ -467,7 +467,8 @@ class AlignProDock(PluginWindow):
         self.set_enabled(True)
         self._set_pname(p.name)
         self.goto_page(0)
-        self._run("Reading %s" % p.name, lambda prog, canc: (p.load(prog, canc), p)[1], self._loaded)
+        self._run("Reading %s" % p.name, lambda prog, canc: (p.load(prog, canc), p.find_system(), p)[-1],
+                  self._loaded)
         if self.job is None:
             self.p = None
         return True
@@ -481,6 +482,42 @@ class AlignProDock(PluginWindow):
         self.dv.set_project(p, keep=False)
         self.refresh_all(zoom=True, view=False)
         self.show_dataview("dock")
+        QTimer.singleShot(0, self.suggest_profile)
+
+    # -------------------------------------------------------------- system profiles
+    def _apply_profile(self, secs, prof):
+        li = secs.get("lidar") or {}
+        if not self.p or not li:
+            return
+        c = self.p.cfg
+        lever = [float(x) for x in (li.get("lever_m") or c["lever"])]
+        mount = [float(x) for x in (li.get("mount_deg") or c["mount"])]
+        lat = float(li.get("latency_ms") if li.get("latency_ms") is not None else c.get("latency_ms", 0.0))
+        self.p.log("System profile %s used: lever %.4f %.4f %.4f m, mounting %.4f %.4f %.4f, latency %.3f ms" % (
+            tuple([prof["name"]] + lever + mount + [lat])))
+        # the profile's mounting becomes this job's starting mounting (shared with CloudPro)
+        self.p.share_mounting(mount, "system profile %s" % prof["name"])
+        self.apply_installation(lever, lat, mount)
+
+    def open_profiles(self):
+        if not self.p:
+            return
+        from dcs_core import profiles_ui
+        from ..core.project import VERSION
+        profiles_ui.open_dialog(self, "AlignPro", self.p.cfg.get("system") or {}, self.p.profile_current(),
+                                ("lidar",), self._apply_profile, VERSION)
+
+    def suggest_profile(self):
+        if not self.p or not self.p.lines:
+            return
+        from dcs_core import profiles_ui
+        ans, rec = profiles_ui.suggest(self, "AlignPro", self.p.cfg.get("system") or {}, self.p.profile_current(),
+                                       ("lidar",), self._apply_profile, self.p.cfg.get("profiles_asked"))
+        if rec != self.p.cfg.get("profiles_asked"):
+            self.p.cfg["profiles_asked"] = rec
+            self.p.save()
+        if ans == "open":
+            self.open_profiles()
 
     def relocate_raw(self):
         if not self.p or not self.p.dcs:
