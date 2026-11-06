@@ -778,10 +778,14 @@ class AlignProDock(PluginWindow):
         themed(d)
         if not d.exec():
             return
-        ch = d.changed()
+        self.change_settings(d.values())
+
+    def change_settings(self, values):
+        """New settings: re-read the lines, re-split the passes or only rebuild the surfaces, as needed."""
+        ch = {k for k, v in values.items() if v != self.p.settings.get(k)}
         if not ch:
             return
-        self.p.settings.update(d.values())
+        self.p.settings.update(values)
         self.p.save()
         if ch & dialogs.RELOAD_KEYS or ch & dialogs.PASS_KEYS:
             self.p.cfg["boxes"] = {}

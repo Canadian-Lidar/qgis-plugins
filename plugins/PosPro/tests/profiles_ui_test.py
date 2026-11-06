@@ -186,6 +186,23 @@ def main():
         d2.deleteLater()
         apj.Project.find_system = real_find
         print("AlignPro window: profile offered after reading the lines, applied and published: OK")
+        # point density (6 Nov): new projects are dense, the chooser shows it, standard re-reads the lines
+        from AlignPro.core import engine as aeng
+        harness.wait(lambda: dk.job is None, 600)
+        cal = dk.pg_cal
+        cal.refresh()
+        assert cal.density.currentData() == "dense", cal.density.currentData()
+        assert "3,000,000 points kept per line" in cal.density_note.text(), cal.density_note.text()
+        n_dense = len(dk.p.P.pt_line)
+        cal.density.setCurrentIndex(cal.density.findData("standard"))
+        cal._density()
+        harness.wait(lambda: dk.job is None and dk.p is not None and dk.p.lines, 600)
+        harness.settle(30)
+        harness.wait(lambda: dk.job is None, 600)
+        assert aeng.density_of(dk.p.settings) == "standard"
+        n_std = len(dk.p.P.pt_line)
+        assert n_std <= n_dense, (n_std, n_dense)
+        print("AlignPro point density: dense %s patch points, standard %s: OK" % (n_dense, n_std))
     print("OK")
 
 

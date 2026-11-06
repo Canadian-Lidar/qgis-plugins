@@ -50,8 +50,11 @@ def report_text(project, stats, outputs, warnings):
          "  Mounting     %s deg (navaq_hesai)" % (inp.get("mount_deg") or "as recorded in each capture"),
          "  Lever        %s m" % (inp.get("lidar_lever_m") or "as recorded in each capture"),
          "  Latency      %.4f s" % float(inp.get("latency_s") or 0.0),
-         "  CRS          %s, heights %s" % (project.crs, project.data.get("vertical", "ellipsoidal")), "",
-         "LINES"]
+         "  CRS          %s, heights %s" % (project.crs, project.data.get("vertical", "ellipsoidal"))]
+    td = project.data.get("trajectory_datum")
+    if td:
+        L.append("  Datum        %s" % td.get("note"))
+    L += ["", "LINES"]
     for ln in project.lines:
         L.append("  L%-3d %-24s %12s points  %s" % (ln["id"] + 1, ln.get("name", ""), "{:,}".format(ln.get("points", 0)),
                                                     ", ".join(os.path.basename(f) for f in ln.get("files", []))))
@@ -95,6 +98,7 @@ def publish(project, outputs, warnings=(), version=""):
     data_files = {k: v["path"] for k, v in outputs.items()}
     data_files["report"] = rep
     crs_fact = dcs.shared("crs") or {}
+    td = project.data.get("trajectory_datum")
     fields = {
         "calibration": (inp.get("alignment") or {}).get("calibration", "no calibration"),
         "trajectory": inp.get("trajectory") or {},
@@ -102,7 +106,10 @@ def publish(project, outputs, warnings=(), version=""):
         "georeferencing": {"mount_deg": inp.get("mount_deg"), "lidar_lever_m": inp.get("lidar_lever_m"),
                            "latency_s": inp.get("latency_s"), "convention": "navaq_hesai",
                            "georeferenced": inp.get("georeferenced")},
-        "crs": {"horizontal": project.crs, "frame": crs_fact.get("frame"), "epoch": crs_fact.get("epoch"),
+        "crs": {"horizontal": project.crs,
+                "frame": (td or {}).get("to") or crs_fact.get("frame"),
+                "epoch": (td or {}).get("from", {}).get("epoch") if td else crs_fact.get("epoch"),
+                "trajectory_datum": (td or {}).get("note"),
                 "height": project.data.get("vertical", "ellipsoidal"), "geoid": project.data.get("geoid") or None},
         "lines": [{"id": l["id"] + 1, "name": l.get("name"), "points": l.get("points"),
                    "files": [dfiles.portable(f, dcs.job_folder) for f in l.get("files", [])],

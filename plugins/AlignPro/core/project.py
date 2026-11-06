@@ -531,6 +531,11 @@ class Project:
     def analyse(self):
         """Patches, pairs and inspection boxes for the current georeference."""
         self.P = engine.build_patches(self.lines, self.settings, self.aoi_func())
+        if getattr(self.P, "pt_line", None) is not None:
+            self.log("Planar patches: %d with %s points (density %s)%s" % (
+                len(self.P), "{:,}".format(len(self.P.pt_line)), engine.density_of(self.settings),
+                (", thinned from %s by the solver memory limit" % "{:,}".format(self.P.thinned_from))
+                if getattr(self.P, "thinned_from", 0) else ""))
         self.pair_list = engine.pairs(self.lines, self.P, self.settings)
         if not self.cfg.get("boxes"):
             self.cfg["boxes"] = engine.auto_boxes(self.lines, self.P)

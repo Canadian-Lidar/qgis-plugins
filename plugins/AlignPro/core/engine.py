@@ -13,14 +13,14 @@ LINE_COLORS = ["#e5484d", "#a855f7", "#3b82f6", "#10b981", "#f59e0b", "#06b6d4",
 DEFAULT_SETTINGS = {
     # data
     "returns": "strongest", "range_min": 1.5, "range_max": 60.0, "intensity_min": 0,
-    "points_per_line": 1500000, "fine_points_per_box": 1500000,
+    "points_per_line": 3000000, "fine_points_per_box": 3000000,
     # passes
     "split_turns": True, "min_speed": 1.0, "turn_deg": 35.0, "min_pass_s": 4.0,
     # pairing
     "reciprocal_deg": 150.0, "same_dir_deg": 30.0, "min_overlap_pct": 20.0, "speed_margin": 2.0,
     # patches
-    "voxel_m": 2.0, "min_pts_line": 20, "max_pts_patch_line": 80, "thickness_m": 0.04,
-    "flat_ratio": 1.0, "max_patches": 4000, "use_aoi": False,
+    "voxel_m": 2.0, "min_pts_line": 20, "max_pts_patch_line": 250, "thickness_m": 0.04,
+    "flat_ratio": 1.0, "max_patches": 8000, "use_aoi": False, "max_solve_points": 12000000,
     # solver
     "solve_lever": False, "huber_k": 2.0, "reject_sigma": 3.5, "max_iter": 12,
     # quality screening
@@ -28,6 +28,35 @@ DEFAULT_SETTINGS = {
     # display
     "grid_cell_m": 0.5,
 }
+
+
+# Point densities (Sean, 6 Nov 2026: more points to align properly, chosen by the user). Before 1.6.1 every job
+# used "standard". The solver holds about 130 bytes per patch point.
+DENSITY_KEYS = ("points_per_line", "max_pts_patch_line", "max_patches", "fine_points_per_box")
+DENSITIES = {
+    "standard": {"points_per_line": 1500000, "max_pts_patch_line": 80, "max_patches": 4000,
+                 "fine_points_per_box": 1500000},
+    "dense": {"points_per_line": 3000000, "max_pts_patch_line": 250, "max_patches": 8000,
+              "fine_points_per_box": 3000000},
+    "very_dense": {"points_per_line": 6000000, "max_pts_patch_line": 600, "max_patches": 15000,
+                   "fine_points_per_box": 6000000},
+}
+DENSITY_TITLES = {"standard": "Standard (quick look)", "dense": "Dense (recommended)",
+                  "very_dense": "Very dense (slow, needs memory)", "custom": "Custom (Settings)"}
+
+
+def density_of(s):
+    """The preset name a settings dict matches, else "custom"."""
+    for name, d in DENSITIES.items():
+        if all(int(s.get(k, DEFAULT_SETTINGS[k])) == v for k, v in d.items()):
+            return name
+    return "custom"
+
+
+def solve_points_estimate(s, lines_per_patch=2.5):
+    """Upper bound of the points the solver holds for these settings, and its memory (bytes)."""
+    n = int(s.get("max_patches", 8000)) * int(s.get("max_pts_patch_line", 250)) * lines_per_patch
+    return int(n), int(n * 130)
 
 
 # ------------------------------------------------------------------ passes
@@ -296,6 +325,12 @@ def build_patches(lines, s, aoi=None, rng=None):
     P.pt_line = np.concatenate(pl)
     P.pt_patch = np.concatenate(pp)
     P.pt_idx = np.concatenate(pi)          # index into ln.x (and ln.idx)
+    cap = int(s.get("max_solve_points", 0) or 0)
+    P.thinned_from = 0
+    if cap and len(P.pt_line) > cap:       # a memory guard for very dense custom settings
+        P.thinned_from = len(P.pt_line)
+        sel = np.sort(rng.choice(len(P.pt_line), cap, replace=False))
+        P.pt_line, P.pt_patch, P.pt_idx = P.pt_line[sel], P.pt_patch[sel], P.pt_idx[sel]
     return P
 
 

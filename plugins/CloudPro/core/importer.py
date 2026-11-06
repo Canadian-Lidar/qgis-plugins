@@ -14,7 +14,7 @@ import numpy as np
 
 from . import clraw
 from .georef import GeorefContext
-from .geodesy import Projector
+from .geodesy import Projector, needs_datum_shift, trajectory_to_datum
 from .store import REC
 from .trajectory import from_nav_states, read_sbet
 
@@ -243,10 +243,20 @@ def import_chain(project, inp, opts, files=None, progress=None, cancel=None, kee
         raise ValueError("No .clraw files found for this job")
     old_lines = {tuple(sorted(l.get("files", []))): l for l in project.lines}
     ed = collect_edits(project) if keep_edits and project.lines else None
-    project.reset_points()
     opts.latency = inp.latency
     if inp.source_crs:
         opts.source_crs = inp.source_crs
+    fr = (inp.traj_info or {}).get("frame") or {}
+    if inp.traj is not None and needs_datum_shift(fr.get("name")) and not getattr(inp.traj, "datum_moved", None):
+        # PosPro PPP trajectories are in ITRF2020 at the observation date: move them to the target's datum
+        # (raises DatumError rather than leaving the cloud metres off)
+        inp.datum_note, to = trajectory_to_datum(inp.traj, fr.get("name"), fr.get("epoch"), project.crs)
+        inp.traj.datum_moved = inp.datum_note
+        opts.source_crs = None
+        project.data["trajectory_datum"] = {"from": fr, "note": inp.datum_note, "to": to}
+    elif inp.traj is not None and not needs_datum_shift(fr.get("name")):
+        project.data.pop("trajectory_datum", None)
+    project.reset_points()
     out = []
     n = len(groups)
     for k, (key, paths) in enumerate(groups.items()):         # in recording order (DCS Core)

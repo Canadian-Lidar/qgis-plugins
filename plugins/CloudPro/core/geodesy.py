@@ -212,3 +212,71 @@ def local_jacobian(proj, lat, lon, h):
     J[:, 0, 1] = (En - E0) / d
     J[:, 1, 1] = (Nn - N0) / d
     return E0, N0, J
+
+
+# ----------------------------------------------------------------------------- trajectory datum
+class DatumError(ValueError):
+    """The trajectory's frame cannot be moved to the target's datum here."""
+
+
+def _dynamic_frame(name):
+    n = (name or "").upper().replace(" ", "")
+    if "ITRF2020" in n or "IGS20" in n:
+        return "EPSG:9989"          # ITRF2020 geographic 3D
+    if "ITRF2014" in n or "IGS14" in n:
+        return "EPSG:7912"
+    return None
+
+
+def needs_datum_shift(frame_name):
+    """True for trajectories in a global, time-dependent frame (PosPro PPP: ITRF2020 at the observation date)."""
+    return _dynamic_frame(frame_name) is not None
+
+
+def trajectory_to_datum(traj, frame_name, epoch, target):
+    """Move a trajectory from ITRF2020 / ITRF2014 at its observation epoch (decimal year) to the geodetic datum
+    of the target CRS, in place (lat, lon, h); returns (description, datum name). NAD83(CSRS) targets use the NRCan time-dependent transformation
+    to NAD83(CSRS)v8 (about 1.5 m horizontally and 1 m vertically in Atlantic Canada in 2026). Raises DatumError when only a "ballpark" (zero) transformation is available - never moves
+    the cloud silently by the wrong amount."""
+    src = _dynamic_frame(frame_name)
+    if src is None:
+        return "", ""
+    try:
+        ep = float(epoch)
+    except (TypeError, ValueError):
+        raise DatumError("the trajectory is in %s but its epoch is unknown" % frame_name)
+    try:
+        import pyproj
+        from pyproj.transformer import TransformerGroup
+    except ImportError:
+        raise DatumError("pyproj is not available to move the %s trajectory to the target datum" % frame_name)
+    tgt = pyproj.CRS.from_user_input(target)
+    geod = tgt.geodetic_crs
+    name = (geod.name or "").upper()
+    if "WGS84" in name.replace(" ", "") or "ITRF" in name:
+        # WGS 84 (G2139 and later) is aligned with ITRF2014/2020 to a few centimetres: nothing to move
+        return ("trajectory in %s (epoch %.3f) used as %s (the same to a few centimetres)" % (frame_name, ep, geod.name),
+                geod.name)
+    if "NAD83(CSRS)" not in name.replace(" ", ""):
+        raise DatumError("moving a %s trajectory to %s is not supported; choose a NAD83(CSRS) or WGS 84 CRS, or "
+                         "process the trajectory with a base station" % (frame_name, geod.name))
+    dst = pyproj.CRS.from_epsg(10413)       # NAD83(CSRS)v8 geographic 3D: the current realisation
+    grp = TransformerGroup(pyproj.CRS.from_user_input(src), dst, always_xy=True)
+    good = [t for t in grp.transformers if "ballpark" not in t.description.lower()]
+    if not good:
+        raise DatumError("no transformation from %s to %s is known to PROJ %s (only a ballpark one, which "
+                         "would leave the cloud metres off)" % (frame_name, geod.name, pyproj.proj_version_str))
+    tr = good[0]
+    lon, lat, h = np.degrees(traj.lon), np.degrees(traj.lat), np.asarray(traj.h, float)
+    x, y, z, _ = tr.transform(lon, lat, h, np.full(len(lon), ep))
+    x, y, z = np.asarray(x, float), np.asarray(y, float), np.asarray(z, float)
+    if not (np.all(np.isfinite(x)) and np.all(np.isfinite(y)) and np.all(np.isfinite(z))):
+        raise DatumError("the transformation from %s to %s failed for some samples" % (frame_name, geod.name))
+    dn = float(np.median(np.radians(y) - traj.lat)) * 6371000.0
+    de = float(np.median(np.radians(x) - traj.lon) * np.cos(np.median(traj.lat))) * 6371000.0
+    du = float(np.median(z - h))
+    traj.lat, traj.lon, traj.h = np.radians(y), np.radians(x), z
+    steps = [x.strip() for x in tr.description.split("+")]
+    how = next((x for x in steps if " to " in x and "Conversion" not in x), steps[0])
+    return ("trajectory moved from %s (epoch %.3f) to %s: %.2f m north, %.2f m east, %.2f m up (%s)" %
+            (frame_name, ep, dst.name, dn, de, du, how[:80]), dst.name)
