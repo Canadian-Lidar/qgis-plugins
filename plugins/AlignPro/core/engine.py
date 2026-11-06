@@ -53,10 +53,16 @@ def density_of(s):
     return "custom"
 
 
+SOLVE_BYTES_PER_POINT = 280       # measured peak of solve() + SolveData (7.5 M points: +2.1 GB), 6 Nov 2026
+
+
 def solve_points_estimate(s, lines_per_patch=2.5):
-    """Upper bound of the points the solver holds for these settings, and its memory (bytes)."""
+    """Upper bound of the points the solver holds for these settings, and its peak memory (bytes)."""
     n = int(s.get("max_patches", 8000)) * int(s.get("max_pts_patch_line", 250)) * lines_per_patch
-    return int(n), int(n * 130)
+    cap = int(s.get("max_solve_points", 0) or 0)
+    if cap:
+        n = min(n, cap)
+    return int(n), int(n * SOLVE_BYTES_PER_POINT)
 
 
 # ------------------------------------------------------------------ passes
@@ -155,6 +161,20 @@ def georef(pos, C, q, lever, B=None):
     return pos + np.einsum("nij,nj->ni", C, a + np.asarray(lever))
 
 
+def georef_times(traj, frame, t, p, M, lever, latency=0.0, batch=1000000):
+    """Sensor-frame points p (N,3) at times t -> local ENU, in batches so the (N,3,3) attitude
+    matrices never exist for every point at once (pose_fast inside each batch)."""
+    t = np.asarray(t, float)
+    x = np.empty((len(t), 3))
+    Mt = np.asarray(M, float).T
+    lev = np.asarray(lever, float)
+    for a in range(0, len(t), batch):
+        b = min(a + batch, len(t))
+        pos, C = pose_fast(traj, frame, t[a:b], latency)
+        x[a:b] = pos + np.einsum("nij,nj->ni", C, np.asarray(p[a:b], float) @ Mt + lev)
+    return x
+
+
 def line_stats(line, traj, frame, settings):
     t0, t1 = line.window
     m = (traj.t >= t0) & (traj.t <= t1)
@@ -166,8 +186,8 @@ def line_stats(line, traj, frame, settings):
         st["sog"] = st["length"] / max(t1 - t0, 1e-6)
         v = en[-1, :2] - en[0, :2]
         st["cog"] = (math.degrees(math.atan2(v[0], v[1])) + 360) % 360
-        hd = (np.degrees(traj.heading[m]) + 360) % 360
-        st["crab"] = float(((np.median(hd) - st["cog"] + 180) % 360) - 180)
+        d = traj.heading[m] - math.radians(st["cog"])        # circular mean: no 0/360 wrap on north-bound passes
+        st["crab"] = float(math.degrees(math.atan2(np.mean(np.sin(d)), np.mean(np.cos(d)))))
         st["track"] = en
         st["track_t"] = traj.t[m]
         if traj.fix is not None:
@@ -301,6 +321,9 @@ def build_patches(lines, s, aoi=None, rng=None):
     P.kind = kind
     P.lines = [c[3] for c in cand]
     pid = {c[0]: i for i, c in enumerate(cand)}
+    pid_key = np.array([c[0] for c in cand], np.int64)
+    o = np.argsort(pid_key)
+    pid_key, pid_val = pid_key[o], np.arange(len(cand), dtype=np.int32)[o]
     pl, pp, pi = [], [], []
     mpp = int(s["max_pts_patch_line"])
     for li, (orig_idx, inv, okkeys, uk) in sel_pts.items():
@@ -320,7 +343,7 @@ def build_patches(lines, s, aoi=None, rng=None):
         take = rank < mpp
         idx, kk = idx[take], kk[take]
         pl.append(np.full(len(idx), li, np.int32))
-        pp.append(np.array([pid[int(k)] for k in kk], np.int32))
+        pp.append(pid_val[np.searchsorted(pid_key, kk)])
         pi.append(orig_idx[idx])
     P.pt_line = np.concatenate(pl)
     P.pt_patch = np.concatenate(pp)
@@ -349,9 +372,19 @@ class SolveData:
             di = ln.idx[P.pt_idx[m]]
             self.t[m] = ln.data["t"][di]
             self.q[m] = ln.data["p"][di].astype(float) @ M.T
-        self.pos, self.C = pose(traj, frame, self.t, latency)
+        self.pos, self.C = pose_fast(traj, frame, self.t, latency)
         self.line = P.pt_line
         self.patch = P.pt_patch
+
+
+def subset_solve_data(sd, n, seed=4):
+    """A SolveData with a fixed random subset of n of its points (same patches)."""
+    import copy
+    sel = np.sort(np.random.default_rng(seed).choice(len(sd.t), int(n), replace=False))
+    out = copy.copy(sd)
+    for k in ("t", "q", "pos", "C", "line", "patch"):
+        setattr(out, k, getattr(sd, k)[sel])
+    return out
 
 
 def _cross(a, b):
@@ -489,6 +522,8 @@ def solve(sd, lever0, s, line_mask=None, B0=None, progress=None):
                 rej = m & (np.abs(e) > s["reject_sigma"] * sig)
                 continue
             break
+        if not rej.any() and s.get("reject_sigma") and it + 1 >= int(s.get("max_iter", 12)) // 2:
+            rej = m & (np.abs(e) > s["reject_sigma"] * sig)     # slow convergence: still screen the outliers
     a = sd.q @ B.T
     x = sd.pos + np.einsum("nij,nj->ni", sd.C, a + lever)
     act = m & ~rej

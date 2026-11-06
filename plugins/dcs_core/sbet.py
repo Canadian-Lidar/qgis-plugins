@@ -17,6 +17,8 @@ import re
 
 import numpy as np
 
+from .timeutil import LEAP
+
 SBET = np.dtype([("t", "<f8"), ("lat", "<f8"), ("lon", "<f8"), ("h", "<f8"),
                  ("vx", "<f8"), ("vy", "<f8"), ("vz", "<f8"),
                  ("roll", "<f8"), ("pitch", "<f8"), ("heading", "<f8"), ("wander", "<f8"),
@@ -25,7 +27,6 @@ SMRMSG = np.dtype([("t", "<f8"), ("sd_n", "<f8"), ("sd_e", "<f8"), ("sd_d", "<f8
                    ("sd_vn", "<f8"), ("sd_ve", "<f8"), ("sd_vd", "<f8"),
                    ("sd_roll", "<f8"), ("sd_pitch", "<f8"), ("sd_heading", "<f8")])
 GPS_EPOCH_UNIX = 315964800.0          # 1980-01-06 00:00 UTC
-LEAP = 18
 WEEK = 604800.0
 
 
@@ -87,8 +88,7 @@ def resolve_week_start(sow, leap=LEAP, week=None, start=None, near_unix=None, da
 def read(path, leap=LEAP, week=None, start=None, near_unix=None, date=None):
     """SBET -> (t UTC s, records as a structured SBET array, week start used).
     The week comes from resolve_week_start(); a week rollover inside the file is handled."""
-    a = np.fromfile(path, "<f8")
-    a = a[: len(a) // 17 * 17].copy().view(SBET).ravel()
+    a = np.fromfile(path, SBET, count=os.path.getsize(path) // SBET.itemsize)     # one copy in memory
     if not len(a):
         raise ValueError("%s: empty SBET" % os.path.basename(path))
     sow = _unroll(a["t"])
@@ -111,8 +111,7 @@ def smrmsg_path(sbet_path):
 
 def read_smrmsg(path, week_start_unix, leap=LEAP):
     """SMRMSG -> (t UTC s, records as a structured SMRMSG array); empty arrays for an empty file."""
-    a = np.fromfile(path, "<f8")
-    a = a[: len(a) // 10 * 10].copy().view(SMRMSG).ravel()
+    a = np.fromfile(path, SMRMSG, count=os.path.getsize(path) // SMRMSG.itemsize)
     return week_start_unix + _unroll(a["t"]) - leap, a
 
 

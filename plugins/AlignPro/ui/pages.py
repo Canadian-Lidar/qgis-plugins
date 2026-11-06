@@ -729,12 +729,16 @@ class CalibPage(Page):
         self.density.blockSignals(False)
         n, mem = engine.solve_points_estimate(s)
         used = len(p.P.pt_line) if p.P is not None and getattr(p.P, "pt_line", None) is not None else None
+        level, mtxt = self.dock.memory_check({})
         self.density_note.setText(
             "%s points kept per line, up to %d points per line in each %.1f m patch, at most %s patches "
-            "(the solver holds up to about %s points, %.1f GB)%s." % (
+            "(the solver holds up to about %s points, %.1f GB)%s. In all %s.%s" % (
                 "{:,}".format(int(s["points_per_line"])), int(s["max_pts_patch_line"]), float(s["voxel_m"]),
                 "{:,}".format(int(s["max_patches"])), "{:,}".format(n), mem / 1e9,
-                ("; now %s points in %d patches" % ("{:,}".format(used), len(p.P))) if used else ""))
+                ("; now %s points in %d patches" % ("{:,}".format(used), len(p.P))) if used else "", mtxt,
+                {"warn": " \u26a0 Close other programs while calibrating, or choose a lower density.",
+                 "refuse": " \u26a0 More than this computer can hold: choose a lower density."}.get(level, "")))
+        self.density_note.setStyleSheet("color: %s;" % theme.AMBER if level != "ok" else "")
 
     def _density(self, *_):
         name = self.density.currentData()
@@ -742,7 +746,8 @@ class CalibPage(Page):
             self.dock.settings_dialog()
             self._show_density()
             return
-        self.dock.change_settings(dict(engine.DENSITIES[name]))
+        if not self.dock.change_settings(dict(engine.DENSITIES[name])):
+            self._show_density()              # refused: back to the density in use
 
     def _apply_adv(self):
         r = self.p.cfg.get("results") if self.p else None

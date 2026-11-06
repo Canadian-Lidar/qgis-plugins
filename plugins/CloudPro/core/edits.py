@@ -92,8 +92,11 @@ class EditManager:
             dzmm = int(round(value * 1000))
             oz = np.round(ps.z[idx] * 1000).astype(np.int32)
             old = {"dz": ps.dz[idx].copy(), "z": oz, "flag": ps.flag[idx].copy()}
-            new = {"dz": np.clip(ps.dz[idx].astype(np.int32) + dzmm, -32768, 32767).astype(np.int16),
-                   "z": (oz + dzmm).astype(np.int32), "flag": (ps.flag[idx] | ZMOD).astype(np.uint8)}
+            odz = ps.dz[idx].astype(np.int32)
+            ndz = np.clip(odz + dzmm, -32768, 32767)
+            # z moves by exactly the change kept in dz, so "original z = z - dz" always holds
+            new = {"dz": ndz.astype(np.int16), "z": (oz + (ndz - odz)).astype(np.int32),
+                   "flag": (ps.flag[idx] | ZMOD).astype(np.uint8)}
         else:
             raise ValueError(op)
         if len(idx) == 0:
@@ -104,12 +107,13 @@ class EditManager:
         self._write(codes, new)
         return self._push(act)
 
-    def apply_ctx(self, ctx, label, ps=None, scope=None):
-        """Commit a filter preview: the differences between ctx and the set."""
+    def apply_ctx(self, ctx, label, ps=None, scope=None, write=True):
+        """Commit a filter preview: the differences between ctx and the set. write=False only builds the
+        Action (the tiled runner writes every tile's changes after all tiles were computed)."""
         ps = ps or self.ps
         f_new = ctx.flag
         changed = (ps.flag != f_new) | (ps.cls != ctx.cls)
-        dz_new = np.round(ctx.dz * 1000).astype(np.int32)
+        dz_new = np.clip(np.round(ctx.dz * 1000), -32768, 32767).astype(np.int32)
         zch = ps.dz.astype(np.int32) != dz_new
         changed |= zch
         if scope is not None:
@@ -124,9 +128,11 @@ class EditManager:
         nz = (oz + (dz_new[idx] - ps.dz[idx].astype(np.int32))).astype(np.int32)
         old = {"flag": ps.flag[idx].copy(), "cls": ps.cls[idx].copy(), "dz": ps.dz[idx].copy(), "z": oz}
         new = {"flag": flag_new.astype(np.uint8), "cls": ctx.cls[idx].astype(np.uint8),
-               "dz": np.clip(dz_new[idx], -32768, 32767).astype(np.int16), "z": nz}
+               "dz": dz_new[idx].astype(np.int16), "z": nz}
         codes = ps.code[idx]
         act = Action(label, codes, old, new)
+        if not write:
+            return act
         if ps is self.ps:
             self._write(codes, new)
         else:

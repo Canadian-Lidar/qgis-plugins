@@ -20,6 +20,7 @@ import datetime as dt
 import json
 import math
 import os
+import time
 
 import numpy as np
 
@@ -68,6 +69,9 @@ class Project:
         self.warnings = []
         self.dcs = None
         self.traj_info = {}
+        self._sd_cache = {}             # latency (ms) -> SolveData for the current patches and applied mounting
+        self._err_cache = {}
+        self._reload_t = 0.0
         if path:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -196,6 +200,10 @@ class Project:
             dt.datetime.now().strftime("%Y%m%d_%H%M%S"), what.replace(" ", "_")))
         return self._run_log
 
+    def end_run_log(self):
+        """The run is over: later messages go to the project log only, not into that run's file."""
+        self._run_log = None
+
     # --------------------------------------------------------------- load
     def input_paths(self):
         """Where the .clraw files come from: the captures of the shared project (their folders, so
@@ -244,6 +252,11 @@ class Project:
                 if progress:
                     progress((gi + fr) / n * 0.7, msg)
             datas.append(lines_mod.read_line(cfs, self.settings, self.work, prog, cancelled))
+        try:
+            lines_mod.prune_caches(self.work, [lines_mod.cache_path(cfs, self.settings, self.work)
+                                               for cfs in groups.values()])
+        except Exception as e:  # noqa: BLE001 - housekeeping only
+            self.log("Line caches not pruned: %s" % e)
         hw = datas[0]["info"]["hardware"] or {}
         if self.dcs is not None and self.dcs.shared("hardware"):
             hw = dict(hw)
@@ -316,7 +329,11 @@ class Project:
             ho = self.pospro_trajectory()
             if ho is not None:
                 t = ho.get("time") or {}
-                self.traj = trajectory.read_sbet(ho["paths"]["sbet"], leap=int(t.get("leap_seconds", 18)),
+                if t.get("leap_seconds") is None:
+                    self.warnings.append("PosPro's trajectory.json gives no leap seconds; %d assumed. Re-publish the "
+                                         "trajectory from PosPro." % trajectory.LEAP_SECONDS)
+                self.traj = trajectory.read_sbet(ho["paths"]["sbet"],
+                                                 leap=int(t.get("leap_seconds", trajectory.LEAP_SECONDS)),
                                                  week=t.get("week"), near_unix=self.datas[0]["info"].get("t_start"))
                 self.traj.source = "PosPro trajectory (%s)" % ((ho.get("frame") or {}).get("name") or "trajectory.json")
                 self.traj_info = {"source": "pospro", "handover_id": ho.get("id"), "frame": ho.get("frame"),
@@ -355,6 +372,14 @@ class Project:
                                  "h": float(np.mean(h))}
         f = self.cfg["frame"]
         self.frame = geo.LocalFrame(f["lat"], f["lon"], f["h"])
+        wins = [(d["info"]["t_start"], d["info"]["t_stop"]) for d in self.datas if d["info"]["t_start"]]
+        gaps = [g for g in self.traj.gaps() if any(g[1] > a and g[0] < b for a, b in wins)]
+        if gaps:
+            self.warnings.append("The trajectory has %d gap(s) longer than %.0f s during the lines (%.1f s in all, "
+                                 "longest %.1f s); the points recorded in them are left out." % (
+                                     len(gaps), trajectory.MAX_GAP_S, sum(b - a for a, b in gaps),
+                                     max(b - a for a, b in gaps)))
+        self._sd_cache, self._err_cache = {}, {}
 
     def read_sbets(self, tcfg):
         """One or more SBET files (one per capture, as the older MapPro format recorded them).
@@ -496,16 +521,13 @@ class Project:
                 ln.x = np.zeros((0, 3))
                 continue
             inside = self.traj.inside(t)
-            pos, C = engine.pose(self.traj, self.frame, t, lat_s)
-            q = ln.data["p"][ln.idx].astype(float) @ M.T
-            ln.x = engine.georef(pos, C, q, lever)
-            ln.x[~inside] = np.nan
-            if (~inside).any():
-                keep = inside
-                ln.idx = ln.idx[keep]
-                ln.x = ln.x[keep]
+            if not inside.all():
+                ln.idx = ln.idx[inside]
+                t = t[inside]
+            ln.x = engine.georef_times(self.traj, self.frame, t, ln.data["p"][ln.idx], M, lever, lat_s)
             engine.line_stats(ln, self.traj, self.frame, self.settings)
         self.sd = None
+        self._sd_cache, self._err_cache = {}, {}
 
     def aoi_func(self):
         poly = self.cfg.get("aoi")
@@ -540,14 +562,23 @@ class Project:
         if not self.cfg.get("boxes"):
             self.cfg["boxes"] = engine.auto_boxes(self.lines, self.P)
         self.sd = None
+        self._sd_cache, self._err_cache = {}, {}
 
-    def solve_data(self):
-        key = (tuple(self.cfg["mount"]), self.cfg["latency_ms"], id(self.P))
-        if self.sd is None or self.sd_key != key:
-            self.sd = engine.SolveData(self.lines, self.P, self.traj, self.frame, self.M,
-                                       self.cfg["latency_ms"] * 1e-3)
-            self.sd_key = key
-        return self.sd
+    def solve_data(self, latency_ms=None):
+        """The patch points with their poses for the applied mounting at this latency (default: applied).
+        Two latencies are kept (the applied one and the last trial value)."""
+        lat = round(float(self.cfg["latency_ms"] if latency_ms is None else latency_ms), 6)
+        key = (tuple(self.cfg["mount"]), lat, id(self.P))
+        sd = self._sd_cache.get(key)
+        if sd is None:
+            sd = engine.SolveData(self.lines, self.P, self.traj, self.frame, self.M, lat * 1e-3)
+            applied = round(float(self.cfg["latency_ms"]), 6)
+            self._sd_cache = {k: v for k, v in self._sd_cache.items() if k[0] == key[0] and k[2] == key[2]
+                              and k[1] == applied}
+            self._sd_cache[key] = sd
+        if latency_ms is None:
+            self.sd, self.sd_key = sd, key
+        return sd
 
     # ----------------------------------------------------------- calibrate
     def calibrate(self, progress=None, cancelled=None):
@@ -572,7 +603,7 @@ class Project:
         main = None
         for ci, (label, m) in enumerate(combis):
             if cancelled and cancelled():
-                break
+                raise lines_mod.Cancelled()      # never keep a result from part of the combinations
             if progress:
                 progress(ci / len(combis), "Combination %d of %d" % (ci + 1, len(combis)))
             r = engine.solve(sd, self.cfg["lever"], self.settings, m)
@@ -683,7 +714,8 @@ class Project:
         manual = not (adv and np.allclose(mount, [adv[k] for k in ("roll", "pitch", "heading")], atol=1e-7))
         sd = r.get("sdev") or {}
         err_now = self.current_error()
-        err_rec = self.current_error(c["mount_preset"])
+        # the error with the values recorded in the capture: recorded mounting and lever arm, no latency
+        err_rec = self.current_error(c["mount_preset"], c.get("lever_preset") or c["lever"], 0.0)
         used = [l.name for l in self.lines if l.use]
         rep = os.path.join(od, "alignment_report.txt")
         com = os.path.join(od, "alignment_combinations.csv")
@@ -721,8 +753,14 @@ class Project:
             "trajectory": {"source": self.traj_info.get("source"), "handover_id": self.traj_info.get("handover_id"),
                            "description": self.traj.source if self.traj is not None else ""},
         }
+        # built_from (DCS Core 1.8.0): the trajectory handover really used and the survey-line files really read,
+        # so a changed or added survey line makes this result stale
+        used_ho = {"pospro": self.traj_info["handover_id"]} if self.traj_info.get("source") == "pospro" and \
+            self.traj_info.get("handover_id") else {}
+        inputs = sorted({pth for d in (getattr(self, "datas", None) or []) for pth in d["info"].get("paths", [])}) \
+            or self.resolve_files()
         doc = handover.publish(self.dcs, "alignpro", {"report": rep, "combinations": com}, fields, PLUGIN, VERSION,
-                               "point-to-plane boresight")
+                               "point-to-plane boresight", used=used_ho, inputs=inputs)
         c["published"] = {"time": doc["created"], "id": doc["id"], "mount": mount, "lever": lever,
                           "latency_ms": float(c["latency_ms"])}
         self.log("Published alignment.json: %.4f %.4f %.4f (%s)" % (mount[0], mount[1], mount[2], doc["id"][:19]))
@@ -734,10 +772,12 @@ class Project:
         differ from what was last published."""
         if self.dcs is None:
             return "none", [], False
-        try:
-            self.dcs.reload()
-        except Exception:  # noqa: BLE001
-            pass
+        if time.time() - self._reload_t > 2.0:       # several widgets ask in one refresh: read the file once
+            try:
+                self.dcs.reload()
+            except Exception:  # noqa: BLE001
+                pass
+            self._reload_t = time.time()
         st, why = self.dcs.state("alignpro")
         pub = self.cfg.get("published")
         differs = bool(pub) and not (np.allclose(pub["mount"], self.cfg["mount"], atol=1e-9) and
@@ -745,17 +785,27 @@ class Project:
                                      abs(pub["latency_ms"] - self.cfg["latency_ms"]) < 1e-9)
         return st, why, differs
 
-    def current_error(self, mount=None):
-        """AvgERROR (cm) and per-line errors for the given/current mounting, planes re-fitted."""
+    def current_error(self, mount=None, lever=None, latency_ms=None):
+        """AvgERROR (cm) for the given (default: applied) mounting, lever arm and latency, planes re-fitted.
+        Cached, so the window can show it straight after a background job computed it."""
         if self.P is None or not len(self.P):
             return None
-        sd = self.solve_data()
-        mount = mount or self.cfg["mount"]
+        mount = list(mount or self.cfg["mount"])
+        lever = list(self.cfg["lever"] if lever is None else lever)
+        lat = float(self.cfg["latency_ms"] if latency_ms is None else latency_ms)
+        used = tuple(bool(l.use) for l in self.lines)
+        key = (tuple(mount), tuple(lever), round(lat, 6), tuple(self.cfg["mount"]), id(self.P), used)
+        if key in self._err_cache:
+            return self._err_cache[key]
+        sd = self.solve_data(lat)
         B = geo.lidar_matrix(*mount) @ self.M.T
-        used = np.array([l.use for l in self.lines])
-        e, m = engine.residuals(sd, B, self.cfg["lever"], used)
+        e, m = engine.residuals(sd, B, lever, np.array(used))
         w = engine.patch_weights(sd.patch, m, len(self.P))
-        return engine.error_metric(e[m], w[m]) * 100
+        v = engine.error_metric(e[m], w[m]) * 100
+        if len(self._err_cache) > 8:
+            self._err_cache = {}
+        self._err_cache[key] = v
+        return v
 
     # ------------------------------------------------------------- analyze
     PARAMS = {"latency_ms": "Lidar latency (ms)", "lever_f": "Lever forward (m)",
@@ -856,8 +906,8 @@ class Project:
                 x = ln.x[idx]
             else:
                 di = ln.idx[idx]
-                pos, C = engine.pose(self.traj, self.frame, ln.data["t"][di], lat_s)
-                x = engine.georef(pos, C, ln.data["p"][di].astype(float) @ M_new.T, self.cfg["lever"])
+                x = engine.georef_times(self.traj, self.frame, ln.data["t"][di], ln.data["p"][di], M_new,
+                                        self.cfg["lever"], lat_s)
             rel = x[:, :2] - p0
             al, ac = rel @ u, rel @ v
             k = (al >= 0) & (al <= L) & (np.abs(ac) <= box["width"] / 2)
@@ -933,28 +983,48 @@ class Project:
             sub[k] = sub[k][order]
         return sub
 
-    def georef_subset(self, sub, mount, lever, latency_ms):
+    def georef_subset(self, sub, mount, lever, latency_ms, idx=None, out=None):
+        """Data View points (sub) placed with any values. One pose cache (the last latency asked) of float32
+        attitude matrices. idx: only these points (the ones the views show); out: an (N,3) array to fill
+        at idx (other rows untouched), else a new array of len(idx) (or N) rows."""
         key = round(float(latency_ms), 6)
         if key not in sub["poses"]:
-            if len(sub["poses"]) > 4:
-                sub["poses"].clear()
-            pos, C = engine.pose_fast(self.traj, self.frame, sub["t"], key * 1e-3)
-            sub["poses"][key] = (pos, C.astype(np.float32))
+            sub["poses"].clear()                  # one latency at a time: 60 bytes per point
+            pos = np.empty((len(sub["t"]), 3))
+            C = np.empty((len(sub["t"]), 3, 3), np.float32)
+            for a in range(0, len(sub["t"]), 1000000):
+                b = min(a + 1000000, len(sub["t"]))
+                pos[a:b], C[a:b] = engine.pose_fast(self.traj, self.frame, sub["t"][a:b], key * 1e-3)
+            sub["poses"][key] = (pos, C)
         pos, C = sub["poses"][key]
         M = geo.lidar_matrix(*mount).astype(np.float32)
-        a = sub["p"] @ M.T + np.asarray(lever, np.float32)
-        return pos + np.einsum("nij,nj->ni", C, a)
+        lev = np.asarray(lever, np.float32)
+        if idx is None:
+            x = pos + np.einsum("nij,nj->ni", C, sub["p"] @ M.T + lev)
+            if out is not None:
+                out[:] = x
+                return out
+            return x
+        x = pos[idx] + np.einsum("nij,nj->ni", C[idx], sub["p"][idx] @ M.T + lev)
+        if out is not None:
+            out[idx] = x
+            return out
+        return x
+
+    LIVE_MAX_POINTS = 1500000
 
     def live_error(self, mount, lever, latency_ms):
-        """AvgERROR (cm) for any trial values, planes re-fitted. Poses cached per latency."""
+        """AvgERROR (cm) for any trial values, planes re-fitted (Data View, on every nudge). Uses at most
+        LIVE_MAX_POINTS of the patch points (a fixed random subset) so a nudge stays quick at high densities."""
         if self.P is None or not len(self.P):
             return None
-        cache = getattr(self, "_live_sd", {})
-        key = (id(self.P), round(float(latency_ms), 6), tuple(self.cfg["mount"]))
-        if key not in cache:
-            cache = {key: engine.SolveData(self.lines, self.P, self.traj, self.frame, self.M, latency_ms * 1e-3)}
-            self._live_sd = cache
-        sd = cache[key]
+        sd = self.solve_data(latency_ms)
+        if len(sd.t) > self.LIVE_MAX_POINTS:
+            sub = getattr(sd, "_live", None)
+            if sub is None:
+                sub = engine.subset_solve_data(sd, self.LIVE_MAX_POINTS)
+                sd._live = sub
+            sd = sub
         B = geo.lidar_matrix(*mount) @ self.M.T
         used = np.array([l.use for l in self.lines])
         e, m = engine.residuals(sd, B, lever, used)

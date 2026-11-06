@@ -11,7 +11,7 @@ import os
 
 import numpy as np
 
-from ..qt import QtCore, QtGui, QtWidgets, Qt, Signal
+from ..qt import QtCore, QtGui, QtWidgets, Qt, Signal, exec_
 from . import chrome, theme
 from .navpanel import dspin
 
@@ -220,7 +220,7 @@ class ProjectProperties(_ToolWindow):
             from qgis.core import QgsCoordinateReferenceSystem
             d = QgsProjectionSelectionDialog(self)
             d.setCrs(QgsCoordinateReferenceSystem(self.crs.text()))
-            if (d.exec() if hasattr(d, "exec") else d.exec_()):
+            if (exec_(d)):
                 self.crs.setText(d.crs().authid())
         except Exception:       # noqa: BLE001
             theme.msg_info(self, "CloudPro", "Type an EPSG code, e.g. EPSG:2953")

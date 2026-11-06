@@ -14,7 +14,7 @@ import time
 
 import numpy as np
 
-from ..qt import QtCore, QtGui, QtWidgets, Qt, Signal, evpos, mods
+from ..qt import QtCore, QtGui, QtWidgets, Qt, Signal, evpos, mods, exec_
 from . import render, theme
 
 TOOLS = ("pan", "rect", "poly", "lasso", "brush", "above", "below", "measure", "pick")
@@ -494,7 +494,7 @@ class CloudView2D(QtWidgets.QWidget):
         theme.dark_menu(m)
         theme.dark_menu(tm)
         g = e.globalPosition().toPoint() if hasattr(e, "globalPosition") else e.globalPos()
-        a = m.exec(g) if hasattr(m, "exec") else m.exec_(g)
+        a = exec_(m, g)
         if a in acts:
             self.toolRequested.emit(acts[a])
         elif a is za:

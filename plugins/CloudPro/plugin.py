@@ -24,6 +24,7 @@ class CloudProPlugin:
         self.panel = None
         self.actions = []
         self.maptool = None
+        self._prev_tool = None
         self.core = None
         self._why = ""
         self.help_action = None
@@ -83,9 +84,15 @@ class CloudProPlugin:
             self.panel = None
         if self.maptool is not None:
             try:
-                self.iface.mapCanvas().unsetMapTool(self.maptool)
-            except Exception:       # noqa: BLE001
+                canvas = self.iface.mapCanvas()
+                if canvas.mapTool() is self.maptool:
+                    canvas.unsetMapTool(self.maptool)
+                    if self._prev_tool is not None:
+                        canvas.setMapTool(self._prev_tool)
+            except Exception:       # noqa: BLE001  (the previous tool may be gone)
                 pass
+            self.maptool = None
+            self._prev_tool = None
 
     def _need_core(self):
         if self.core is not None:
@@ -115,6 +122,8 @@ class CloudProPlugin:
             self.panel.closed.connect(self._closed)
             self.win.attach_window(self.panel)
             dtheme.apply_dock(self.panel)
+        else:
+            self.win.ensure_lock()          # closing the window released the job's edit lock
         self.win.show()
         self.panel.show_window()        # where it was left; floating the first time
         return self.win
@@ -143,14 +152,26 @@ class CloudProPlugin:
             QtWidgets.QMessageBox.information(self.iface.mainWindow(), "CloudPro", "Open a project first.")
             return
         canvas = self.iface.mapCanvas()
-        self.maptool = QgsMapToolEmitPoint(canvas)
+        if self.maptool is None:
+            # one tool, reused; it centres the Inspection Area of whatever project is open when clicked
+            self.maptool = QgsMapToolEmitPoint(canvas)
 
-        def clicked(pt, _btn):
-            src = canvas.mapSettings().destinationCrs()
-            dst = QgsCoordinateReferenceSystem(win.project.crs)
-            q = QgsCoordinateTransform(src, dst, QgsProject.instance()).transform(pt)
-            win.goto_world(q.x(), q.y())
-            win.window().raise_()
-        self.maptool.canvasClicked.connect(clicked)
+            def clicked(pt, _btn):
+                w = self.win
+                if w is None or w.project is None:
+                    return
+                src = canvas.mapSettings().destinationCrs()
+                dst = QgsCoordinateReferenceSystem(w.project.crs)
+                q = QgsCoordinateTransform(src, dst, QgsProject.instance()).transform(pt)
+                w.goto_world(q.x(), q.y())
+                w.window().raise_()
+                if self._prev_tool is not None:          # one click, then the previous tool is back
+                    try:
+                        canvas.setMapTool(self._prev_tool)
+                    except Exception:       # noqa: BLE001
+                        canvas.unsetMapTool(self.maptool)
+            self.maptool.canvasClicked.connect(clicked)
+        if canvas.mapTool() is not self.maptool:
+            self._prev_tool = canvas.mapTool()
         canvas.setMapTool(self.maptool)
         self.iface.messageBar().pushInfo("CloudPro", "Click on the map to centre the Inspection Area there")

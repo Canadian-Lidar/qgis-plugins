@@ -165,9 +165,92 @@ class Project:
 
     def save(self):
         self.data["modified"] = _utc()
+        st = getattr(self, "_staged", None)
+        if st is not None:
+            # a rebuild is in progress: the settings on disk keep describing the points still in work/store
+            # until commit_rebuild (a crash or a cancel leaves a consistent project)
+            _atomic_json(self.path, dict(self.data, **st["data"]))
+            if self.store is not None:
+                self.store.save_meta()          # the staging store's own meta (work/store.new)
+            return
         _atomic_json(self.path, self.data)
         if self.store is not None:
             self.store.save_meta()
+
+    # ------------------------------------------------------------- staged rebuild (georeferencing)
+    STAGED_KEYS = ("lines", "inputs", "trajectory_datum", "crs", "vertical", "geoid", "geoid_path")
+
+    @property
+    def lines_dir(self):
+        return os.path.join(self.work, "lines.new" if getattr(self, "_staged", None) is not None else "lines")
+
+    def begin_rebuild(self):
+        """Start building a new point store beside the current one (work/store.new, work/lines.new). The
+        current points and settings stay untouched until commit_rebuild; abort_rebuild drops the new ones."""
+        import copy
+        import shutil
+        if getattr(self, "_staged", None) is not None:
+            raise RuntimeError("a rebuild is already in progress")
+        snap = {k: copy.deepcopy(self.data[k]) for k in self.STAGED_KEYS if k in self.data}
+        missing = [k for k in self.STAGED_KEYS if k not in self.data]
+        for d in ("store.new", "lines.new"):
+            shutil.rmtree(os.path.join(self.work, d), ignore_errors=True)
+        old = self.store
+        if old is not None:
+            old.close()
+        self._staged = {"data": snap, "missing": missing, "store": old}
+        os.makedirs(self.lines_dir, exist_ok=True)
+        self.store = Store(os.path.join(self.work, "store.new"), tile=self.data.get("tile", 50.0),
+                           crs=self.data.get("crs", ""))
+        self.data["lines"] = []
+        self.data["inputs"] = {}
+
+    def _swap_dir(self, name):
+        """work/<name>.new -> work/<name>; the old folder is renamed aside first, then deleted."""
+        import gc
+        import shutil
+        cur, new = os.path.join(self.work, name), os.path.join(self.work, name + ".new")
+        aside = None
+        if os.path.exists(cur):
+            aside = "%s.old_%s" % (cur, _dt.datetime.now().strftime("%Y%m%d%H%M%S%f"))
+            try:
+                os.replace(cur, aside)
+            except OSError:
+                gc.collect()                    # Windows: a memory map not yet released
+                os.replace(cur, aside)
+        os.replace(new, cur)
+        if aside:
+            shutil.rmtree(aside, ignore_errors=True)
+
+    def commit_rebuild(self):
+        st = self._staged
+        self.store.save_meta()
+        self.store.close()
+        if st["store"] is not None:
+            st["store"].close()
+        self._swap_dir("store")
+        self._swap_dir("lines")
+        self._staged = None
+        self._open_store()
+        self.save()
+
+    def abort_rebuild(self):
+        import shutil
+        st = getattr(self, "_staged", None)
+        if st is None:
+            return
+        try:
+            self.store.close()
+        except Exception:       # noqa: BLE001
+            pass
+        for d in ("store.new", "lines.new"):
+            shutil.rmtree(os.path.join(self.work, d), ignore_errors=True)
+        self.data.update(st["data"])
+        for k in st["missing"]:
+            self.data.pop(k, None)
+        self._staged = None
+        self._open_store()
+        self.save()
 
     # ------------------------------------------------------------- basics
     @property
@@ -190,11 +273,21 @@ class Project:
 
     def reset_points(self):
         """Forget every imported line (the store is a cache of the raw data)."""
+        import gc
         import shutil
         if self.store is not None:
             self.store.close()
-        shutil.rmtree(os.path.join(self.work, "store"), ignore_errors=True)
-        shutil.rmtree(os.path.join(self.work, "lines"), ignore_errors=True)
+        stamp = _dt.datetime.now().strftime("%Y%m%d%H%M%S%f")
+        for name in ("store", "lines"):
+            # renamed aside first: a tile that cannot be deleted (Windows: still mapped) must never be appended to
+            d = os.path.join(self.work, name)
+            if os.path.exists(d):
+                try:
+                    os.replace(d, "%s.old_%s" % (d, stamp))
+                except OSError:
+                    gc.collect()
+                    os.replace(d, "%s.old_%s" % (d, stamp))
+                shutil.rmtree("%s.old_%s" % (d, stamp), ignore_errors=True)
         self.data["lines"] = []
         self.data["inputs"] = {}
         self._make_dirs()
@@ -211,7 +304,7 @@ class Project:
         return lid
 
     def track_path(self, lid):
-        return os.path.join(self.work, "lines", "line_%03d_track.npz" % lid)
+        return os.path.join(self.lines_dir, "line_%03d_track.npz" % lid)
 
     def save_track(self, lid, t, E, N, Z, heading):
         np.savez(self.track_path(lid), t=t, E=E, N=N, Z=Z, heading=heading)

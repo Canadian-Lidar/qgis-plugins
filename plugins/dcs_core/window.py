@@ -269,8 +269,13 @@ class PluginWindow(QDockWidget):
         return holder
 
     # ------------------------------------------------------------------ events
+    # 1.8.0: also the non-client (native title bar / frame) mouse events, which QDockWidget::event sends to its
+    # own drag code (nonClientAreaMouseEvent -> initDrag / startDrag) for a floating panel. Taking them here
+    # leaves moving and resizing by the native frame to the operating system.
     _MOUSE = (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease, QEvent.Type.MouseMove,
-              QEvent.Type.MouseButtonDblClick)
+              QEvent.Type.MouseButtonDblClick, QEvent.Type.NonClientAreaMouseButtonPress,
+              QEvent.Type.NonClientAreaMouseButtonRelease, QEvent.Type.NonClientAreaMouseMove,
+              QEvent.Type.NonClientAreaMouseButtonDblClick)
 
     def event(self, ev):                   # noqa: N802
         # As a window (make_window) the panel is moved by its frame and by WindowTitle. Mouse
@@ -498,12 +503,19 @@ def toggle_maximised(iface, dock):
     dock.raise_()
 
 
+WINDOW_FLAGS = (Qt.WindowType.Window | Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint |
+                Qt.WindowType.WindowMinMaxButtonsHint | Qt.WindowType.WindowCloseButtonHint)
+
+
 def make_window(dock):
-    """Floating panel with normal window buttons (minimise, maximise, close)."""
+    """Floating panel with normal window buttons (minimise, maximise, close). Nothing is changed for a panel that
+    is a window already (setWindowFlags would re-create its native window)."""
+    if dock.property(WINDOWED) and dock.isFloating() and (dock.windowFlags() & WINDOW_FLAGS) == WINDOW_FLAGS:
+        dock.show()
+        return
     if not dock.isFloating():
         dock.setFloating(True)
-    dock.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint |
-                        Qt.WindowType.WindowMinMaxButtonsHint | Qt.WindowType.WindowCloseButtonHint)
+    dock.setWindowFlags(WINDOW_FLAGS)
     dock.setProperty(WINDOWED, True)
     dock.show()
 

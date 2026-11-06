@@ -13,7 +13,7 @@ import json
 import os
 
 from ..core import filters as F
-from ..qt import QtCore, QtWidgets, Qt, Signal
+from ..qt import QtCore, QtWidgets, Qt, Signal, exec_
 from . import chrome, theme
 
 SCOPES = ["Inspection Area", "Slice", "Selected lines (whole project)", "Entire project"]
@@ -241,8 +241,7 @@ class FilterPanel(QtWidgets.QWidget):
         m.addAction("Delete this group...", self.delete_group)
         for x in (m, dm, mm):
             theme.dark_menu(x)
-        m.exec(self.btn_gmenu.mapToGlobal(self.btn_gmenu.rect().bottomLeft())) if hasattr(m, "exec") else \
-            m.exec_(self.btn_gmenu.mapToGlobal(self.btn_gmenu.rect().bottomLeft()))
+        exec_(m, self.btn_gmenu.mapToGlobal(self.btn_gmenu.rect().bottomLeft()))
 
     def refresh_values(self):
         """Show the settings again after they were changed from outside (tuning)."""
@@ -353,7 +352,7 @@ class FilterPanel(QtWidgets.QWidget):
             theme.dark_menu(x)
             x.setToolTipsVisible(True)
         from ..qt import QtGui
-        m.exec(QtGui.QCursor.pos()) if hasattr(m, "exec") else m.exec_(QtGui.QCursor.pos())
+        exec_(m, QtGui.QCursor.pos())
 
     def add_filter(self, key):
         g = self.group

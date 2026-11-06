@@ -5,7 +5,8 @@ The plugin supplies:
   ident    profiles.identity of the job's recordings (may be {})
   current  {section: values} as the job has them now (the sections the plugin knows)
   owned    the sections the plugin can apply and save (PosPro: antennas, rear_axle, imu, vehicle; AlignPro: lidar)
-  apply_fn(sections: {section: values}, profile) -> None   puts profile values into the job
+  apply_fn(sections: {section: values}, profile) -> None   puts profile values into the job; returning False
+           means it could not (e.g. a job is running): the profile is then not marked as answered
 """
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QColor
@@ -46,7 +47,8 @@ def suggest(parent, plugin, ident, current, owned, apply_fn, asked=None):
     c = theme.msg_choice(parent, "%s – system profile" % plugin, txt,
                          ["Use profile values", "Show profiles…", "Keep this job's values"], default=0)
     if c == 0:
-        apply_fn({s: p["sections"][s] for s in owned if s in p["sections"]}, p)
+        if apply_fn({s: p["sections"][s] for s in owned if s in p["sections"]}, p) is False:
+            return "not_applied", asked             # asked again next time
         asked[p["name"]] = p.get("updated")
         return "applied", asked
     if c == 1:
@@ -226,10 +228,12 @@ class ProfilesDialog(QDialog):
             theme.msg_warn(self, self.plugin, "A profile named %s exists already; select it and press "
                            "Save this job's values to the profile, or choose another name." % name)
             return
-        p = profiles.new(name, self.ident)
-        profiles.update_sections(p, {s: self.current[s] for s in self._sections() if self.current.get(s)},
-                                 by=self.by)
-        profiles.save(p)
+        try:
+            profiles.save_sections(name, {s: self.current[s] for s in self._sections() if self.current.get(s)},
+                                   by=self.by, system=self.ident)
+        except Exception as e:      # noqa: BLE001 - locked or not writable
+            theme.msg_warn(self, self.plugin, "The profile could not be saved:\n%s" % e)
+            return
         self.status.setText("Saved %s with this job's %s." % (name, ", ".join(
             profiles.SECTION_TITLES[s].lower() for s in self._sections() if self.current.get(s)) or "values"))
         self.reload(select=name)
@@ -246,10 +250,13 @@ class ProfilesDialog(QDialog):
                 self, self.plugin, "<p>Replace these values in <b>%s</b> with this job's?</p>%s" % (
                     p["name"], _diff_text(diffs)), ["Replace", "Cancel"]) != 0:
             return
-        if self.ident and not p.get("system"):
-            p["system"] = dict(self.ident)
-        profiles.update_sections(p, {s: self.current[s] for s in secs}, by=self.by)
-        profiles.save(p)
+        try:
+            # re-read and merged under the profiles lock: the other plugin's sections saved meanwhile are kept
+            profiles.save_sections(p["name"], {s: self.current[s] for s in secs}, by=self.by,
+                                   system=self.ident if not p.get("system") else None)
+        except Exception as e:      # noqa: BLE001
+            theme.msg_warn(self, self.plugin, "The profile could not be saved:\n%s" % e)
+            return
         self.status.setText("%s updated (%s)." % (p["name"], ", ".join(profiles.SECTION_TITLES[s].lower()
                                                                        for s in secs)))
         self.reload(select=p["name"])
@@ -270,7 +277,9 @@ class ProfilesDialog(QDialog):
                                                                     profiles.describe_system(self.ident)),
                                 ["Use them", "Cancel"], default=1) != 0:
                 return
-        self.apply_fn(secs, p)
+        if self.apply_fn(secs, p) is False:
+            self.status.setText("Not used: %s is busy; try again when the running job has finished." % self.plugin)
+            return
         self.applied = p["name"]
         self.current = dict(self.current)
         self.current.update({k: v for k, v in secs.items()})

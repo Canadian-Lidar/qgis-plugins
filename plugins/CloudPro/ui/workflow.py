@@ -8,8 +8,10 @@ the inputs changed), Clean & classify (opens the Automatic filters tab; optional
 like), Publish for the job. Clicking a step does it too. The wording comes from dcs_core.stepnav,
 as in PosPro's and AlignPro's Back / Next bar.
 """
-from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
+from ..qt import QtWidgets, Qt
+
+QHBoxLayout, QLabel, QPushButton, QWidget = (QtWidgets.QHBoxLayout, QtWidgets.QLabel, QtWidgets.QPushButton,
+                                             QtWidgets.QWidget)
 
 STEPS = (("georef", "Georeference"), ("clean", "Clean & classify"), ("publish", "Publish"))
 _MARK = {"done": "✓", "warn": "⚠", "error": "✕", "todo": "○", "running": "…"}

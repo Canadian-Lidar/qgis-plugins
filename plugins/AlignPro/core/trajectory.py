@@ -44,14 +44,29 @@ class Trajectory:
         return False
 
     def inside(self, t):
-        """Mask of the times that have trajectory data (never the gap between two merged files)."""
+        """Mask of the times that have trajectory data: never the gap between two merged files, nor a gap
+        longer than MAX_GAP_S inside one file (e.g. the recording holes of mapper 2.9.0 captures)."""
         t = np.asarray(t, float)
         m = np.zeros(len(t), bool)
         if len(self.t) < 2:
             return m
         for a, b in (getattr(self, "segments", None) or [self.span]):
             m |= (t >= a) & (t <= b)
+        big = np.diff(self.t) > MAX_GAP_S
+        if big.any() and m.any():
+            k = np.searchsorted(self.t, t, side="right") - 1
+            ok = (k >= 0) & (k < len(big))
+            hole = np.zeros(len(t), bool)
+            hole[ok] = big[k[ok]] & (t[ok] > self.t[k[ok]])
+            m &= ~hole
         return m
+
+    def gaps(self):
+        """[(t0, t1)] of the gaps longer than MAX_GAP_S inside the data (not bridged by inside())."""
+        if len(self.t) < 2:
+            return []
+        i = np.nonzero(np.diff(self.t) > MAX_GAP_S)[0]
+        return [(float(self.t[k]), float(self.t[k + 1])) for k in i]
 
     def rate(self):
         return 1.0 / float(np.median(np.diff(self.t))) if len(self.t) > 2 else 0.0
@@ -71,7 +86,9 @@ class Trajectory:
             v = getattr(self, k)
             setattr(tr, k, None if v is None else v[m])
         tr.source = self.source
-        tr.segments = None
+        segs = getattr(self, "segments", None)
+        tr.segments = None if not segs else [(max(a, t0 - pad), min(b, t1 + pad)) for a, b in segs
+                                             if b >= t0 - pad and a <= t1 + pad] or None
         return tr
 
 

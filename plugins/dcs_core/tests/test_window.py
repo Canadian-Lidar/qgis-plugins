@@ -1,31 +1,19 @@
 """Headless tests of dcs_core.window.PluginWindow with real Qt and a stand-in QGIS main window.
 
-Run from the folder that holds dcs_core/, with PyQt5 (or inside QGIS's Python):
-    QT_QPA_PLATFORM=offscreen python3 -m pytest dcs_core/tests/test_window.py
-Outside QGIS a small stand-in maps qgis.PyQt to PyQt5.
+Run from the plugins folder (the one that holds dcs_core/ and qtshim.py), on either Qt:
+    QT_QPA_PLATFORM=offscreen python3 -m pytest dcs_core/tests              (QGIS's Python, else PyQt5)
+    DCS_QT=6 QT_QPA_PLATFORM=offscreen python3 -m pytest dcs_core/tests     (PyQt6 stand-in; DCS_QT=5 for PyQt5)
 """
 import os
 import sys
-import types
 
-import pytest
+import pytest  # noqa: F401
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+import qtshim  # noqa: E402
 
-try:
-    import qgis.PyQt  # noqa: F401
-except ImportError:                       # stand-in outside QGIS
-    PyQt5 = pytest.importorskip("PyQt5")
-    from PyQt5 import QtCore, QtGui, QtWidgets, sip
-    q = types.ModuleType("qgis")
-    qp = types.ModuleType("qgis.PyQt")
-    q.PyQt = qp
-    for n, m in (("QtCore", QtCore), ("QtGui", QtGui), ("QtWidgets", QtWidgets), ("sip", sip)):
-        setattr(qp, n, m)
-        sys.modules["qgis.PyQt." + n] = m
-    sys.modules["qgis"] = q
-    sys.modules["qgis.PyQt"] = qp
+QT = qtshim.install()
 
 from qgis.PyQt.QtCore import QSettings, Qt  # noqa: E402
 from qgis.PyQt.QtWidgets import QApplication, QLabel, QMainWindow, QToolButton  # noqa: E402
@@ -122,7 +110,8 @@ def test_remembers_floating_place_and_size(env):
     w = make(window, iface)
     w.show_window()
     settle()
-    w.setGeometry(150, 120, 700, 500)
+    # inside the 800 x 800 offscreen screen: Qt 6's restoreGeometry moves a window that sticks out back onto it
+    w.setGeometry(50, 60, 600, 400)
     settle()
     w.save_state()
     geo = w.geometry()

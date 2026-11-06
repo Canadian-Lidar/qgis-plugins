@@ -3,7 +3,7 @@ in QGIS 4 draws tool bars, tool buttons and splitter handles natively and
 ignores the theme) can turn it white: a dark tool bar that can still be
 dragged out to float, icon buttons (plain, toggle, or cycling through
 options), "?" help buttons, view header strips and the status strip."""
-from ..qt import QtCore, QtGui, QtWidgets, Qt, Signal
+from ..qt import QtCore, QtGui, QtWidgets, Qt, Signal, exec_
 from . import icons, theme
 
 
@@ -161,7 +161,7 @@ class IconButton(QtWidgets.QAbstractButton):
             a.triggered.connect(lambda _=False, i=i: self._pick(i))
         theme.dark_menu(m)
         pos = pos or self.mapToGlobal(self.rect().bottomLeft())
-        m.exec(pos) if hasattr(m, "exec") else m.exec_(pos)
+        exec_(m, pos)
 
     def mousePressEvent(self, e):
         if self.options and len(self.options) > 1:
@@ -261,7 +261,7 @@ class HelpButton(IconButton):
         b.clicked.connect(d.accept)
         lay.addWidget(b, 0, Qt.AlignmentFlag.AlignRight)
         theme.polish_dialog(d)
-        d.exec() if hasattr(d, "exec") else d.exec_()
+        exec_(d)
 
 
 class Splitter(QtWidgets.QSplitter):
