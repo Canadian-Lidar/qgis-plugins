@@ -756,7 +756,7 @@ class Project:
         # built_from (DCS Core 1.8.0): the trajectory handover really used and the survey-line files really read,
         # so a changed or added survey line makes this result stale
         used_ho = {"pospro": self.traj_info["handover_id"]} if self.traj_info.get("source") == "pospro" and \
-            self.traj_info.get("handover_id") else {}
+            self.traj_info.get("handover_id") else None
         inputs = sorted({pth for d in (getattr(self, "datas", None) or []) for pth in d["info"].get("paths", [])}) \
             or self.resolve_files()
         doc = handover.publish(self.dcs, "alignpro", {"report": rep, "combinations": com}, fields, PLUGIN, VERSION,
