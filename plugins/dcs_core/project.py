@@ -413,6 +413,8 @@ class DcsProject:
             return "failed", ["the published results are missing"]
         bf = s.get("built_from") or {}
         for u, hid in (bf.get("stages") or {}).items():
+            if hid == "ignored":        # deliberately not used (CloudPro with the recorded/entered mounting)
+                continue
             us = self.stage(u)
             if us.get("status") != "done" or us.get("handover_id") != hid:
                 reasons.append("%s results changed since this was computed" % STAGE[u][2])

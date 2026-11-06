@@ -535,9 +535,9 @@ class AlignProDock(PluginWindow):
         QTimer.singleShot(0, self.suggest_profile)
 
     # -------------------------------------------------------------- system profiles
-    def _apply_profile(self, secs, prof, quiet=False):
-        """Use a system profile's Lidar values. Raises RuntimeError when another job runs (so the profile is
-        not recorded as applied); quiet: return False instead (the profiles dialog)."""
+    def _apply_profile(self, secs, prof):
+        """Use a system profile's Lidar values. Returns False when another job runs (nothing changed; DCS Core's
+        profiles_ui then does not record the profile as applied)."""
         li = secs.get("lidar") or {}
         if not self.p or not li:
             return False
@@ -555,36 +555,28 @@ class AlignProDock(PluginWindow):
             # the profile's mounting becomes this job's starting mounting (shared with CloudPro)
             p.share_mounting(mount, "system profile %s" % prof["name"])
             self._apply_values(lever, lat, mount)
-        if self._when_free(go, "applying system profile %s" % prof["name"]):
-            return True
-        if quiet:
-            return False
-        raise RuntimeError("AlignPro is busy: system profile %s was not applied" % prof["name"])
+        return bool(self._when_free(go, "applying system profile %s" % prof["name"]))
 
     def open_profiles(self):
         if not self.p:
             return
         from dcs_core import profiles_ui
         from ..core.project import VERSION
-
-        def apply_fn(secs, prof):
-            if not self._apply_profile(secs, prof, quiet=True):
-                warn(self, "AlignPro is busy; the profile's values were not applied. Use them again when the "
-                           "current job has finished.")
         profiles_ui.open_dialog(self, "AlignPro", self.p.cfg.get("system") or {}, self.p.profile_current(),
-                                ("lidar",), apply_fn, VERSION)
+                                ("lidar",), self._apply_profile, VERSION)
 
     def suggest_profile(self):
         if not self.p or not self.p.lines:
             return
         from dcs_core import profiles_ui
-        try:
-            ans, rec = profiles_ui.suggest(self, "AlignPro", self.p.cfg.get("system") or {},
-                                           self.p.profile_current(), ("lidar",), self._apply_profile,
-                                           self.p.cfg.get("profiles_asked"))
-        except RuntimeError as e:          # busy: not applied, not recorded, offered again next time
-            self.message(str(e), "warning")
-            return
+        ans, rec = profiles_ui.suggest(self, "AlignPro", self.p.cfg.get("system") or {},
+                                       self.p.profile_current(), ("lidar",), self._apply_profile,
+                                       self.p.cfg.get("profiles_asked"))
+        if ans == "not_applied":           # busy: nothing changed, not recorded; offered again when the job ends
+            p = self.p
+            self._pending.append(lambda: self.p is p and self.suggest_profile())
+            self.message("The system profile was not applied while a job runs; it is offered again when the job "
+                         "has finished.", "warning")
         if rec != self.p.cfg.get("profiles_asked"):
             self.p.cfg["profiles_asked"] = rec
             self.p.save()

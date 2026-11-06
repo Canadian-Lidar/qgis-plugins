@@ -107,22 +107,6 @@ def used_stages(inp):
     return used
 
 
-def _publish_api8(dcs, od, data_files, fields, version, used):
-    """DCS Core API 8: publish, then rewrite built_from.stages (without the "ignored" marker, which API 8
-    does not know)."""
-    from dcs_core import files as dfiles
-    from dcs_core import handover
-    used = {k: v for k, v in used.items() if v != "ignored"}
-    doc = handover.publish(dcs, "cloudpro", data_files, fields, PLUGIN, version, "CloudPro core")
-    bf = dict(doc["built_from"])
-    if bf.get("stages") != used:
-        bf["stages"] = used
-        doc["built_from"] = bf
-        dfiles.atomic_write_json(os.path.join(od, "cloud.json"), dict(doc))
-        dcs.update_stage("cloudpro", by=PLUGIN, built_from=bf)
-    return doc
-
-
 def publish(project, outputs, warnings=(), version=""):
     """outputs: {key: {"path": abs path in out/, "format": ..., ...}} already written there.
     Writes cloud_report.txt, then cloud.json through DCS Core. Returns the handover."""
@@ -163,15 +147,11 @@ def publish(project, outputs, warnings=(), version=""):
         "outputs": outs,
         "warnings": warnings,
     }
-    used = used_stages(inp)
-    try:
-        # DCS Core API 9: built_from.stages = the upstream results really used ("ignored" = AlignPro left
-        # out on purpose: Project properties > recorded or entered mounting)
-        # inputs: the survey-line files the points were really made from
-        doc = handover.publish(dcs, "cloudpro", data_files, fields, PLUGIN, version, "CloudPro core", used=used,
-                               inputs=sorted({f for l in project.lines for f in l.get("files", [])}))
-    except TypeError:
-        doc = _publish_api8(dcs, od, data_files, fields, version, used)
+    # built_from.stages = the upstream results really used ("ignored" = AlignPro left out on purpose:
+    # Project properties > recorded or entered mounting); inputs = the survey-line files the points came from
+    doc = handover.publish(dcs, "cloudpro", data_files, fields, PLUGIN, version, "CloudPro core",
+                           used=used_stages(inp),
+                           inputs=sorted({f for l in project.lines for f in l.get("files", [])}))
     project.data.setdefault("published", []).append({"utc": doc["created"], "id": doc["id"],
                                                      "outputs": list(outs)})
     project.log("Published cloud.json (%s) with %s" % (doc["id"][:19], ", ".join(outs)))

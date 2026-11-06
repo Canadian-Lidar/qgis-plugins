@@ -141,17 +141,16 @@ def main():
     inp, out = georef(p, dcs, override={"source": "recorded"})
     assert not chain.quick_state(p), chain.quick_state(p)
     doc = deliver(p, dcs, las=True)
-    api9 = "used" in handover.publish.__code__.co_varnames
     stg = doc["built_from"]["stages"]
-    if api9:
-        assert stg.get("alignpro") == "ignored", stg
-        stt = dcs.state("cloudpro")
-        if stt[0] != "done":            # DCS Core must skip an "ignored" upstream in state() (see the README)
-            print("   NOTE: DCS Core does not honour the 'ignored' marker yet: %s" % (stt,))
-    else:
-        assert "alignpro" not in stg, stg
-    print("3. recorded mounting with AlignPro published: built_from.stages = %s, state %s (DCS Core API %s)" % (
-        stg, dcs.state("cloudpro")[0], "9" if api9 else "8"))
+    assert stg.get("alignpro") == "ignored", stg
+    stt = dcs.state("cloudpro")
+    if stt[0] != "done":                # DCS Core state() must skip an "ignored" upstream
+        print("   NOTE: DCS Core does not honour the 'ignored' marker yet: %s" % (stt,))
+    print("3. recorded mounting with AlignPro published: built_from.stages = %s, state %s" % (
+        {k: v[:15] for k, v in stg.items()}, stt[0]))
+    assert set(doc["built_from"].get("inputs", {})) == {
+        os.path.relpath(f, dcs.job_folder).replace(os.sep, "/") for l in p.lines for f in l["files"]} or \
+        "inputs" not in doc["built_from"], doc["built_from"].get("inputs")
     # ... and using AlignPro again names its id
     inp, out = georef(p, dcs, override={})
     assert inp.align_info["calibration"] == "applied"
