@@ -49,6 +49,7 @@ class CloudView3D(QtWidgets.QWidget):
     selectionMade = Signal(object, str)
     pointPicked = Signal(int)
     viewChanged = Signal()
+    legendMenu = Signal(object)                  # right-click on the colour scale bar (global pos)
     _stillReady = Signal(object)
 
     def __init__(self, parent=None):
@@ -531,6 +532,10 @@ class CloudView3D(QtWidgets.QWidget):
     def mousePressEvent(self, e):
         pos = evpos(e)
         self.setFocus()
+        if e.button() == Qt.MouseButton.RightButton and getattr(self, "legend_rect", None) is not None and \
+                self.legend_rect.contains(QtCore.QPointF(pos.x(), pos.y())):
+            self.legendMenu.emit(self.mapToGlobal(QtCore.QPoint(int(pos.x()), int(pos.y()))))
+            return
         if e.button() == Qt.MouseButton.LeftButton:
             k = self._nav_hit(pos)
             if k:

@@ -39,6 +39,7 @@ class CloudView2D(QtWidgets.QWidget):
     measured = Signal(str)
     keyNav = Signal(str)                         # navigation requests handled by the main window
     toolRequested = Signal(str)                  # a tool chosen in the right-click menu
+    legendMenu = Signal(object)                  # right-click on the colour scale bar (global pos)
 
     def __init__(self, kind="plan", parent=None):
         super().__init__(parent)
@@ -356,6 +357,10 @@ class CloudView2D(QtWidgets.QWidget):
         pos = evpos(e)
         btn = e.button()
         self.setFocus()
+        if e.button() == Qt.MouseButton.RightButton and getattr(self, "legend_rect", None) is not None and \
+                self.legend_rect.contains(QtCore.QPointF(pos.x(), pos.y())):
+            self.legendMenu.emit(self.mapToGlobal(QtCore.QPoint(int(pos.x()), int(pos.y()))))
+            return
         if btn == Qt.MouseButton.MiddleButton or (btn == Qt.MouseButton.LeftButton and self.tool == "pan"):
             self._drag = ("pan", pos, self.ca, self.cb)
             self.setCursor(Qt.CursorShape.ClosedHandCursor)

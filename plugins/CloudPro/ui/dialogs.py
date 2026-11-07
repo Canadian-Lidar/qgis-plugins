@@ -561,3 +561,52 @@ class PublishDialog(QtWidgets.QDialog):
         if not self.las.isChecked() and not self.dem_on.isChecked():
             return
         self.accept()
+
+
+class ScaleDialog(QtWidgets.QDialog):
+    """Fixed colour scale of one view: minimum and maximum in the units the scale bar shows (heights as
+    elevations, ranges in metres, times in UTC)."""
+
+    def __init__(self, parent, view_name, mode, lo, hi, z_offset=0.0):
+        super().__init__(parent)
+        self.mode, self.z_offset = mode, float(z_offset)
+        self.setWindowTitle("CloudPro - colour scale")
+        lay = QtWidgets.QFormLayout(self)
+        lab = QtWidgets.QLabel("%s view, %s: the colours run from the minimum to the maximum; points "
+                               "outside get the end colours." % (view_name, mode))
+        lab.setWordWrap(True)
+        lab.setMaximumWidth(340)
+        lay.addRow(lab)
+        if mode == "Time":
+            self.w_lo, self.w_hi = (QtWidgets.QDateTimeEdit() for _ in range(2))
+            for w, v in ((self.w_lo, lo), (self.w_hi, hi)):
+                w.setTimeSpec(Qt.TimeSpec.UTC)
+                w.setDisplayFormat("yyyy-MM-dd HH:mm:ss 'UTC'")
+                w.setDateTime(QtCore.QDateTime.fromMSecsSinceEpoch(int(round(v * 1000)), Qt.TimeSpec.UTC))
+        else:
+            unit, dec = {"Height": (" m", 2), "Range": (" m", 2)}.get(mode, ("", 1))
+            shift = self.z_offset if mode == "Height" else 0.0
+            self.w_lo = dspin(-1e9, 1e9, lo + shift, 0.1 if dec == 2 else 1, dec, unit)
+            self.w_hi = dspin(-1e9, 1e9, hi + shift, 0.1 if dec == 2 else 1, dec, unit)
+        lay.addRow("Minimum", self.w_lo)
+        lay.addRow("Maximum", self.w_hi)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok |
+                                        QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self._ok)
+        bb.rejected.connect(self.reject)
+        lay.addRow(bb)
+
+    def values(self):
+        """(lo, hi) in CloudPro's internal units (local heights, metres, UTC seconds)."""
+        if self.mode == "Time":
+            return (self.w_lo.dateTime().toMSecsSinceEpoch() / 1000.0,
+                    self.w_hi.dateTime().toMSecsSinceEpoch() / 1000.0)
+        shift = self.z_offset if self.mode == "Height" else 0.0
+        return self.w_lo.value() - shift, self.w_hi.value() - shift
+
+    def _ok(self):
+        lo, hi = self.values()
+        if not hi > lo:
+            theme.msg_warn(self, "CloudPro", "The maximum must be larger than the minimum.")
+            return
+        self.accept()
