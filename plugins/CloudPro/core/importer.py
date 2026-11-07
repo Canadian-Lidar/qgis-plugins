@@ -12,7 +12,7 @@ import time
 
 import numpy as np
 
-from . import clraw
+from . import clraw, engine
 from .georef import GeorefContext
 from dcs_core import epochs
 
@@ -39,6 +39,7 @@ class ImportOptions:
         self.geoid = None                # callable(lat_deg, lon_deg) -> N, or None
         self.threads = max(1, min(16, (os.cpu_count() or 2) - 1))   # leave one core for QGIS
         self.time_range = None           # (t0, t1) UTC s
+        self.use_engine = True           # the C engine when it is available (core/engine.py), else Python
         self.__dict__.update(kw)
 
 
@@ -79,17 +80,32 @@ def import_recording(project, rec, traj, opts, progress=None, cancel=None, line_
     tmin, tmax = sub.t[0], sub.t[-1]
     stats = {"packets": 0, "points": 0, "outside_traj": 0, "bad_chunks": 0, "stopped_packets": 0}
     started = time.time()
+    eng = None
+    if engine.available() and opts.use_engine:
+        lo, hi = tmin, tmax
+        if t0:
+            lo = max(lo, t0)
+        if t1:
+            hi = min(hi, t1)
+        eng = engine.Georef(ctx, rec.calib, opts.rmin, opts.rmax, opts.returns, opts.drop_duplicates,
+                            opts.min_speed, lo, hi, store.tile, lid)
+    info["engine"] = engine.status() if eng is not None else "Python"
 
     def work(job):
         fi, ci = job
         cache = {}
         try:
-            P = rec.read_lidar_chunk(cache, fi, ci)
+            P = engine.read_points(rec, cache, fi, ci) if eng is not None else rec.read_lidar_chunk(cache, fi, ci)
         finally:
             for fh in cache.values():
                 fh.close()
         if opts.decimate > 1 and len(P):
             P = P[::opts.decimate]
+        if eng is not None:                 # the C engine: decode, skip stopped, georeference, bin in one call
+            if len(P) == 0:
+                return None, 0, 0, 0
+            parts, nstop, nout = eng.chunk(P, REC)
+            return (parts or None), len(P), nout, nstop
         nstop = 0
         if opts.min_speed > 0 and len(P):
             # standing still: skip the packets before decoding (the scanner only repeats the same spot)
@@ -176,17 +192,27 @@ def import_recording(project, rec, traj, opts, progress=None, cancel=None, line_
     info.update(points=stats["points"], t0=float(ta), t1=float(tb), stats=stats, file_spans=spans,
                 file_sizes=[os.path.getsize(p_) if os.path.exists(p_) else 0 for p_ in rec.paths])
     project.lines[lid].update(info)
-    project.log("Imported %s: %d points (%s, %s)" % (info["name"], stats["points"], traj.source, proj.backend))
+    project.log("Imported %s: %d points in %.1f s (%s, %s, %s)" % (info["name"], stats["points"], stats["seconds"],
+                                                                  traj.source, proj.backend, info["engine"]))
     project.save()
     return lid, stats
 
 
-def rebuild_grids(project, keys=None, progress=None):
-    keys = keys if keys is not None else project.store.keys()
-    for n, k in enumerate(keys):
-        project.store.build_grid(k)
-        if progress and n % 8 == 0:
-            progress((n + 1) / max(1, len(keys)), None)
+def rebuild_grids(project, keys=None, progress=None, threads=None):
+    """Rebuild the overview grids of the tiles (all by default). With the engine the per-tile sums run outside
+    Python's lock, so the tiles are done in parallel."""
+    keys = list(keys if keys is not None else project.store.keys())
+    threads = threads or (max(1, min(16, (os.cpu_count() or 2) - 1)) if engine.available() else 1)
+    if threads <= 1 or len(keys) < 4:
+        for n, k in enumerate(keys):
+            project.store.build_grid(k)
+            if progress and n % 8 == 0:
+                progress((n + 1) / max(1, len(keys)), None)
+        return
+    with cf.ThreadPoolExecutor(max_workers=threads) as ex:
+        for n, _ in enumerate(ex.map(project.store.build_grid, keys)):
+            if progress and n % 8 == 0:
+                progress((n + 1) / max(1, len(keys)), None)
 
 
 # ---------------------------------------------------------------------------

@@ -20,6 +20,7 @@ import math
 
 import numpy as np
 
+from . import engine
 from . import spatial as sp
 
 # classes added by the feature filters (ASPRS 64-255 are user definable)
@@ -111,6 +112,8 @@ def cluster(xyz, r):
     n = len(xyz)
     if n == 0:
         return np.zeros(0, int), np.zeros(0, int)
+    if engine.available():
+        return engine.cluster(xyz, r)
     pairs = sp.tree(xyz).query_pairs(r, output_type="ndarray")
     g = coo_matrix((np.ones(len(pairs), np.int8), (pairs[:, 0], pairs[:, 1])), shape=(n, n))
     _, lab = connected_components(g, directed=False)

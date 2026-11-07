@@ -24,6 +24,8 @@ import threading
 
 import numpy as np
 
+from . import engine
+
 REC = np.dtype([("x", "<i4"), ("y", "<i4"), ("z", "<i4"), ("t", "<f8"), ("i", "u1"), ("ret", "u1"),
                 ("ch", "u1"), ("cls", "u1"), ("flag", "u1"), ("line", "<u2"), ("rng", "<u2"), ("az", "<u2"),
                 ("dz", "<i2")])
@@ -307,6 +309,19 @@ class Store:
         if len(a) == 0:
             return out
         cmm = int(round(GRID_CELL * 1000))
+        if engine.available():
+            cnt, rej, zs, ins, zmn, zmx = engine.grid_stats(a, int(round(i * self.tile * 1000)),
+                                                            int(round(j * self.tile * 1000)), cmm, n)
+            has = cnt > 0
+            with np.errstate(invalid="ignore", divide="ignore"):
+                zmean = zs * 1e-3 / cnt
+                imean = ins / cnt
+            zmin = np.where(has, zmn * 1e-3, np.inf)
+            zmax = np.where(has, zmx * 1e-3, -np.inf)
+            out.update(count=cnt.reshape(n, n).astype(np.uint32), rej=rej.reshape(n, n).astype(np.uint32),
+                       zmean=zmean.reshape(n, n).astype(np.float32), zmin=zmin.reshape(n, n).astype(np.float32),
+                       zmax=zmax.reshape(n, n).astype(np.float32), imean=imean.reshape(n, n).astype(np.float32))
+            return out
         cx = np.clip((a["x"] - int(round(i * self.tile * 1000))) // cmm, 0, n - 1)
         cy = np.clip((a["y"] - int(round(j * self.tile * 1000))) // cmm, 0, n - 1)
         cell = (cy * n + cx).astype(np.int64)
