@@ -102,7 +102,18 @@ class CloudView2D(QtWidgets.QWidget):
         if len(self.a) == 0:
             return
         a0, a1 = np.percentile(self.a, [0.5, 99.5]) if len(self.a) > 1000 else (self.a.min(), self.a.max())
-        b0, b1 = np.percentile(self.b, [0.5, 99.5]) if len(self.b) > 1000 else (self.b.min(), self.b.max())
+        self.zoom_range(a0, a1)
+
+    def zoom_range(self, a0, a1):
+        """Show a0..a1 across and the points' height (or b extent) in that range."""
+        b = self.b
+        if len(self.a):
+            m = (self.a >= a0) & (self.a <= a1)
+            b = self.b[m] if m.any() else self.b
+        if len(b) == 0:
+            b0, b1 = self.cb - 1, self.cb + 1
+        else:
+            b0, b1 = np.percentile(b, [2, 98]) if len(b) > 1000 else (b.min(), b.max())
         self.ca, self.cb = (a0 + a1) / 2, (b0 + b1) / 2
         W, H = max(self.width(), 50), max(self.height(), 50)
         sa = (W - 40) / max(a1 - a0, 0.5)

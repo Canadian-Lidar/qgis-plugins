@@ -145,6 +145,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.slice_pane.sliceChanged.connect(self._slice_changed)
         self.slice_pane.stepRequested.connect(lambda d: self.step("sec_next" if d > 0 else "sec_prev"))
         self.v3d_pane.what.currentTextChanged.connect(lambda _t: self.refresh_views(which=("3d",)))
+        self.plan_pane.zoomArea.connect(self.plan.zoom_box)
+        self.slice_pane.zoomArea.connect(self._zoom_slice_area)
+        self.v3d_pane.zoomArea.connect(self.v3d.fit)
 
         self.filters = FilterPanel()
         self.filters.previewRequested.connect(self.run_preview)
@@ -1336,6 +1339,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.box = dict(box)
         self.plan.box = dict(box)
         self.v3d.box_bearing = box["bearing"]
+        self.v3d.set_area(box)                       # 3D turns around the area's centre
         if self._area is not None:
             self._area.set_box(box, self._origin())
         self.plan.update()
@@ -1539,8 +1543,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def zoom_all(self):
         self.plan.zoom_box()
-        self.slice.zoom_all()
+        self._zoom_slice_area()
         self.v3d.fit()
+
+    def _zoom_slice_area(self):
+        """Slice view: the Inspection Area's width (cross-section) or length (profile) and its points' height."""
+        if not self.box:
+            self.slice.zoom_all()
+            return
+        half = (self.box["length"] if self.slice_pane.along else self.box["width"]) / 2
+        self.slice.zoom_range(-half, half)
 
     # ================================================================== display
     def _colours_for(self, mode):

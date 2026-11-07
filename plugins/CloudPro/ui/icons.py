@@ -278,6 +278,30 @@ def _zoomall(p, c):
     p.drawLine(P(10.5, 8), P(10.5, 13))
 
 
+def _brackets(p):
+    for (x, y, dx, dy) in ((3, 3, 1, 1), (21, 3, -1, 1), (3, 21, 1, -1), (21, 21, -1, -1)):
+        p.drawLine(P(x, y), P(x + 4.5 * dx, y))
+        p.drawLine(P(x, y), P(x, y + 4.5 * dy))
+
+
+def _zoom_area(p, c):
+    """Zoom to the Inspection Area: a turned rectangle framed by corner brackets."""
+    _brackets(p)
+    col = QtGui.QColor(c)
+    col.setAlpha(70)
+    p.setBrush(col)
+    p.drawPolygon(QtGui.QPolygonF([P(7, 13.5), P(14.5, 6.5), P(17, 10.5), P(9.5, 17.5)]))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+
+
+def _zoom_extents(p, c):
+    """Zoom to the whole project: a grid of tiles framed by corner brackets."""
+    _brackets(p)
+    p.drawRect(R(7, 7, 10, 10))
+    p.drawLine(P(12, 7), P(12, 17))
+    p.drawLine(P(7, 12), P(17, 12))
+
+
 def _cube(p, c, face=None):
     a, b, d, e = P(12, 3), P(20, 7.5), P(12, 12), P(4, 7.5)
     p.drawPolygon(QtGui.QPolygonF([a, b, d, e]))
@@ -395,4 +419,4 @@ _ICONS = {"float": _float, "close": _close, "hand": _hand, "rect": _rect, "poly"
           "next": _next, "rotate": _rotate, "full": _full, "zoomall": _zoomall, "top": _top, "along": _along,
           "across": _across, "iso": _iso, "plus": _plus, "minus": _minus, "copy": _copy, "up": _up, "down": _down,
           "edl": _edl, "map": _map, "lines": _lines, "cross": _cross,
-          "legend": _legend, "link": _link}
+          "legend": _legend, "link": _link, "zoom_area": _zoom_area, "zoom_extents": _zoom_extents}

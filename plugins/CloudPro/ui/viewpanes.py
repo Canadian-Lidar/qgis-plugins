@@ -41,6 +41,7 @@ class _Pane(QtWidgets.QWidget):
     legendToggled = Signal(bool)
     linkChanged = Signal(str)            # "" = own colours, else "plan" / "slice" / "3d"
     rejToggled = Signal(bool)            # this view's "show rejected points" eye
+    zoomArea = Signal()                  # zoom this view to the Inspection Area
     KEY = ""
 
     def __init__(self, title, parent=None):
@@ -60,6 +61,12 @@ class _Pane(QtWidgets.QWidget):
         self.colour.setFixedWidth(170)
         self.colour.currentTextChanged.connect(self.colourChanged.emit)
         lay.addWidget(self.head)
+
+    def add_zoom_area(self):
+        """The 'zoom to the Inspection Area' button (zoomArea signal)."""
+        self.zoom_area_btn = chrome.IconButton("zoom_area", "Zoom to the Inspection Area", size=28)
+        self.zoom_area_btn.clicked.connect(self.zoomArea.emit)
+        self.hl.addWidget(self.zoom_area_btn)
 
     def add_colour(self):
         self.rej_btn = chrome.IconButton("", options=[("hide", "eye_off", "Rejected points hidden in this view "
@@ -118,6 +125,10 @@ class PlanPane(_Pane):
                                "from half of it amber, below half red")
         self.target.setVisible(False)
         self.hl.addWidget(self.target)
+        self.add_zoom_area()
+        self.zoom_ext_btn = chrome.IconButton("zoom_extents", "Zoom to the extents of the whole project", size=28)
+        self.zoom_ext_btn.clicked.connect(self.view.zoom_project)
+        self.hl.addWidget(self.zoom_ext_btn)
         self.add_colour()
         self.layout().addWidget(self.view, 1)
 
@@ -133,6 +144,7 @@ class SlicePane(_Pane):
         self.view = CloudView2D("section")
         self.view.title = ""
         self.view.b_label = "Z"
+        self.add_zoom_area()
         self.add_colour()
         bar = chrome.Strip(self, theme.BG)
         bar.setFixedHeight(36)
@@ -229,6 +241,7 @@ class View3DPane(_Pane):
         self.edl.setChecked(True)
         self.edl.toggled.connect(self._edl)
         self.hl.addWidget(self.edl)
+        self.add_zoom_area()
         self.add_colour()
         self.layout().addWidget(self.view, 1)
 
