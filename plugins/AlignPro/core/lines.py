@@ -8,6 +8,7 @@ Stage B (fast, repeatable) lives in engine.py: georeference the cached points wi
 trajectory, mounting, lever arm and latency.
 """
 import hashlib
+import math
 import json
 import os
 
@@ -15,7 +16,7 @@ import numpy as np
 
 from . import anpp, clraw, hesai
 
-CACHE_VERSION = 4
+CACHE_VERSION = 5          # 5: packets fired while stopped are skipped (1.6.2)
 
 
 class Cancelled(Exception):
@@ -30,9 +31,30 @@ def cache_key(files, s):
     h.update(str(CACHE_VERSION).encode())
     for f in files:
         h.update(("%s|%d|%d" % (os.path.basename(f), os.path.getsize(f), int(os.path.getmtime(f)))).encode())
-    for k in ("returns", "range_min", "range_max", "intensity_min", "points_per_line"):
+    for k in ("returns", "range_min", "range_max", "intensity_min", "points_per_line", "min_speed"):
         h.update(("%s=%s" % (k, s.get(k))).encode())
     return h.hexdigest()[:16]
+
+
+def _moving(t_pkt, nav, min_speed, span_s=3.0):
+    """Packets fired while the vehicle moved at min_speed or more, from the packet-20 velocities read so far
+    (smoothed over about 1 s). None when there is no speed to go by yet (everything is kept)."""
+    if min_speed <= 0 or len(nav.s20) < 10 or len(t_pkt) == 0:
+        return None
+    t_lo = float(t_pkt.min()) - span_s
+    tail = []
+    for row in reversed(nav.s20):                  # the newest states cover this chunk
+        tail.append((row[0], math.hypot(row[4], row[5])))
+        if row[0] < t_lo or len(tail) > 60000:
+            break
+    if len(tail) < 2:
+        return None
+    a = np.array(tail[::-1])
+    a = a[np.argsort(a[:, 0], kind="stable")]
+    dt = np.median(np.diff(a[:, 0])) if len(a) > 2 else 0.02
+    k = max(1, min(len(a), int(round(1.0 / max(dt, 1e-3)))))
+    sp = np.convolve(a[:, 1], np.ones(k) / k, mode="same") if k > 1 else a[:, 1]
+    return np.interp(t_pkt, a[:, 0], sp) >= min_speed
 
 
 def read_line(files, settings, cache_dir=None, progress=None, cancelled=None):
@@ -62,6 +84,8 @@ def read_line(files, settings, cache_dir=None, progress=None, cancelled=None):
     budget = float(settings.get("points_per_line", 1500000))
     keep = min(1.0, budget / max(est_pkts * 128 * 0.5, 1.0))
     rng = np.random.default_rng(12345)
+    min_speed = float(settings.get("min_speed", 1.0) or 0.0)
+    seen_pk = n_stopped = 0
     nav = anpp.NavCollector()
     pts = {k: [] for k in ("t", "p", "i", "ch")}
     n_pkts = 0
@@ -123,9 +147,22 @@ def read_line(files, settings, cache_dir=None, progress=None, cancelled=None):
             seq_gaps += int(np.sum(np.where(d > 1, d - 1, 0)))
             last_seq = sq[-1]
             t_pkt = np.array(tp, np.float64) * 1e-9
+            # skip the packets fired while the vehicle was slower than the pass threshold: the solve drops
+            # them anyway (passes start at min_speed), and while parked they would take a large share of the
+            # line's point budget away from the moving passes
+            mv = _moving(t_pkt, nav, min_speed)
+            seen_pk += len(a)
+            if mv is not None and not mv.all():
+                a, t_pkt = a[mv], t_pkt[mv]
+                n_stopped += int((~mv).sum())
+                if len(a) == 0:
+                    continue
+            # the thinning was set from the file size: as stopped data is left out, keep more of the rest
+            kept = 1.0 - n_stopped / max(seen_pk, 1)
+            keep_now = min(1.0, keep / max(kept, 0.25))
             dec = hesai.decode(a, t_pkt, cal, settings.get("returns", "strongest"),
                                settings.get("range_min", 1.5), settings.get("range_max", 60.0),
-                               settings.get("intensity_min", 0), keep=keep, rng=rng)
+                               settings.get("intensity_min", 0), keep=keep_now, rng=rng)
             if dec is None:
                 continue
             for k in pts:
@@ -147,7 +184,7 @@ def read_line(files, settings, cache_dir=None, progress=None, cancelled=None):
         "capture_name": first.metadata.get("capture_name", ""),
         "mapper_version": first.metadata.get("mapper_version", ""),
         "hardware": hw, "calibration": cal, "hesai": hinfo,
-        "packets": n_pkts, "lost_packets": seq_gaps,
+        "packets": n_pkts, "lost_packets": seq_gaps, "stopped_packets": n_stopped,
         "status": {"count": status[0], "nmea_valid": status[1], "pps_locked": status[2]},
         "events": events, "quality": quality[:100000],
         "t_start": t_start, "t_stop": t_stop, "keep_fraction": keep,
