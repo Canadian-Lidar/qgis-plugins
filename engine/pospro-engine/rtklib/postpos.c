@@ -431,10 +431,16 @@ static void corr_phase_bias_ssr(obsd_t *obs, int n, const nav_t *nav)
     }
 }
 /* process positioning -------------------------------------------------------*/
+/* PosPro: restart the filter when the rover data stops for longer than this (s;
+ * 0 = never). Carrying RTK states across a long gap (e.g. between two survey lines)
+ * left the pass floating for the whole next line. */
+double pp_gnss_reset_gap_s = 0.0;
+long pp_gnss_resets = 0;
+
 static void procpos(FILE *fp, FILE *fptm, const prcopt_t *popt, const solopt_t *sopt,
                     rtk_t *rtk, int mode)
 {
-    gtime_t time={0};
+    gtime_t time={0}, tlast_rov={0};
     sol_t sol={{0}},oldsol={{0}},newsol={{0}};
     obsd_t *obs_ptr = (obsd_t *)malloc(sizeof(obsd_t)*MAXOBS*2); /* for rover and base */
     if (obs_ptr == NULL) {
@@ -459,6 +465,17 @@ static void procpos(FILE *fp, FILE *fptm, const prcopt_t *popt, const solopt_t *
                 popt->exsats[obs_ptr[i].sat-1]!=1) obs_ptr[n++]= obs_ptr[i];
         }
         if (n<=0) continue;
+
+        if (pp_gnss_reset_gap_s > 0.0 && obs_ptr[0].rcv == 1 &&
+            (popt->mode == PMODE_DGPS || popt->mode == PMODE_KINEMA || popt->mode == PMODE_MOVEB ||
+             popt->mode == PMODE_PPP_KINEMA)) {      /* moving receivers only: a static base keeps its state */
+            if (tlast_rov.time && fabs(timediff(obs_ptr[0].time, tlast_rov)) > pp_gnss_reset_gap_s) {
+                rtkfree(rtk);
+                rtkinit(rtk, popt);
+                pp_gnss_resets++;
+            }
+            tlast_rov = obs_ptr[0].time;
+        }
 
         /* carrier-phase bias correction */
         if (!strstr(popt->pppopt,"-ENA_FCB")) {
