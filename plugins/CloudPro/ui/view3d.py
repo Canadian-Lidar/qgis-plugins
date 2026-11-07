@@ -1,9 +1,10 @@
 """Interactive 3-D point view (software renderer, works on every QGIS
 install without OpenGL drivers).
 
-Mouse: left drag = orbit around the centre,
-Shift+left or middle drag = pan, wheel = zoom, double click = new centre at
-the point under the cursor, right drag = edit selection (lasso or
+Mouse: left drag = orbit around the centre (the centre of the Inspection
+Area; it follows the area when it moves), Shift+left or middle drag = pan,
+wheel = zoom, double click = new centre at the point under the cursor
+(the Zoom to Inspection Area button or 0 / Home bring it back), right drag = edit selection (lasso or
 rectangle) with the active edit.  Keys: W/S fly forward/back, A/D strafe,
 Q/E down/up by the navigation step; 1 top, 2 along, 3 across, 4 oblique,
 0/Home = fit; Esc cancels a selection.
@@ -48,6 +49,7 @@ class CloudView3D(QtWidgets.QWidget):
     selectionMade = Signal(object, str)
     pointPicked = Signal(int)
     viewChanged = Signal()
+    legendMenu = Signal(object)                  # right-click on the colour scale bar (global pos)
     _stillReady = Signal(object)
 
     def __init__(self, parent=None):
@@ -63,7 +65,10 @@ class CloudView3D(QtWidgets.QWidget):
         self.yaw = math.radians(30)        # camera azimuth (clockwise from north)
         self.pitch = math.radians(35)      # elevation above horizon
         self.roll = 0.0                    # rotation of the picture about the viewing direction
-        self.nav_step = 10.0               # degrees per click on the navigation arrows
+        self.nav_step = 22.5               # degrees per click on the navigation arrows
+        self.nav_hold_step = 2.5           # degrees per repeat (every 40 ms) while an arrow is held
+        self.area = None                   # Inspection Area (cx, cy, length, width, bearing): the orbit centre
+        self._area_z = False               # the centre's height still to be taken from the next points
         self._nav_hot = None
         self._nav_timer = QtCore.QTimer(self)
         self._nav_timer.timeout.connect(self._nav_repeat)
@@ -114,6 +119,10 @@ class CloudView3D(QtWidgets.QWidget):
             self._L = np.zeros((0, 3), np.float32)
         if fit:
             self.fit()
+        elif self._area_z and len(P):
+            self.center = self._area_centre()
+            self._area_z = False
+            self.viewChanged.emit()
         self._dirty = True
         self.update()
 
@@ -133,7 +142,50 @@ class CloudView3D(QtWidgets.QWidget):
                 "ortho": self.ortho, "s": (H / 2) / (self.dist * math.tan(self.fov / 2)),
                 "f": (H / 2) / math.tan(self.fov / 2)}
 
+    def set_area(self, box):
+        """The Inspection Area: the orbit centre moves to its centre (keeping the angles and distance), so
+        turning always happens around the area, wherever it is moved."""
+        self.area = dict(box) if box else None
+        if self.area is None:
+            return
+        self.center = self._area_centre()      # height from the points shown now, until ...
+        self._area_z = True                    # ... the new area's points arrive
+        self._dirty = True
+        self.viewChanged.emit()
+        self.update()
+
+    def _zrange(self):
+        z = self.P[:, 2]
+        if len(z) > 400_000:
+            z = z[::len(z) // 200_000]
+        return (float(np.percentile(z, 2)), float(np.percentile(z, 98))) if len(z) > 1000 else \
+            (float(z.min()), float(z.max()))
+
+    def _zmid(self):
+        z = self.P[:, 2]
+        if len(z) > 400_000:
+            z = z[::len(z) // 200_000]
+        return float(np.median(z))
+
+    def _area_centre(self):
+        """The area's centre at the median height of its points (near street level, not mid-air)."""
+        a = self.area
+        return np.array([a["cx"], a["cy"], self._zmid() if len(self.P) else float(self.center[2])])
+
     def fit(self):
+        """Zoom to the Inspection Area (to the points when there is no area): centre on it, whole area in view."""
+        if self.area is not None:
+            a = self.area
+            self.center = self._area_centre() if len(self.P) else np.array([a["cx"], a["cy"], self.center[2]])
+            self._area_z = not len(self.P)
+            zr = self._zrange() if len(self.P) else (0.0, 0.0)
+            dz = min((zr[1] - zr[0]) * self.zscale, max(a["length"], a["width"]))   # tall outliers: ignored
+            r = math.sqrt(a["length"] ** 2 + a["width"] ** 2 + dz ** 2) / 2
+            self.dist = max(2.0, r / math.tan(self.fov / 2) * 1.05)
+            self._dirty = True
+            self.viewChanged.emit()
+            self.update()
+            return
         if len(self.P) == 0:
             return
         lo = np.percentile(self.P, 1, axis=0) if len(self.P) > 1000 else self.P.min(0)
@@ -232,7 +284,7 @@ class CloudView3D(QtWidgets.QWidget):
     def _nav_repeat(self):
         if self._nav_hot and self._nav_timer.property("held"):
             self._nav_timer.setInterval(40)
-            self.nav_rotate(self._nav_hot, self.nav_step * 0.25)
+            self.nav_rotate(self._nav_hot, self.nav_hold_step)
 
     def _draw_nav(self, p):
         c, a, r, spots = self._nav_geom()
@@ -480,6 +532,10 @@ class CloudView3D(QtWidgets.QWidget):
     def mousePressEvent(self, e):
         pos = evpos(e)
         self.setFocus()
+        if e.button() == Qt.MouseButton.RightButton and getattr(self, "legend_rect", None) is not None and \
+                self.legend_rect.contains(QtCore.QPointF(pos.x(), pos.y())):
+            self.legendMenu.emit(self.mapToGlobal(QtCore.QPoint(int(pos.x()), int(pos.y()))))
+            return
         if e.button() == Qt.MouseButton.LeftButton:
             k = self._nav_hit(pos)
             if k:

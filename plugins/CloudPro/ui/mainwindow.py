@@ -36,6 +36,23 @@ from .viewpanes import PlanPane, SlicePane, View3DPane
 
 PLUGIN = "CloudPro"
 CLASS_SHORTLIST = [1, 2, 3, 4, 5, 6, 7, 9, 11, 14, 18, 64, 65, 66, 67, 68, 69, 70, 71]
+SCALAR_MODES = ("Height", "Intensity", "Intensity (range normalised)", "Time", "Range")
+
+
+def _auto_range(mode, z, i, rng, t):
+    """Automatic colour scale of a scalar scheme (z in m, i, rng in cm, t in s)."""
+    if mode == "Height":
+        return render.auto_range(np.asarray(z, float))
+    if mode == "Intensity":
+        return render.auto_range(np.asarray(i, float), (1, 99))
+    if mode == "Intensity (range normalised)":
+        rr = np.maximum(np.asarray(rng, float) * 0.01, 0.5)
+        return render.auto_range(np.asarray(i, float) * (rr / 10.0) ** 2, (1, 99))
+    if mode == "Time":
+        return render.auto_range(np.asarray(t, float), (0, 100))
+    return render.auto_range(np.asarray(rng, float) * 0.01, (1, 99))
+
+
 FILE_COLOURS = np.array([render.hex_rgb(c) for c in ("#00e5aa", "#3ab4f2", "#9b7bff", "#f5a623", "#e84855", "#7bd389",
                                                      "#ff8fab", "#4dd0e1", "#ffd166", "#c792ea", "#80cbc4", "#f78c6c")],
                         np.uint8)
@@ -133,6 +150,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.slice.overlays.append(self._slice_overlay)
         self.panes = {"plan": self.plan_pane, "slice": self.slice_pane, "3d": self.v3d_pane}
         self.links = {"plan": "", "slice": "", "3d": ""}
+        # colour scale per view and scheme: ("area",) auto over the Inspection Area (default), ("project",) auto
+        # over the whole project, ("manual", lo, hi); a linked view uses the scale of the view it follows
+        self.scales = {"plan": {}, "slice": {}, "3d": {}}
+        self._proj_ranges = {}
         for k, pane in self.panes.items():
             pane.colourChanged.connect(lambda m, k=k: self._view_colour(k, m))
             pane.legendToggled.connect(lambda _on, k=k: self.refresh_views(which=(k,)))
@@ -145,6 +166,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.slice_pane.sliceChanged.connect(self._slice_changed)
         self.slice_pane.stepRequested.connect(lambda d: self.step("sec_next" if d > 0 else "sec_prev"))
         self.v3d_pane.what.currentTextChanged.connect(lambda _t: self.refresh_views(which=("3d",)))
+        self.plan_pane.zoomArea.connect(self.plan.zoom_box)
+        self.slice_pane.zoomArea.connect(self._zoom_slice_area)
+        self.v3d_pane.zoomArea.connect(self.v3d.fit)
+        for k, v in (("plan", self.plan), ("slice", self.slice), ("3d", self.v3d)):
+            v.legendMenu.connect(lambda gpos, k=k: self._scale_menu(k, gpos))
 
         self.filters = FilterPanel()
         self.filters.previewRequested.connect(self.run_preview)
@@ -661,6 +687,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._ensure_file_spans()
         self.file_hidden = set(p.data.get("view", {}).get("files_hidden", []))
         self.track_hidden = set(p.data.get("view", {}).get("tracks_hidden", []))
+        sc = p.data.get("view", {}).get("scales", {})
+        self.scales = {k: {m: tuple(v) for m, v in sc.get(k, {}).items()} for k in ("plan", "slice", "3d")}
+        self._proj_ranges = {}
         self.filters.load(p.filters_dir)
         self._fill_lines()
         self.plan.set_project(p.store, self.tracks, {l["id"]: l["colour"] for l in p.lines})
@@ -727,7 +756,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.project.data["view"] = {"box": self.box, "files_hidden": sorted(self.file_hidden),
                                      "tracks_hidden": sorted(self.track_hidden),
                                      "slice": {"along": sp.along, "th": sp.thick.value(),
-                                               "pos": sp.position(self._slice_half())}}
+                                               "pos": sp.position(self._slice_half())},
+                                     "scales": {k: {m: list(v) for m, v in d.items()} for k, d in self.scales.items()}}
         self.project.store.sync()
         self.project.save()
         if quiet:
@@ -1336,6 +1366,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.box = dict(box)
         self.plan.box = dict(box)
         self.v3d.box_bearing = box["bearing"]
+        self.v3d.set_area(box)                       # 3D turns around the area's centre
         if self._area is not None:
             self._area.set_box(box, self._origin())
         self.plan.update()
@@ -1539,22 +1570,32 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def zoom_all(self):
         self.plan.zoom_box()
-        self.slice.zoom_all()
+        self._zoom_slice_area()
         self.v3d.fit()
 
+    def _zoom_slice_area(self):
+        """Slice view: the Inspection Area's width (cross-section) or length (profile) and its points' height."""
+        if not self.box:
+            self.slice.zoom_all()
+            return
+        half = (self.box["length"] if self.slice_pane.along else self.box["width"]) / 2
+        self.slice.zoom_range(-half, half)
+
     # ================================================================== display
-    def _colours_for(self, mode):
+    def _colours_for(self, mode, view=None):
         if len(self.ps) == 0:
             return np.zeros(0, np.uint32)
-        key = (mode, self.lut, self.preview is not None)
+        scalar = mode in SCALAR_MODES
+        rng = self._range(mode, view) if scalar else None
+        key = (mode, self.lut, self.preview is not None, rng)
         c = self._col_cache.get(key)
         if c is not None:
             return c
         if mode == "File":
             c = render.pack(FILE_COLOURS[self.file_idx % len(FILE_COLOURS)])
-        elif mode in ("Height", "Intensity", "Intensity (range normalised)", "Time", "Range"):
+        elif scalar:
             c = render.colour_points(self.ps if self.preview is None else _Proxy(self.ps, z=self.preview.z), mode,
-                                     self.lut, rng=self._range(mode))
+                                     self.lut, rng=rng)
         else:
             lc = np.array([render.hex_rgb(l.get("colour", "#00e5aa")) for l in self.project.lines] or [(0, 229, 170)],
                           np.uint8)
@@ -1565,36 +1606,116 @@ class MainWindow(QtWidgets.QMainWindow):
         self._col_cache[key] = c
         return c
 
-    def _range(self, mode):
-        """Colour scale of a scalar scheme over all points of the Inspection Area: the same in every view, so
-        linked views and their scale bars agree."""
+    def _range(self, mode, view=None):
+        """Colour scale of a scalar scheme for a view (following its link): automatic over all points of the
+        Inspection Area (the default, the same in every view), automatic over the whole project, or the user's
+        own minimum and maximum."""
+        st = self.scales.get(self._root(view), {}).get(mode, ("area",)) if view else ("area",)
+        if st[0] == "manual":
+            return float(st[1]), float(st[2])
+        if st[0] == "project":
+            r = self._project_range(mode)
+            if r is not None:
+                return r
         key = (mode, len(self.ps))
         r = self._ranges.get(key) if hasattr(self, "_ranges") else None
         if r is None:
-            ps = self.ps
-            if mode == "Height":
-                r = render.auto_range(ps.z)
-            elif mode == "Intensity":
-                r = render.auto_range(ps.i.astype(float), (1, 99))
-            elif mode == "Intensity (range normalised)":
-                rr = np.maximum(ps.rng * 0.01, 0.5)
-                r = render.auto_range(ps.i * (rr / 10.0) ** 2, (1, 99))
-            elif mode == "Time":
-                r = render.auto_range(ps.t, (0, 100))
-            else:
-                r = render.auto_range(ps.rng * 0.01, (1, 99))
+            r = _auto_range(mode, self.ps.z, self.ps.i, self.ps.rng, self.ps.t)
             if not hasattr(self, "_ranges") or len(self._ranges) > 40:
                 self._ranges = {}
             self._ranges[key] = r
         return r
 
-    def _mode(self, key):
-        """Colour scheme of a view, following its link (and the link's link)."""
+    def _project_range(self, mode):
+        """Automatic colour scale over the whole project: an even sample (up to about 2 million accepted
+        points) read from every tile of the point store."""
+        st = self.project.store if self.project is not None else None
+        if st is None or not st.keys():
+            return None
+        key = (mode, st.total, getattr(st, "edits_rev", 0))
+        if key in self._proj_ranges:
+            return self._proj_ranges[key]
+        step = max(1, st.total // 2_000_000)
+        parts = []
+        for k in st.keys():
+            a = st.tile_array(k)
+            if len(a):
+                s_ = a[::step]
+                parts.append(s_[(s_["flag"] & REJECTED) == 0])
+        if not parts:
+            return None
+        a = np.concatenate(parts)
+        if len(a) == 0:
+            return None
+        r = _auto_range(mode, a["z"] * 1e-3, a["i"], a["rng"], a["t"])
+        if len(self._proj_ranges) > 20:
+            self._proj_ranges = {}
+        self._proj_ranges[key] = r
+        return r
+
+    VIEW_NAMES = {"plan": "Plan", "slice": "Slice", "3d": "3D"}
+
+    def _scale_menu(self, key, gpos):
+        """Right-click on a view's colour scale bar: automatic over the Inspection Area or the whole project,
+        or a fixed minimum and maximum. A linked view follows the scale of the view it is linked to."""
+        mode = self._mode(key)
+        m = QtWidgets.QMenu(self)
+        t = m.addAction("Colour scale  ·  %s" % mode)
+        t.setEnabled(False)
+        m.addSeparator()
+        if self.links.get(key):
+            root = self._root(key)
+            a = m.addAction("Linked to the %s view: uses its colour scale" % self.VIEW_NAMES[root])
+            a.setEnabled(False)
+            m.addAction("Unlink (own colours and scale)", lambda: self.panes[key].link.setCurrentIndex(0))
+            exec_(m, gpos)
+            return
+        if mode not in SCALAR_MODES:
+            a = m.addAction("Only for Height, Intensity, Range and Time colours")
+            a.setEnabled(False)
+            exec_(m, gpos)
+            return
+        cur = self.scales[key].get(mode, ("area",))[0]
+        grp = QtGui.QActionGroup(m) if hasattr(QtGui, "QActionGroup") else QtWidgets.QActionGroup(m)
+        for kind, text in (("area", "Automatic: Inspection Area"), ("project", "Automatic: whole project"),
+                           ("manual", "Fixed minimum / maximum…")):
+            a = m.addAction(text)
+            a.setCheckable(True)
+            a.setChecked(cur == kind)
+            grp.addAction(a)
+            if kind == "manual":
+                a.triggered.connect(lambda _=False: self._scale_dialog(key, mode))
+            else:
+                a.triggered.connect(lambda _=False, kind=kind: self.set_scale(key, mode, (kind,)))
+        exec_(m, gpos)
+
+    def _scale_dialog(self, key, mode):
+        from .dialogs import ScaleDialog
+        lo, hi = self._range(mode, key)
+        d = ScaleDialog(self, self.VIEW_NAMES[key], mode, lo, hi, z_offset=float(self._origin()[2]))
+        if exec_(d) == QtWidgets.QDialog.DialogCode.Accepted:
+            self.set_scale(key, mode, ("manual",) + tuple(d.values()))
+
+    def set_scale(self, key, mode, setting):
+        """Set a view's colour scale for a scheme and redraw it and every view linked to it."""
+        self.scales[key][mode] = tuple(setting)
+        self.refresh_views(which=tuple(k for k in self.panes if self._root(k) == key))
+        self.status("%s view, %s colours: %s" % (self.VIEW_NAMES[key], mode, {
+            "area": "automatic over the Inspection Area", "project": "automatic over the whole project",
+            "manual": "a fixed minimum and maximum"}[setting[0]]),
+            5000)
+
+    def _root(self, key):
+        """The view whose colours a view shows: itself, or the end of its chain of links."""
         seen = set()
-        while self.links.get(key) and key not in seen:
+        while key and self.links.get(key) and key not in seen:
             seen.add(key)
             key = self.links[key]
-        return self.panes[key].colour.currentText()
+        return key
+
+    def _mode(self, key):
+        """Colour scheme of a view, following its link (and the link's link)."""
+        return self.panes[self._root(key)].colour.currentText()
 
     def _set_link(self, key, target):
         t = target
@@ -1620,14 +1741,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 which.append(k)
         self.refresh_views(which=tuple(which))
 
-    def _legend_info(self, mode):
+    def _legend_info(self, mode, view=None):
         if len(self.ps) == 0:
             return None
         o = self._origin()
         info = {"title": mode}
         if mode in ("Height", "Intensity", "Intensity (range normalised)", "Time", "Range"):
-            lo, hi = self._range(mode)
-            info.update(kind="ramp", lo=lo, hi=hi, lut=self.lut)
+            lo, hi = self._range(mode, view)
+            st = self.scales.get(self._root(view), {}).get(mode, ("area",)) if view else ("area",)
+            info.update(kind="ramp", lo=lo, hi=hi, lut=self.lut,
+                        note={"area": "", "project": "project", "manual": "fixed"}[st[0]])
             if mode == "Height":
                 info["fmt"] = lambda v: "%.2f m" % (v + o[2])
             elif mode.startswith("Intensity"):
@@ -1672,7 +1795,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _set_legend(self, key, view):
         pane = self.panes[key]
-        view.legend = self._legend_info(self._mode(key)) if pane.legend_btn.isChecked() else None
+        view.legend = self._legend_info(self._mode(key), key) if pane.legend_btn.isChecked() else None
 
     def _grid_attr(self, a):
         self.plan.attr = a
@@ -1750,10 +1873,10 @@ class MainWindow(QtWidgets.QMainWindow):
             vis &= ~ps.rejected
         return vis
 
-    def _colours(self, mode, idx=None):
+    def _colours(self, mode, idx=None, view=None):
         """Colours of the points idx (all when None): the scheme's cached colours, gathered for those points
         only, then rejected / preview / selected marks over the same points."""
-        base = self._colours_for(mode)
+        base = self._colours_for(mode, view)
         if len(base) == 0:
             return base.copy()
         if idx is None:
@@ -1812,7 +1935,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return idx[keep], u[keep], v[keep]
         if "plan" in which:
             idx = shown("plan")
-            col = self._colours(self._mode("plan"), idx)
+            col = self._colours(self._mode("plan"), idx, "plan")
             self._legend_key = "plan"
             self._set_legend("plan", self.plan)
             self.plan.a_offset, self.plan.b_offset = o[0], o[1]
@@ -1820,7 +1943,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plan_pane.title.setText("PLAN  %s pts" % "{:,}".format(len(idx)))
         if "slice" in which:
             idx, u, v = in_slab(shown("slice"))
-            col = self._colours(self._mode("slice"), idx)
+            col = self._colours(self._mode("slice"), idx, "slice")
             self._legend_key = "slice"
             self._set_legend("slice", self.slice)
             self.slice.b_offset = o[2]
@@ -1839,7 +1962,7 @@ class MainWindow(QtWidgets.QMainWindow):
             idx = shown("3d")
             if self.v3d_pane.what.currentText() == "Slice":
                 idx = in_slab(idx)[0]
-            col = self._colours(self._mode("3d"), idx)
+            col = self._colours(self._mode("3d"), idx, "3d")
             self._legend_key = "3d"
             self._set_legend("3d", self.v3d)
             P = np.column_stack([ps.x[idx], ps.y[idx], z[idx]])

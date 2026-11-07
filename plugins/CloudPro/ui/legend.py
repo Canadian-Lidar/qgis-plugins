@@ -12,6 +12,8 @@ from . import render, theme
 
 
 def paint(p, view, info, x=None, y=10):
+    """Draw the legend; its rectangle is kept on the view (view.legend_rect) for the right-click menu."""
+    view.legend_rect = None
     if not info:
         return
     p.save()
@@ -21,6 +23,8 @@ def paint(p, view, info, x=None, y=10):
     fm = p.fontMetrics()
     x = 56 if x is None else x
     title = info.get("title", "")
+    if info.get("note"):
+        title = "%s (%s)" % (title, info["note"])
     rows = []
     if info.get("kind") == "ramp":
         lo, hi = float(info["lo"]), float(info["hi"])
@@ -40,6 +44,7 @@ def paint(p, view, info, x=None, y=10):
         w = max([w] + [18 + fm.horizontalAdvance(t) + 16 for _, t in extra])
     h = fm.height() + 8 + bar_h + 6 + (len(extra) * (fm.height() + 2) + 4 if extra else 0)
     box = QtCore.QRectF(x, y, w, h)
+    view.legend_rect = QtCore.QRectF(box)
     p.setPen(QtGui.QPen(QtGui.QColor(theme.BORDER), 1))
     p.setBrush(QtGui.QColor(38, 41, 45, 215))
     p.drawRect(box)
