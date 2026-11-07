@@ -102,7 +102,12 @@ class CloudView3D(QtWidgets.QWidget):
     # ---------------------------------------------------------------- data
     def set_points(self, P, col, idx, fit=False):
         self.P, self.col, self.idx = P, col, idx
-        if len(P):
+        if len(P) and P.dtype == np.float32:
+            # already local single precision (CloudPro's loaded points are millimetres from the project
+            # origin): used as they are, no second copy
+            self._origin = np.zeros(3)
+            self._L = np.ascontiguousarray(P)
+        elif len(P):
             self._origin = np.round(np.asarray(P[len(P) // 2], float), -1)
             self._L = (P - self._origin).astype(np.float32)
         else:

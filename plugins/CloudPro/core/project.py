@@ -103,6 +103,17 @@ class Project:
     def _open_store(self):
         self.store = Store(os.path.join(self.work, "store"), tile=self.data.get("tile", 50.0),
                            crs=self.data.get("crs", ""))
+        # a crash or full disk during an edit or import must not surface later as odd points: check the tiles
+        # against the index on every open (file sizes only, milliseconds) and repair what can be repaired
+        try:
+            self.store_findings = self.store.check(repair=True)
+        except OSError as e:
+            self.store_findings = ["the point store could not be checked: %s" % e]
+        if self.store_findings:
+            try:
+                self.log("Point store repaired on opening: " + "; ".join(self.store_findings))
+            except Exception:       # noqa: BLE001  (logging must not stop the opening)
+                pass
 
     # ------------------------------------------------------------- create / open
     @classmethod

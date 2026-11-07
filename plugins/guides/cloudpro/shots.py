@@ -337,7 +337,7 @@ expect("dialog", None, result=0)
 pp._apply_cfg()
 pp.close()
 win.refresh_chain()
-assert not win.btn_update.isVisible(), "still out of date"
+assert not win._why, "still out of date"
 
 # ---- Update georeferencing with PosPro + AlignPro, every edit carried over
 prog = {}

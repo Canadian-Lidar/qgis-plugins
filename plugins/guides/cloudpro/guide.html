@@ -1,5 +1,5 @@
 <!--#vars {
-"EXTRAS_ROW": "<tr><td>Inputs line</td><td>What the points were georeferenced with, for example <i>PosPro trajectory · AlignPro calibration</i> in green. It turns amber when the inputs are not the best ones (<i>Real-time trajectory</i>, <i>no calibration</i>, <i>entered values</i>), when the points are out of date (<i>Out of date:</i> and the reasons) or before the first georeferencing (<i>No points yet: Menu &gt; Georeference</i>). Hover it to read a long line in full.</td></tr><tr><td><span class='ui'>Update</span></td><td>Shown only while the points are out of date. It opens the Georeference dialog to rebuild the points with the current inputs and carry every manual and filter edit over (<a href='#georef'>Georeferencing</a>).</td></tr><tr><td><span class='ui'>MENU</span></td><td>CloudPro's own menu: Project properties, Georeference, Publish, Export, Save, the QGIS map tools, other captures, the memory limit, Remove all points, Keys and mouse, the user guide (<a href='#window'>Layout, MENU and tool bar</a>).</td></tr>",
+"EXTRAS_ROW": "<tr><td>Inputs line</td><td>What the points were georeferenced with, for example <i>PosPro trajectory · AlignPro calibration</i> in green. It turns amber when the inputs are not the best ones (<i>Real-time trajectory</i>, <i>no calibration</i>, <i>entered values</i>), when the points are out of date (<i>Out of date:</i> and the reasons) or before the first georeferencing (<i>No points yet: Menu &gt; Georeference</i>). Hover it to read a long line in full.</td></tr><tr><td><span class='ui'>MENU</span></td><td>CloudPro's own menu: Project properties, Georeference, Publish, Export, Save, the QGIS map tools, other captures, the memory limit, Remove all points, Keys and mouse, the user guide (<a href='#window'>Layout, MENU and tool bar</a>).</td></tr>",
 "WINDOW_EXTRA": "",
 "PROJECT_MENU_TABLE": "<table><tr><th>Item</th><th>What it does</th></tr><tr><td><span class='ui'>New job project…</span></td><td>DCS Core's New DCS project dialog (below). The new project opens in CloudPro at once.</td></tr><tr><td><span class='ui'>Open project…</span></td><td>Opens a <code>.dcsproj</code>. An older stand-alone CloudPro project (<code>*.cloudpro.json</code>) can be chosen in the same dialog.</td></tr><tr><td><span class='ui'>Recent</span></td><td>The last ten projects opened in CloudPro.</td></tr><tr><td><span class='ui'>Project properties…</span></td><td>The Project Properties window (also <kbd>Ctrl+R</kbd>; <a href='#props'>Project Properties</a>).</td></tr><tr><td><span class='ui'>Open the project folder</span></td><td>Opens <code>Processing/&lt;Name&gt;/</code> in the file manager.</td></tr><tr><td><span class='ui'>Raw data moved? Relocate the job folder…</span></td><td>Asks for the job folder's new location and finds the captures there again.</td></tr><tr><td><span class='ui'>Save the QGIS project in the project folder</span></td><td>Writes the current QGIS project as <code>&lt;Name&gt;.qgz</code> beside the <code>.dcsproj</code>.</td></tr><tr><td><span class='ui'>User guide (this version)</span></td><td>Opens this guide.</td></tr></table>",
 "AFTER_CREATE": "When the job folder holds survey lines (<code>.clraw</code>; mapper 2.10 navigation recordings are not survey lines), CloudPro opens the Georeference dialog straight away (<a href='#georef'>Georeferencing</a>)."
@@ -14,7 +14,7 @@
 <li><b>Viewing.</b> A Plan view with the project grid and a rotatable Inspection Area, a Slice view for cross-sections and profiles, and an interactive 3D view, all showing the points of the Inspection Area.</li>
 <li><b>Manual editing.</b> Reject, accept, select or classify points with a rectangle, polygon, lasso or brush, above or below a drawn line, inside or outside the shape.</li>
 <li><b>Automatic filters.</b> 36 filters in groups, with a live preview before anything changes: cell statistics, clips, outliers, snow and rain, ground, height above ground, walls and reflections, moving objects, and the extraction of road markings, curbs, poles, traffic signs, power lines, manhole covers and guardrails.</li>
-<li><b>Keeping up with the chain.</b> When PosPro or AlignPro publish again, <span class="ui">Update</span> rebuilds the points and carries every edit over.</li>
+<li><b>Keeping up with the chain.</b> When PosPro or AlignPro publish again, <span class="ui">Update georeferencing</span> on the workflow strip rebuilds the points and carries every edit over.</li>
 <li><b>Delivery.</b> Publish writes a LAS 1.4 cloud, an optional ground grid, a report and <code>cloud.json</code> for the job. Export writes LAS, XYZ or grids anywhere.</li>
 </ul>
 <p>The mapper's captures are never changed. Everything CloudPro makes is in the job's processing project, in <code>03_CloudPro/</code>.</p>
@@ -63,7 +63,7 @@
 <p>CloudPro also warns when PosPro's or AlignPro's results are themselves out of date, and when the AlignPro calibration was solved on an earlier PosPro trajectory.</p>
 
 <h2>The Georeference dialog</h2>
-<p>Open it with <span class="ui">MENU › Georeference / update the points…</span> (<kbd>Ctrl+I</kbd>), the <span class="ui">Update</span> button, or by creating a new project on a job folder with captures.</p>
+<p>Open it with <span class="ui">MENU › Georeference / update the points…</span> (<kbd>Ctrl+I</kbd>), the workflow strip's <span class="ui">Next</span> button, or by creating a new project on a job folder with captures.</p>
 <figure class="h78"><img src="fig/georef_dialog.png"><figcaption><b>Figure {N}.1</b> The Georeference dialog with PosPro's trajectory and AlignPro's calibration (green). On a project that already has points the button reads <span class="ui">Update georeferencing</span>.</figcaption></figure>
 <table>
 <tr><th>Part</th><th>What it shows or sets</th></tr>
@@ -81,9 +81,9 @@
 <p>Each run writes a log in <code>03_CloudPro/log/</code> and a line in the History tab.</p>
 
 <h2 id="update">Out of date: Update georeferencing</h2>
-<p>CloudPro compares the PosPro and AlignPro results its points were built with against what those stages have published now, every few seconds. When they differ, or when the georeferencing values in Project Properties were changed, the inputs line turns amber with the reason and the <span class="ui">Update</span> button appears:</p>
+<p>CloudPro compares the PosPro and AlignPro results its points were built with against what those stages have published now, every few seconds. When they differ, or when the georeferencing values in Project Properties were changed, the inputs line turns amber with the reason and the workflow strip's button reads <span class="ui">Update georeferencing</span>:</p>
 <figure class="h22"><img src="fig/stale.png"><figcaption><b>Figure {N}.4</b> The header when the points are out of date (here after the mounting source was changed in Project Properties).</figcaption></figure>
-<p>The reasons read, for example, <i>PosPro has published a new trajectory since the points were georeferenced</i>, <i>AlignPro has published a calibration (the points use the recorded mounting)</i> or <i>the georeferencing values in Project properties changed</i>. Press <span class="ui">Update</span>, keep <span class="ui">Carry the manual and filter edits over…</span> ticked, and press <span class="ui">Update georeferencing</span>. Then publish again: publishing without updating still leaves CloudPro out of date in the workflow boxes, because <code>cloud.json</code> names the results the points were really built from.</p>
+<p>The reasons read, for example, <i>PosPro has published a new trajectory since the points were georeferenced</i>, <i>AlignPro has published a calibration (the points use the recorded mounting)</i> or <i>the georeferencing values in Project properties changed</i>. Press <span class="ui">Update georeferencing</span> on the strip, keep <span class="ui">Carry the manual and filter edits over…</span> ticked, and press <span class="ui">Update georeferencing</span>. Then publish again: publishing without updating still leaves CloudPro out of date in the workflow boxes, because <code>cloud.json</code> names the results the points were really built from.</p>
 
 <h2>Fallbacks and your own values</h2>
 <p>When AlignPro has not published, or Project Properties › Survey configuration is set to <span class="ui">Recorded in the capture (no calibration)</span>, the dialog shows the recorded mounting in amber:</p>
@@ -99,7 +99,7 @@
 </ol>
 <figure class="h56"><img src="fig/coverage.png"><figcaption><b>Figure {N}.6</b> Coverage at 1 m cells with a target of 100 pts/m²: green on target, amber from 50, red below 50. The two crossing passes give the dense centre; density falls with range towards the edges. The points of the Inspection Area are drawn on top.</figcaption></figure>
 <p>Density counts the points kept in the project: rejected points are left out, and a decimation or range limit set when georeferencing lowers it. From the command line, <code>cloudpro info</code> prints the same summary (<code>--target</code>, <code>--cell</code>).</p>
-<p>When PosPro and AlignPro publish later, the points turn out of date; <span class="ui">Update</span> re-georeferences them and keeps your edits (<a href="#update">Out of date</a>).</p>
+<p>When PosPro and AlignPro publish later, the points turn out of date; <span class="ui">Update georeferencing</span> on the workflow strip re-georeferences them and keeps your edits (<a href="#update">Out of date</a>).</p>
 
 <h2>Other captures, removing points</h2>
 <ul>
@@ -134,7 +134,7 @@
 <figure><img src="fig/main_window.png"><figcaption><b>Figure {N}.1</b> CloudPro on a job in its default layout: the header, the tool bar, the Plan, Slice and 3D windows, the tabbed Automatic filters, Lines · Classes · Info and History windows, and the status strip.</figcaption></figure>
 <table>
 <tr><th>Part</th><th>What it holds</th></tr>
-<tr><td>Header</td><td>Workflow boxes, inputs line, <span class="ui">Update</span>, <span class="ui">MENU</span>, project box, Window and user guide buttons (chapter 3).</td></tr>
+<tr><td>Header</td><td>Workflow boxes, inputs line, <span class="ui">MENU</span>, project box, Window and user guide buttons (chapter 3).</td></tr>
 <tr><td>Tool bar</td><td>Tools, edit action, undo, display settings (below). Drag its grip (the dots on the left) to move it to another side or float it.</td></tr>
 <tr><td>Plan (top left by default)</td><td>The whole project as a grid, the drive lines, the Inspection Area and its points from above.</td></tr>
 <tr><td>Slice (bottom left by default)</td><td>A thin slab of the Inspection Area from the side: a cross-section or a profile.</td></tr>
@@ -572,11 +572,11 @@ python -m cloudpro.cli info    D:/Job/Processing/Street/Street.dcsproj</pre>
 <tr><td><i>No .clraw files were found in the job's captures</i></td><td>Check the job folder, use <span class="ui">MENU › Add other .clraw files to the job…</span>, or relocate a moved job folder.</td></tr>
 <tr><td><i>Raw data not found</i> when opening</td><td>Answer Yes and point to the job folder's new location, or later use <span class="ui">Raw data moved? Relocate the job folder…</span>.</td></tr>
 <tr><td><i>This job's point cloud is open elsewhere</i></td><td>Another QGIS has the job's cloud open for editing. Close it there first.</td></tr>
-<tr><td><i>PosPro has not published a trajectory for this project: the Certus real-time track is used</i></td><td>Run PosPro, then <span class="ui">Update</span>.</td></tr>
-<tr><td>Inputs line amber, <i>no calibration</i></td><td>AlignPro has not published (or the source is set to the recorded mounting). Run AlignPro, then <span class="ui">Update</span>.</td></tr>
+<tr><td><i>PosPro has not published a trajectory for this project: the Certus real-time track is used</i></td><td>Run PosPro, then <span class="ui">Update georeferencing</span> on the workflow strip.</td></tr>
+<tr><td>Inputs line amber, <i>no calibration</i></td><td>AlignPro has not published (or the source is set to the recorded mounting). Run AlignPro, then <span class="ui">Update georeferencing</span> on the workflow strip.</td></tr>
 <tr><td><i>AlignPro used the … convention, CloudPro expects navaq_hesai: calibration not used</i></td><td>Publish the calibration again with a current AlignPro.</td></tr>
 <tr><td><i>The AlignPro calibration was solved on an earlier PosPro trajectory</i></td><td>Run AlignPro again on PosPro's current trajectory.</td></tr>
-<tr><td><i>Out of date: …</i> and <span class="ui">Update</span></td><td>Press Update, then publish again (<a href="#update">Update georeferencing</a>).</td></tr>
+<tr><td><i>Out of date: …</i></td><td>Press <span class="ui">Update georeferencing</span> on the workflow strip, then publish again (<a href="#update">Update georeferencing</a>).</td></tr>
 <tr><td><i>the trajectory (…) does not cover line …</i></td><td>The trajectory does not span that capture; process the whole recording in PosPro.</td></tr>
 <tr><td><i>No Zstandard decoder is available to read .clraw files</i></td><td>In the OSGeo4W shell: <code>python -m pip install zstandard</code>, then restart QGIS.</td></tr>
 <tr><td><i>.clraw format_version … is newer than this version of DCS Core understands</i></td><td>Update DCS Core and the plugins.</td></tr>

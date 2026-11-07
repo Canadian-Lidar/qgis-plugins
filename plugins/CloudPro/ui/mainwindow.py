@@ -296,13 +296,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_inputs.setFixedWidth(250)
         self.lbl_inputs.hide()                  # shown when a project is open
         h.add_extra(self.lbl_inputs)
-        self.btn_update = QtWidgets.QPushButton("Update")
-        self.btn_update.setObjectName("ppPrimary")
-        self.btn_update.setToolTip("Re-georeference with the current PosPro trajectory and AlignPro calibration; "
-                                   "every manual and filter edit is carried over")
-        self.btn_update.clicked.connect(self.georeference)
-        self.btn_update.hide()
-        h.add_extra(self.btn_update)
         self.btn_menu = chrome.IconButton("", "Properties, georeference, publish, export, save, pick on map, QGIS "
                                           "layers", size=34, text="MENU")
         self.btn_menu.clicked.connect(self._main_menu)
@@ -654,6 +647,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if not same:
             self._reset_view_state()
         self.project = p
+        if getattr(p, "store_findings", None):
+            QtCore.QTimer.singleShot(0, lambda f=list(p.store_findings): self.status(
+                "Point store checked and repaired on opening (see the log): " + "; ".join(f[:3]) +
+                (" ..." if len(f) > 3 else ""), 20000))
         self._remember(p.dcs.path if p.dcs is not None else p.path)
         self.edits = EditManager(p, on_change=self._edited)
         self.tracks = p.tracks()
@@ -796,7 +793,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.header.set_project_name("")
         self.workflow.hide()
         self.lbl_inputs.hide()
-        self.btn_update.hide()
         self.refresh_views()
 
     def closeEvent(self, e):
@@ -889,7 +885,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_inputs.setProperty("level", lvl)
         self.lbl_inputs.style().unpolish(self.lbl_inputs)
         self.lbl_inputs.style().polish(self.lbl_inputs)
-        self.btn_update.setVisible(bool(why) and p.dcs is not None)
         self.refresh_workflow()
 
     def refresh_workflow(self):
@@ -1792,10 +1787,19 @@ class MainWindow(QtWidgets.QMainWindow):
         def shown(key):                         # each view: rejected points only if its eye is on
             return np.flatnonzero(base if self.show_rej.get(key, False) else base & ~rej)
 
-        def in_slab(idx):                       # the slice slab, worked out for these points only
+        # along / across the Inspection Area for every loaded point: computed once per load and box, so an edit
+        # (which changes only flags and classes) does not rotate millions of points again
+        uk = (id(ps.x), len(ps), b["cx"], b["cy"], b["bearing"])
+        if getattr(self, "_uv_key", None) != uk:
+            self._uv = to_box_frame(ps.x, ps.y, b["cx"], b["cy"], b["bearing"]) if len(ps) else \
+                (np.zeros(0, np.float32), np.zeros(0, np.float32))
+            self._uv_key = uk
+        U, V = self._uv
+
+        def in_slab(idx):                       # the slice slab, from the cached frame coordinates
             if len(idx) == 0:
                 return idx, np.zeros(0), np.zeros(0)
-            u, v = to_box_frame(ps.x[idx], ps.y[idx], b["cx"], b["cy"], b["bearing"])
+            u, v = U[idx], V[idx]
             if along:
                 keep = np.ones(len(idx), bool) if full else np.abs(v - pos) <= th / 2
             else:
@@ -1847,7 +1851,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.box or len(self.ps) == 0:
             return []
         b = self.box
-        z0 = float(np.percentile(self.ps.z, 2))
+        zk = (id(self.ps.z), len(self.ps))                 # the loaded area's ground level, once per load
+        if getattr(self, "_z0_key", None) != zk:
+            zz = self.ps.z if len(self.ps) <= 2_000_000 else self.ps.z[::max(1, len(self.ps) // 2_000_000)]
+            self._z0, self._z0_key = float(np.percentile(zz, 2)), zk
+        z0 = self._z0
         cor = rect_corners(b["cx"], b["cy"], b["length"], b["width"], b["bearing"])
         out = [(np.column_stack([np.r_[cor[:, 0], cor[0, 0]], np.r_[cor[:, 1], cor[0, 1]], np.full(5, z0)]),
                 theme.ACCENT)]
@@ -2400,7 +2408,7 @@ class MainWindow(QtWidgets.QMainWindow):
         off (looking at the points, navigating, the guide and Cancel stay on)."""
         if busy:
             self._locked = []
-            ws = [self.btn_menu, self.btn_update, self.btn_project, self.workflow, self.filters, self.b_undo,
+            ws = [self.btn_menu, self.btn_project, self.workflow, self.filters, self.b_undo,
                   self.b_redo, self.b_action, self.b_where, self.cmb_class, self.cmb_eline, self.infop]
             if self._props is not None:
                 ws.append(self._props)
