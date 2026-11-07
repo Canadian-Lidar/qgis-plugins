@@ -15,6 +15,8 @@ def _k(t):
     return lab
 
 
+STOP_SPEED = 0.3            # m/s: below this the vehicle counts as stopped (Skip points while stopped)
+
 class ImportDialog(QtWidgets.QDialog):
     """Choose .clraw recordings, the trajectory and the sensor geometry."""
 
@@ -114,6 +116,11 @@ class ImportDialog(QtWidgets.QDialog):
         self.dec.setRange(1, 50)
         self.dec.setValue(1)
         self.dec.setToolTip("Keep every Nth Hesai packet (1 = all points)")
+        self.stopped = QtWidgets.QCheckBox("Skip points while stopped")
+        self.stopped.setChecked(True)
+        self.stopped.setToolTip("Leave out the Lidar points recorded while the vehicle stands still (below "
+                                "0.3 m/s): parked or waiting, the scanner repeats the same spot about a million "
+                                "times a second, which only adds noise, disk space and time")
         self.geoid = QtWidgets.QLineEdit()
         self.geoid.setPlaceholderText("optional geoid grid (e.g. CGG2013a .tif/.gtx) for orthometric heights")
         gb = QtWidgets.QToolButton()
@@ -127,6 +134,7 @@ class ImportDialog(QtWidgets.QDialog):
         f.addWidget(self.rmax, 1, 2)
         f.addWidget(_k("Keep every Nth packet"), 2, 0)
         f.addWidget(self.dec, 2, 1)
+        f.addWidget(self.stopped, 2, 2, 1, 2)
         f.addWidget(_k("Geoid"), 3, 0)
         f.addWidget(self.geoid, 3, 1, 1, 2)
         f.addWidget(gb, 3, 3)
@@ -255,6 +263,7 @@ class ImportDialog(QtWidgets.QDialog):
         from ..core.importer import ImportOptions
         o = ImportOptions(returns=self.returns.currentText(), drop_duplicates=self.dups.isChecked(),
                           rmin=self.rmin.value(), rmax=self.rmax.value(), decimate=self.dec.value(),
+                          min_speed=STOP_SPEED if self.stopped.isChecked() else 0.0,
                           bore=(self.br.value(), self.bp.value(), self.bh.value()),
                           source_crs=self.src_crs.text().strip() or None)
         if self.ovr.isChecked():
@@ -417,6 +426,11 @@ class GeorefDialog(QtWidgets.QDialog):
         self.dec.setRange(1, 50)
         self.dec.setValue(1)
         self.dec.setToolTip("Keep every Nth Lidar packet (1 = all points)")
+        self.stopped = QtWidgets.QCheckBox("Skip points while stopped")
+        self.stopped.setChecked(True)
+        self.stopped.setToolTip("Leave out the Lidar points recorded while the vehicle stands still (below "
+                                "0.3 m/s): parked or waiting, the scanner repeats the same spot about a million "
+                                "times a second, which only adds noise, disk space and time")
         self.geoid = QtWidgets.QLineEdit(project.data.get("geoid_path", ""))
         self.geoid.setPlaceholderText("optional geoid grid (.tif / .gtx) for orthometric heights")
         if getattr(self, "_crs_val", None) is not None:
@@ -437,6 +451,7 @@ class GeorefDialog(QtWidgets.QDialog):
         f.addWidget(self.rmax, 1, 2)
         f.addWidget(_k("Keep every Nth packet"), 2, 0)
         f.addWidget(self.dec, 2, 1)
+        f.addWidget(self.stopped, 2, 2, 1, 2)
         f.addWidget(_k("Geoid"), 3, 0)
         f.addWidget(self.geoid, 3, 1, 1, 2)
         f.addWidget(gb, 3, 3)
@@ -453,6 +468,8 @@ class GeorefDialog(QtWidgets.QDialog):
             self.rmin.setValue(prev.get("rmin", 1.0))
             self.rmax.setValue(prev.get("rmax", 120.0))
             self.dec.setValue(int(prev.get("decimate", 1)))
+            # an update keeps what the lines used (older lines kept every point)
+            self.stopped.setChecked(float(prev.get("min_speed", 0.0)) > 0)
         lay.addStretch(1)
         bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok |
                                         QtWidgets.QDialogButtonBox.StandardButton.Cancel)
@@ -482,7 +499,8 @@ class GeorefDialog(QtWidgets.QDialog):
         from ..core.importer import ImportOptions
         self.project.data["geoid_path"] = self.geoid.text().strip()
         return ImportOptions(returns=self.returns.currentText(), drop_duplicates=self.dups.isChecked(),
-                             rmin=self.rmin.value(), rmax=self.rmax.value(), decimate=self.dec.value())
+                             rmin=self.rmin.value(), rmax=self.rmax.value(), decimate=self.dec.value(),
+                             min_speed=STOP_SPEED if self.stopped.isChecked() else 0.0)
 
 
 class PublishDialog(QtWidgets.QDialog):

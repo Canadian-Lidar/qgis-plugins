@@ -137,10 +137,11 @@ class Store:
                 (ij[:, 0].max() + 1) * self.tile, (ij[:, 1].max() + 1) * self.tile)
 
     # -- writing (import) ----------------------------------------------------
-    def append(self, rec):
-        """Append records (REC array, coordinates already relative to origin)."""
+    def bin(self, rec):
+        """Split records into per-tile blocks -> [(key, records)]. Pure (no lock, no I/O): the importer's
+        worker threads do this, so the main thread only queues blocks."""
         if len(rec) == 0:
-            return
+            return []
         ts = self.tile * 1000.0
         ix = np.floor(rec["x"] / ts).astype(np.int64)
         iy = np.floor(rec["y"] / ts).astype(np.int64)
@@ -151,13 +152,20 @@ class Store:
         cuts = np.flatnonzero(np.diff(code)) + 1
         starts = np.r_[0, cuts]
         ends = np.r_[cuts, len(rec)]
+        return [(tile_key(int(ix[order[a]]), int(iy[order[a]])), rec[a:b]) for a, b in zip(starts, ends)]
+
+    def append_binned(self, parts):
+        """Queue per-tile blocks from bin(); written by flush() every 4 M points."""
         with self.lock:
-            for s, e in zip(starts, ends):
-                key = tile_key(int(ix[order[s]]), int(iy[order[s]]))
-                self._buf.setdefault(key, []).append(rec[s:e])
-                self._bufn += e - s
+            for key, a in parts:
+                self._buf.setdefault(key, []).append(a)
+                self._bufn += len(a)
             if self._bufn > 4_000_000:
                 self.flush()
+
+    def append(self, rec):
+        """Append records (REC array, coordinates already relative to origin)."""
+        self.append_binned(self.bin(rec))
 
     def flush(self):
         with self.lock:

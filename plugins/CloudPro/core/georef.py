@@ -86,6 +86,19 @@ class GeorefContext:
         self.geoidN = None
         if geoid is not None:
             self.geoidN = np.asarray(geoid(np.degrees(traj.lat), np.degrees(traj.lon)), float)
+        # horizontal speed along the trajectory, smoothed over about 1 s (for skipping stopped scans)
+        if len(t) > 2:
+            sp = np.hypot(np.gradient(self.E, t), np.gradient(self.N, t))
+            k = max(1, int(round(1.0 / max(np.median(np.diff(t)), 1e-4))))
+            if 1 < k < len(sp):
+                sp = np.convolve(sp, np.ones(k) / k, mode="same")
+            self.speed = sp
+        else:
+            self.speed = np.zeros(len(t))
+
+    def speed_at(self, t):
+        """Vehicle speed (m/s) at times t."""
+        return np.interp(t, self.traj.t, self.speed)
 
     def _nav(self, t):
         tr = self.traj
