@@ -88,6 +88,13 @@ def extract(project, ctx, force=False):
                             ctx.progress, ctx.log, ctx.cancelled), "Reading the rover files")
     project.cfg["rover"]["extract"] = res.results
     project.cfg["rover"]["extract_files"] = sig
+    try:
+        miss = float(res.results.get("imu_missing_pct", "0") or 0)
+    except ValueError:
+        miss = 0.0
+    if miss >= 2.0:
+        ctx.log("warning", "%.0f%% of the IMU data is missing in %s holes (longest %s s): the recording lost "
+                "Certus data" % (miss, res.results.get("imu_gaps", "?"), res.results.get("imu_longest_gap_s", "?")))
     with open(okf, "w", encoding="utf-8") as fh:      # written last: a cancelled or failed read has none
         json.dump({"sig": sig}, fh)
     os.remove(os.path.join(out, ".reading"))
