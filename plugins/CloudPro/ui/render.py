@@ -163,6 +163,52 @@ def rasterise(px, py, key, col, w, h, size=1, bg=0xFF09100F, depth_out=None, dva
     return buf.reshape(h, w)
 
 
+def rasterise_nearest(sx, sy, z, col, w, h, size=1, bg=0xFF09100F):
+    """3-D drawing: the nearest point per pixel, then only those points splatted at the point size.
+
+    sx, sy: pixel coordinates (float); z: camera depth (> 0 in front); col: uint32 ARGB.
+    Returns (buffer (h, w) uint32, depth (h*w,) float32 with inf where empty, number drawn).
+    Faster than rasterise() for big clouds: one depth sort and one scatter over all points, and
+    the splat passes only over the visible points (at most one per pixel), in a padded buffer so
+    no per-pass bounds masks are needed."""
+    pad = max(1, size)
+    wp, hp = w + 2 * pad, h + 2 * pad
+    buf = np.full(hp * wp, bg, np.uint32)
+    dep = np.full(hp * wp, np.inf, np.float32)
+
+    def crop(a):
+        return np.ascontiguousarray(a.reshape(hp, wp)[pad:pad + h, pad:pad + w])
+    if len(sx) == 0:
+        return crop(buf), crop(dep).ravel(), 0
+    ix = sx.astype(np.int32)
+    iy = sy.astype(np.int32)
+    m = (ix >= 0) & (iy >= 0) & (ix < w) & (iy < h) & (z > 0.05)
+    if not m.all():
+        ix, iy, z, col = ix[m], iy[m], z[m], col[m]
+    if len(ix) == 0:
+        return crop(buf), crop(dep).ravel(), 0
+    pix = iy * w + ix
+    z = np.asarray(z, np.float32)
+    zmin, zmax = float(z.min()), float(z.max())
+    dq = ((z - zmin) * (65535.0 / max(zmax - zmin, 1e-9))).astype(np.uint16)
+    far_first = np.argsort(np.uint16(65535) - dq, kind="stable")     # radix sort, nearest last
+    win = np.full(w * h, -1, np.int32)
+    win[pix[far_first]] = far_first.astype(np.int32)                # the last write per pixel wins
+    vis = win[win >= 0]
+    if size > 1:                                                    # splats: far ones first again
+        vis = vis[np.argsort(np.uint16(65535) - dq[vis], kind="stable")]
+    pv = pix[vis]
+    base = (pv // w + pad) * wp + (pv % w + pad)
+    cv, zv = col[vis], z[vis]
+    r0 = -(size // 2)
+    for dy in range(r0, r0 + max(1, size)):
+        for dx in range(r0, r0 + max(1, size)):
+            q = base + (dy * wp + dx)
+            buf[q] = cv
+            dep[q] = zv
+    return crop(buf), crop(dep).ravel(), len(vis)
+
+
 def eye_dome(buf, depth, strength=1.2, radius=1):
     """Eye-dome lighting on a depth buffer (inf = empty)."""
     h, w = buf.shape

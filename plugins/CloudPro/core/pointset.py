@@ -29,9 +29,9 @@ def to_box_frame(x, y, cx, cy, bearing_deg):
 
 class PointSet:
     def __init__(self, n=0):
-        self.x = np.zeros(n)
-        self.y = np.zeros(n)
-        self.z = np.zeros(n)
+        self.x = np.zeros(n, np.float32)
+        self.y = np.zeros(n, np.float32)
+        self.z = np.zeros(n, np.float32)
         for f in FIELDS:
             setattr(self, f, np.zeros(n, REC[f]))
         self.code = np.zeros(n, np.int64)          # key_id << 40 | record index
@@ -81,9 +81,12 @@ class PointSet:
         if max_points and len(r) > max_points:
             sel = np.sort(np.random.default_rng(0).choice(len(r), max_points, replace=False))
             r, code = r[sel], code[sel]
-        ps.x = r["x"] * 1e-3
-        ps.y = r["y"] * 1e-3
-        ps.z = r["z"] * 1e-3
+        # single precision: the coordinates are millimetres from the project origin (a few km at most), so
+        # float32 keeps them to about 0.1 mm while halving the memory of the three largest arrays
+        k = np.float32(1e-3)
+        ps.x = r["x"].astype(np.float32) * k
+        ps.y = r["y"].astype(np.float32) * k
+        ps.z = r["z"].astype(np.float32) * k
         for f in FIELDS:
             setattr(ps, f, np.ascontiguousarray(r[f]))
         ps.code = code

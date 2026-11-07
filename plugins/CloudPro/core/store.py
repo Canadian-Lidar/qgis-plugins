@@ -76,6 +76,54 @@ class Store:
             self.crs = crs
             self.counts = {}
 
+    # -- consistency ---------------------------------------------------------
+    def check(self, repair=True):
+        """Tile files against the index (store.json), quickly (file sizes only). A crash or a full disk while
+        points were being written can leave a part record at the end of a tile, a tile the index does not
+        count yet, or a count for a file that is gone. With repair: part records are cut off, counts follow
+        the files, orphan tiles are taken in, and the grids of changed tiles are rebuilt when next needed.
+        Returns a list of findings in words (empty: all consistent)."""
+        out = []
+        size = REC.itemsize
+        changed = False
+        with self.lock:
+            on_disk = {}
+            for fn in os.listdir(self.tdir):
+                if fn.startswith("t_") and fn.endswith(".cpt"):
+                    on_disk[fn[2:-4]] = os.path.getsize(os.path.join(self.tdir, fn))
+            for key in sorted(set(self.counts) | set(on_disk)):
+                n_idx = self.counts.get(key, 0)
+                if key not in on_disk:
+                    if n_idx:
+                        out.append("tile %s: file missing, %d points lost (Update re-creates them)" % (key, n_idx))
+                        if repair:
+                            self.counts[key] = 0
+                            changed = True
+                    continue
+                b = on_disk[key]
+                n_file, rest = divmod(b, size)
+                if rest:
+                    out.append("tile %s: a part point (%d bytes) at the end, cut off" % (key, rest))
+                    if repair:
+                        self._close_mm(key)
+                        with open(self.tile_path(key), "r+b") as f:
+                            f.truncate(n_file * size)
+                        changed = True
+                if n_file != n_idx:
+                    out.append("tile %s: %d points in the file, %d in the index%s" % (
+                        key, n_file, n_idx, "" if key in self.counts else " (tile not indexed yet)"))
+                    if repair:
+                        self.counts[key] = n_file
+                        self.key_id(key)
+                        changed = True
+                if repair and (rest or n_file != n_idx):
+                    gp = self.grid_path(key)
+                    if os.path.exists(gp):
+                        os.remove(gp)
+            if repair and changed:
+                self.save_meta()
+        return out
+
     # -- metadata ----------------------------------------------------------
     def save_meta(self):
         with self.lock:
@@ -137,10 +185,11 @@ class Store:
                 (ij[:, 0].max() + 1) * self.tile, (ij[:, 1].max() + 1) * self.tile)
 
     # -- writing (import) ----------------------------------------------------
-    def append(self, rec):
-        """Append records (REC array, coordinates already relative to origin)."""
+    def bin(self, rec):
+        """Split records into per-tile blocks -> [(key, records)]. Pure (no lock, no I/O): the importer's
+        worker threads do this, so the main thread only queues blocks."""
         if len(rec) == 0:
-            return
+            return []
         ts = self.tile * 1000.0
         ix = np.floor(rec["x"] / ts).astype(np.int64)
         iy = np.floor(rec["y"] / ts).astype(np.int64)
@@ -151,13 +200,20 @@ class Store:
         cuts = np.flatnonzero(np.diff(code)) + 1
         starts = np.r_[0, cuts]
         ends = np.r_[cuts, len(rec)]
+        return [(tile_key(int(ix[order[a]]), int(iy[order[a]])), rec[a:b]) for a, b in zip(starts, ends)]
+
+    def append_binned(self, parts):
+        """Queue per-tile blocks from bin(); written by flush() every 4 M points."""
         with self.lock:
-            for s, e in zip(starts, ends):
-                key = tile_key(int(ix[order[s]]), int(iy[order[s]]))
-                self._buf.setdefault(key, []).append(rec[s:e])
-                self._bufn += e - s
+            for key, a in parts:
+                self._buf.setdefault(key, []).append(a)
+                self._bufn += len(a)
             if self._bufn > 4_000_000:
                 self.flush()
+
+    def append(self, rec):
+        """Append records (REC array, coordinates already relative to origin)."""
+        self.append_binned(self.bin(rec))
 
     def flush(self):
         with self.lock:

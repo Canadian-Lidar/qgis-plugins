@@ -10,7 +10,7 @@ R = QtCore.QRectF
 NAMES = ("hand", "rect", "poly", "lasso", "brush", "above", "below", "ruler", "info", "undo", "redo", "eye",
          "eye_off", "reject", "accept", "select", "classify", "filter", "inside", "outside", "menu", "props",
          "help", "prev", "next", "rotate", "full", "zoomall", "top", "along", "across", "iso", "plus", "minus",
-         "copy", "up", "down", "edl", "map", "lines", "cross", "legend", "link")
+         "copy", "up", "down", "edl", "map", "lines", "cross", "legend", "link", "float", "close")
 
 
 def paint(p, name, r, col, width=1.6):
@@ -374,7 +374,21 @@ def _cross(p, c):
     p.drawEllipse(P(12, 12), 4, 4)
 
 
-_ICONS = {"hand": _hand, "rect": _rect, "poly": _poly, "lasso": _lasso, "brush": _brush, "above": _above,
+def _float(p, c):
+    """Two overlapping windows: float this view in its own window / dock it again."""
+    p.drawRect(R(3, 8, 12, 11))
+    p.drawLine(P(9, 5), P(21, 5))
+    p.drawLine(P(21, 5), P(21, 15))
+    p.drawLine(P(9, 5), P(9, 8))
+    p.drawLine(P(15, 15), P(21, 15))
+
+
+def _close(p, c):
+    p.drawLine(P(6, 6), P(18, 18))
+    p.drawLine(P(18, 6), P(6, 18))
+
+
+_ICONS = {"float": _float, "close": _close, "hand": _hand, "rect": _rect, "poly": _poly, "lasso": _lasso, "brush": _brush, "above": _above,
           "below": _below, "ruler": _ruler, "info": _info, "help": _help, "undo": _undo, "redo": _redo, "eye": _eye,
           "eye_off": _eye_off, "reject": _reject, "accept": _accept, "select": _select, "classify": _classify,
           "filter": _filter, "inside": _inside, "outside": _outside, "menu": _menu, "props": _props, "prev": _prev,

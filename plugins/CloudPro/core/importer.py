@@ -18,6 +18,7 @@ from dcs_core import epochs
 
 from .geodesy import Projector, needs_datum_shift, trajectory_to_datum
 from .store import REC
+from dcs_core.hesai import packet_times
 from .trajectory import from_nav_states, read_sbet
 
 
@@ -29,13 +30,14 @@ class ImportOptions:
         self.rmax = 120.0
         self.window = "recording"        # recording | all | marks
         self.decimate = 1                # keep every n-th packet
+        self.min_speed = 0.0             # m/s: packets fired while slower than this are skipped (0 = keep all)
         self.mount = None                # (roll, pitch, heading) deg override, else hardware.json
         self.lever = None                # (F, S, D) m override
         self.bore = (0.0, 0.0, 0.0)      # extra boresight correction deg (normally 0: AlignPro gives the mount)
         self.latency = 0.0               # Lidar time offset s (AlignPro latency_s)
         self.source_crs = None           # trajectory datum, default = target's geographic CRS
         self.geoid = None                # callable(lat_deg, lon_deg) -> N, or None
-        self.threads = max(1, min(8, (os.cpu_count() or 2)))
+        self.threads = max(1, min(16, (os.cpu_count() or 2) - 1))   # leave one core for QGIS
         self.time_range = None           # (t0, t1) UTC s
         self.__dict__.update(kw)
 
@@ -69,13 +71,13 @@ def import_recording(project, rec, traj, opts, progress=None, cancel=None, line_
     ctx = GeorefContext(sub, proj, mount, lever, opts.bore, opts.geoid, origin=store.origin, latency=opts.latency)
     info = {"name": line_name or "Line %s" % rec.line, "line": rec.line, "files": rec.paths,
             "trajectory": traj.source, "mount": list(mount), "lever": list(lever), "bore": list(opts.bore),
-            "latency_s": opts.latency, "decimate": opts.decimate, "drop_duplicates": opts.drop_duplicates,
+            "latency_s": opts.latency, "decimate": opts.decimate, "min_speed": opts.min_speed, "drop_duplicates": opts.drop_duplicates,
             "returns": opts.returns, "rmin": opts.rmin, "rmax": opts.rmax, "calibration": rec.calib_source,
             "crs": project.crs, "projector": proj.backend}
     lid = project.add_line(info)
     chunks = rec.chunk_list()
     tmin, tmax = sub.t[0], sub.t[-1]
-    stats = {"packets": 0, "points": 0, "outside_traj": 0, "bad_chunks": 0}
+    stats = {"packets": 0, "points": 0, "outside_traj": 0, "bad_chunks": 0, "stopped_packets": 0}
     started = time.time()
 
     def work(job):
@@ -88,11 +90,18 @@ def import_recording(project, rec, traj, opts, progress=None, cancel=None, line_
                 fh.close()
         if opts.decimate > 1 and len(P):
             P = P[::opts.decimate]
+        nstop = 0
+        if opts.min_speed > 0 and len(P):
+            # standing still: skip the packets before decoding (the scanner only repeats the same spot)
+            moving = ctx.speed_at(packet_times(P)) >= opts.min_speed
+            nstop = int((~moving).sum())
+            if nstop:
+                P = P[moving]
         if len(P) == 0:
-            return None, 0, 0
+            return None, nstop, 0, nstop
         d = clraw.decode_hesai(P, rec.calib, opts.rmin, opts.rmax, opts.returns, opts.drop_duplicates)
         if d is None or len(d["t"]) == 0:
-            return None, len(P), 0
+            return None, len(P) + nstop, 0, nstop
         t = d["t"]
         m = (t >= tmin) & (t <= tmax)
         if t0:
@@ -101,7 +110,7 @@ def import_recording(project, rec, traj, opts, progress=None, cancel=None, line_
             m &= t <= t1
         nout = int((~m).sum())
         if not m.any():
-            return None, len(P), nout
+            return None, len(P) + nstop, nout, nstop
         if not m.all():
             d = {k: v[m] for k, v in d.items()}
             t = d["t"]
@@ -118,7 +127,7 @@ def import_recording(project, rec, traj, opts, progress=None, cancel=None, line_
         r["line"] = lid
         r["rng"] = np.clip(np.round(d["range"] * 100), 0, 65535).astype(np.uint16)
         r["az"] = np.mod(np.round(d["azimuth"] * 100), 36000).astype(np.uint16)   # negative azimuths wrap
-        return r, len(P), nout
+        return store.bin(r), len(P) + nstop, nout, nstop       # binned into tiles here, in the worker
 
     with cf.ThreadPoolExecutor(max_workers=opts.threads) as ex:
         window = opts.threads * 2
@@ -134,13 +143,14 @@ def import_recording(project, rec, traj, opts, progress=None, cancel=None, line_
             if not pending:
                 break
             fut = pending.pop(0)
-            r, np_, nout = fut.result()
+            r, np_, nout, nst = fut.result()
+            stats["stopped_packets"] += nst
             done += 1
             stats["packets"] += np_
             stats["outside_traj"] += nout
             if r is not None:
-                store.append(r)
-                stats["points"] += len(r)
+                store.append_binned(r)
+                stats["points"] += sum(len(a) for _k, a in r)
             if progress and done % 4 == 0:
                 progress(done / max(1, len(chunks)), stats)
             if cancel and cancel():
