@@ -31,6 +31,7 @@
 <div style="break-inside:avoid"><h2>What is new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>1.8.0</b></td><td><b>Dockable windows:</b> Plan, Slice, 3D, Automatic filters, Lines · Classes · Info and History are each a window that can be moved, resized, tabbed together, floated or closed; <span class="ui">MENU › Windows</span> reopens them or resets the layout, and the layout is remembered. Closed or hidden views are not drawn. <b>Faster 3D view:</b> about twice as fast per frame, and the full-detail picture after a move is drawn in the background so the window stays responsive.</td></tr>
 <tr><td><b>1.7.1</b></td><td><b>Coordinate epoch</b> in Project properties › Geodetics: the points are delivered at the provincial NAD83(CSRS) epoch (New Brunswick 1997.0 for New Brunswick Stereographic, else the federal 2010.0), or as observed. A trajectory in another epoch is moved with NRCan's velocity grid. Needs DCS Core 1.9.0.</td></tr>
 <tr><td><b>1.7.0</b></td><td><b>Update keeps your work safe:</b> the new points are built beside the old ones and only replace them when georeferencing succeeds, so a cancel, an error or a trajectory that does not cover a line no longer loses manual and filter edits. Actions that change points or the project wait while a job runs; closing the window stops the job. <b>PPP trajectories</b> from PosPro (ITRF2020 at the observation date) are moved to NAD83(CSRS)v8 before georeferencing (about 1.4 m horizontally and 1.1 m vertically in Atlantic Canada); <code>cloud.json</code> and the report say so. <code>cloud.json</code> takes its frame and epoch from the trajectory actually used. Exports are written under a temporary name and removed when cancelled. Faster grids after whole-project filters and a faster Poles filter. Map layers and menus fixed for QGIS 4. Needs DCS Core 1.8.0.</td></tr>
 <tr><td><b>1.6.0</b></td><td>Guided workflow: a strip under the header shows the three steps (Georeference, Clean &amp; classify, Publish) with their state, and one <span class="ui">Next</span> button does the next thing (Georeference, or Update when the inputs changed; the Automatic filters; Publish for the job). The version number is shown after the plugin name in the header. Needs DCS Core 1.6.0.</td></tr>
@@ -130,21 +131,34 @@
 <p>While a job's cloud is open in CloudPro it is locked for editing: a second QGIS that opens the same project is told <i>This job's point cloud is open elsewhere</i> and does not open it. Georeferencing, project-wide filter runs and publishing also hold the stage lock, which shows CloudPro as <b>running</b> in the workflow boxes.</p>
 
 <h1 id="window"><span class="num">{N}</span>Layout, MENU and tool bar</h1>
-<figure><img src="fig/main_window.png"><figcaption><b>Figure {N}.1</b> CloudPro on a job: the header, the tool bar, the four quarters (Plan, 3D, Slice, the tabs) and the status strip.</figcaption></figure>
+<figure><img src="fig/main_window.png"><figcaption><b>Figure {N}.1</b> CloudPro on a job in its default layout: the header, the tool bar, the Plan, Slice and 3D windows, the tabbed Automatic filters, Lines · Classes · Info and History windows, and the status strip.</figcaption></figure>
 <table>
 <tr><th>Part</th><th>What it holds</th></tr>
 <tr><td>Header</td><td>Workflow boxes, inputs line, <span class="ui">Update</span>, <span class="ui">MENU</span>, project box, Window and user guide buttons (chapter 3).</td></tr>
 <tr><td>Tool bar</td><td>Tools, edit action, undo, display settings (below). Drag its grip (the dots on the left) to move it to another side or float it.</td></tr>
-<tr><td>Plan (top left)</td><td>The whole project as a grid, the drive lines, the Inspection Area and its points from above.</td></tr>
-<tr><td>Slice (bottom left)</td><td>A thin slab of the Inspection Area from the side: a cross-section or a profile.</td></tr>
-<tr><td>3D (top right)</td><td>The Inspection Area, or only the slice, in 3D.</td></tr>
-<tr><td>Tabs (bottom right)</td><td><span class="ui">Automatic filters</span>, <span class="ui">Lines · Classes · Info</span>, <span class="ui">History</span>.</td></tr>
+<tr><td>Plan (top left by default)</td><td>The whole project as a grid, the drive lines, the Inspection Area and its points from above.</td></tr>
+<tr><td>Slice (bottom left by default)</td><td>A thin slab of the Inspection Area from the side: a cross-section or a profile.</td></tr>
+<tr><td>3D (top right by default)</td><td>The Inspection Area, or only the slice, in 3D.</td></tr>
+<tr><td>Tabs (bottom right by default)</td><td><span class="ui">Automatic filters</span>, <span class="ui">Lines · Classes · Info</span>, <span class="ui">History</span>: three windows tabbed together.</td></tr>
 <tr><td>Status strip</td><td>Messages on the left; the cursor position (E and N in the Plan; chainage or offset and Z in the Slice); the points loaded, rejected and selected; the progress bar and <span class="ui">Cancel</span> while a task runs.</td></tr>
 </table>
-<p>Drag the lines between the quarters to resize them. All three views show only the points inside the <b>Inspection Area</b>, the box you work in; the Plan's background grid is the only thing drawn from the whole project.</p>
+<p>All three views show only the points inside the <b>Inspection Area</b>, the box you work in; the Plan's background grid is the only thing drawn from the whole project.</p>
+<h2>Arranging the windows</h2>
+<p>Each view and each panel is a window of its own inside CloudPro. Its title bar is the strip along its top (the view's title, colour and tools):</p>
+<table>
+<tr><th>To</th><th>Do this</th></tr>
+<tr><td>Resize</td><td>Drag the line between two windows.</td></tr>
+<tr><td>Move</td><td>Drag the window's title bar (an empty part of the strip) to another side; a highlight shows where it will go.</td></tr>
+<tr><td>Tab windows together</td><td>Drop a window's title bar on another window. Tabs appear along the top; click one to bring it to the front.</td></tr>
+<tr><td>Float a window</td><td>Click its float button (two overlapping squares, top right of the strip) or double click its title bar. It becomes a window of its own, for example on a second screen. Float it again, or drag it back, to dock it.</td></tr>
+<tr><td>Close a window</td><td>Click its &times;. <span class="ui">MENU › Windows</span> brings it back.</td></tr>
+<tr><td>Start again</td><td><span class="ui">MENU › Windows › Reset the window layout</span>.</td></tr>
+</table>
+<figure><img src="fig/window_docks.png"><figcaption><b>Figure {N}.2</b> The same windows rearranged: 3D at full height on the right, the Plan tabbed with Lines · Classes · Info, the Slice tabbed with Automatic filters, History closed.</figcaption></figure>
+<p>The layout is remembered on this computer for next time. A view that is closed, or hidden behind another tab, is not drawn or updated while you work, so closing the 3D view when you do not need it makes every edit and every move faster; it catches up when it is shown again.</p>
 
 <h2>MENU</h2>
-<figure class="h60"><img src="fig/main_menu.png"><figcaption><b>Figure {N}.2</b> MENU.</figcaption></figure>
+<figure class="h60"><img src="fig/main_menu.png"><figcaption><b>Figure {N}.3</b> MENU.</figcaption></figure>
 <table>
 <tr><th>Item</th><th>Key</th><th>Does</th></tr>
 <tr><td>Project properties (information, geodetics, survey configuration, files)…</td><td><kbd>Ctrl+R</kbd></td><td><a href="#props">Project Properties</a></td></tr>
@@ -157,12 +171,13 @@
 <tr><td>Add other .clraw files to the job…</td><td></td><td><a href="#georef">Georeferencing</a></td></tr>
 <tr><td>Memory limit (points loaded at once)…</td><td></td><td><a href="#large">Large areas</a></td></tr>
 <tr><td>Remove all points (keep settings)…</td><td></td><td><a href="#georef">Georeferencing</a></td></tr>
+<tr><td>Windows</td><td></td><td>Show or hide each window; <span class="ui">Reset the window layout</span> (above).</td></tr>
 <tr><td>Keys and mouse</td><td><kbd>F1</kbd></td><td>A summary of the keys and mouse actions (<a href="#keys">Reference</a>).</td></tr>
 <tr><td>User guide (this version)</td><td><kbd>Shift+F1</kbd></td><td>This guide.</td></tr>
 </table>
 
 <h2>The tool bar</h2>
-<figure><img src="fig/toolbar.png"><figcaption><b>Figure {N}.3</b> The tool bar: tools, action, inside / outside, line list, undo / redo, rejected points, zoom, and the display settings.</figcaption></figure>
+<figure><img src="fig/toolbar.png"><figcaption><b>Figure {N}.4</b> The tool bar: tools, action, inside / outside, line list, undo / redo, rejected points, zoom, and the display settings.</figcaption></figure>
 <table>
 <tr><th>Button</th><th>Options (key)</th></tr>
 <tr><td>Hand</td><td>Pan (<kbd>Space</kbd>): drag to move the view; in the Plan, move, resize and rotate the Inspection Area.</td></tr>
@@ -183,7 +198,7 @@
 <tr><td><span class="ui">Colours</span></td><td>Colour ramp for height, intensity and range: Rainbow, Viridis, Terrain, Mint, Grey.</td></tr>
 </table>
 <p>Buttons with a small triangle in the corner hold several options. The first click on an inactive one makes it active; each further click switches to its next option. Click the corner triangle, or right-click the button, for the list:</p>
-<figure class="h30"><img src="fig/tool_options.png"><figcaption><b>Figure {N}.4</b> The option lists of the selection shape, line, action and inside / outside buttons.</figcaption></figure>
+<figure class="h30"><img src="fig/tool_options.png"><figcaption><b>Figure {N}.5</b> The option lists of the selection shape, line, action and inside / outside buttons.</figcaption></figure>
 <p>Choosing an action while the hand, ruler or i is active switches to the last selection shape, ready to draw. Hover any button for its name and key.</p>
 
 <h1 id="views"><span class="num">{N}</span>Views and navigation</h1>
@@ -455,7 +470,7 @@
 </table>
 
 <h1 id="tabs"><span class="num">{N}</span>Lines · Classes · Info and History</h1>
-<figure class="h58"><img src="fig/info_tab.png"><figcaption><b>Figure {N}.1</b> The Lines · Classes · Info tab after clicking a pole point with the i tool (the right-hand quarters widened by dragging the splitter).</figcaption></figure>
+<figure class="h58"><img src="fig/info_tab.png"><figcaption><b>Figure {N}.1</b> The Lines · Classes · Info tab after clicking a pole point with the i tool (the right-hand windows widened by dragging the line between them).</figcaption></figure>
 <table>
 <tr><th>Column</th><th>Shows and does</th></tr>
 <tr><td><span class="ui">Lines</span></td><td>One line per mapper recording, with its colour and point count. Untick to hide its points (hidden points are not edited). Right-click a line: <span class="ui">Show only this line</span>, <span class="ui">Show all lines</span>, <span class="ui">Edit only this line</span> (sets the tool bar's line list), <span class="ui">Inspection Area follows this line</span>.</td></tr>

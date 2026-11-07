@@ -9,6 +9,7 @@ Q/E down/up by the navigation step; 1 top, 2 along, 3 across, 4 oblique,
 0/Home = fit; Esc cancels a selection.
 """
 import math
+import threading
 import time
 
 import numpy as np
@@ -17,10 +18,37 @@ from ..qt import QtCore, QtGui, QtWidgets, Qt, Signal, evpos, mods
 from . import render, theme
 
 
+def _project_local(L, cam):
+    """Local float32 points (P - origin) -> screen x, y and camera depth (float32), one matrix product."""
+    R = L @ cam["M"]
+    R -= cam["t"]
+    xc, yc, zc = R[:, 0], R[:, 1], R[:, 2]
+    W, H = cam["W"], cam["H"]
+    if cam["ortho"]:
+        sx = W / 2 + xc * cam["s"]
+        sy = H / 2 - yc * cam["s"]
+    else:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            inv = cam["f"] / zc
+            sx = W / 2 + xc * inv
+            sy = H / 2 - yc * inv
+    return sx, sy, zc
+
+
+def _frame(L, col, cam, m, size, edl, strength):
+    """One picture of the first m points (pure numpy, safe in a worker thread)."""
+    sx, sy, zc = _project_local(L[:m], cam)
+    buf, depth, _nvis = render.rasterise_nearest(sx, sy, zc, col[:m], cam["W"], cam["H"], size)
+    if edl:
+        buf = render.eye_dome(buf, depth, strength)
+    return np.ascontiguousarray(buf, np.uint32)
+
+
 class CloudView3D(QtWidgets.QWidget):
     selectionMade = Signal(object, str)
     pointPicked = Signal(int)
     viewChanged = Signal()
+    _stillReady = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -60,10 +88,25 @@ class CloudView3D(QtWidgets.QWidget):
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._end)
         self._last_proj = None
+        self._L = np.zeros((0, 3), np.float32)      # P - origin in float32: half the memory traffic
+        self._origin = np.zeros(3)
+        self.shown = 0
+        # full-detail still frames are drawn in a worker thread so the window never waits for them;
+        # while moving, a reduced frame sized for ~30 frames/s is drawn at once
+        self.async_still = True
+        self._gen = 0
+        self._busy = False
+        self._again = False
+        self._stillReady.connect(self._on_still)
 
     # ---------------------------------------------------------------- data
     def set_points(self, P, col, idx, fit=False):
         self.P, self.col, self.idx = P, col, idx
+        if len(P):
+            self._origin = np.round(np.asarray(P[len(P) // 2], float), -1)
+            self._L = (P - self._origin).astype(np.float32)
+        else:
+            self._L = np.zeros((0, 3), np.float32)
         if fit:
             self.fit()
         self._dirty = True
@@ -73,6 +116,17 @@ class CloudView3D(QtWidgets.QWidget):
         self.col = col
         self._dirty = True
         self.update()
+
+    def _cam(self):
+        """Camera snapshot for _project_local: local points @ M - t = camera coordinates."""
+        eye_dir, fwd, right, up = self._basis()
+        zs = np.array([1.0, 1.0, self.zscale])
+        B = np.column_stack([right, up, fwd])
+        c = (self.center - self._origin) * zs + eye_dir * self.dist
+        W, H = max(1, self.width()), max(1, self.height())
+        return {"M": (B * zs[:, None]).astype(np.float32), "t": (c @ B).astype(np.float32), "W": W, "H": H,
+                "ortho": self.ortho, "s": (H / 2) / (self.dist * math.tan(self.fov / 2)),
+                "f": (H / 2) / math.tan(self.fov / 2)}
 
     def fit(self):
         if len(self.P) == 0:
@@ -248,44 +302,95 @@ class CloudView3D(QtWidgets.QWidget):
                 sy = H / 2 - f * yc / zc
         return sx, sy, zc
 
-    def _render(self):
-        W, H = self.width(), self.height()
-        n = len(self.P)
-        if n == 0:
-            self._img = None
-            return
-        # point budgets measured from this machine's own frame times (the points are in random order, so
-        # the first m are an even sample): about 30 frames/s while moving, at most ~0.3 s for a still frame
-        rest_max = getattr(self, "rest_max", 12_000_000)
-        m = min(n, self.lod_max) if self._interacting else min(n, rest_max)
-        t0 = time.perf_counter()
-        sx, sy, zc = self.project(self.P[:m])
-        ok = zc > 0.05
-        if not ok.all():
-            sx, sy, zc, col = sx[ok], sy[ok], zc[ok], self.col[:m][ok]
-        else:
-            col = self.col[:m]
-        depth = np.full(W * H, np.inf, np.float32)
-        buf = render.rasterise(sx, sy, -zc, col, W, H, self.point_size, depth_out=depth,
-                               dval=zc.astype(np.float32))
-        if self.edl and not self._interacting:
-            buf = render.eye_dome(buf, depth, self.edl_strength)
-        dt = max(time.perf_counter() - t0, 1e-3)
-        if m > 200_000:
-            rate = m / dt
-            self.lod_max = int(min(8e6, max(250_000, rate * 0.033)))
-            self.rest_max = int(min(40e6, max(2_000_000, rate * 0.3)))
+    def _set_image(self, buf, m):
+        H, W = buf.shape
         self.shown = m
-        self._buf = np.ascontiguousarray(buf)
-        self._depth = depth.reshape(H, W)
+        self._buf = buf
         self._img = QtGui.QImage(self._buf.data, W, H, 4 * W, QtGui.QImage.Format.Format_ARGB32)
+
+    def _learn(self, m, dt, still):
+        """Point budgets from this machine's own frame times (the points are in random order, so the first
+        m are an even sample): ~30 frames/s for moving frames (no shading), ~0.3 s for a full still frame
+        (with shading, drawn by the worker). Each kind of frame sets its own budget."""
+        if m > 200_000:
+            rate = m / max(dt, 1e-3)
+            if still:
+                self.rest_max = int(min(40e6, max(2_000_000, rate * 0.3)))
+            else:
+                self.lod_max = int(min(8e6, max(250_000, rate * 0.033)))
+
+    def _render(self, quick=None):
+        """Draw a frame now. quick: the reduced moving-frame budget (default: while interacting)."""
+        n = len(self.P)
+        if n == 0 or len(self._L) != n:
+            self._img = None
+            self.shown = 0
+            return
+        if quick is None:
+            quick = self._interacting
+        m = min(n, self.lod_max) if quick else min(n, getattr(self, "rest_max", 12_000_000))
+        t0 = time.perf_counter()
+        shade = self.edl and not self._interacting
+        buf = _frame(self._L, self.col, self._cam(), m, self.point_size, shade, self.edl_strength)
+        if not shade or not quick:
+            self._learn(m, time.perf_counter() - t0, still=not quick)
+        self._set_image(buf, m)
+
+    # ------------------------------------------------------------ still frames in a worker
+    def _kick_still(self):
+        self._gen += 1
+        if self._busy:
+            self._again = True
+            return
+        self._start_still()
+
+    def _start_still(self):
+        n = len(self.P)
+        if n == 0 or len(self._L) != n:
+            return
+        self._busy, self._again = True, False
+        snap = (self._gen, self._L, self.col, self._cam(), min(n, getattr(self, "rest_max", 12_000_000)),
+                self.point_size, self.edl, self.edl_strength)
+        threading.Thread(target=self._work, args=(snap,), daemon=True).start()
+
+    def _work(self, snap):
+        gen, L, col, cam, m, size, edl, strength = snap
+        t0 = time.perf_counter()
+        try:
+            buf = _frame(L, col, cam, m, size, edl, strength)
+        except Exception:       # noqa: BLE001  (points replaced under us: the next frame redraws)
+            buf = None
+        try:
+            self._stillReady.emit((gen, buf, m, time.perf_counter() - t0))
+        except RuntimeError:    # the view was deleted meanwhile
+            pass
+
+    def _on_still(self, res):
+        gen, buf, m, dt = res
+        self._busy = False
+        if buf is not None and gen == self._gen and not self._interacting and \
+                buf.shape == (max(1, self.height()), max(1, self.width())):
+            self._learn(m, dt, still=True)
+            self._set_image(buf, m)
+            self.update()
+        elif self._again or (gen != self._gen and not self._interacting):
+            self._start_still()
 
     def paintEvent(self, e):
         p = QtGui.QPainter(self)
         p.fillRect(self.rect(), QtGui.QColor(*theme.VIEW_BG))
         if self._dirty or self._img is None or self._img.width() != self.width() or \
                 self._img.height() != self.height():
-            self._render()
+            if self.async_still and not self._interacting:
+                # a quick frame now (with shading), the full one from the worker when it is ready
+                self._render(quick=True)
+                if self.shown < min(len(self.P), getattr(self, "rest_max", 12_000_000)):
+                    self._kick_still()
+                else:
+                    self._gen += 1          # nothing more to draw: drop any older worker result
+            else:
+                self._gen += 1
+                self._render()
             self._dirty = False
         if self._img is not None:
             p.drawImage(0, 0, self._img)
@@ -510,7 +615,7 @@ class CloudView3D(QtWidgets.QWidget):
     def pick(self, x, y, radius=6):
         if len(self.P) == 0:
             return -1
-        sx, sy, zc = self.project(self.P)
+        sx, sy, zc = _project_local(self._L, self._cam())
         d2 = (sx - x) ** 2 + (sy - y) ** 2
         cand = np.flatnonzero((d2 < radius * radius) & (zc > 0.05))
         if len(cand) == 0:
@@ -519,7 +624,7 @@ class CloudView3D(QtWidgets.QWidget):
 
     def selection_mask(self, poly):
         W, H = self.width(), self.height()
-        sx, sy, zc = self.project(self.P)
+        sx, sy, zc = _project_local(self._L, self._cam())
         img = QtGui.QImage(W, H, QtGui.QImage.Format.Format_Grayscale8)
         img.fill(0)
         p = QtGui.QPainter(img)

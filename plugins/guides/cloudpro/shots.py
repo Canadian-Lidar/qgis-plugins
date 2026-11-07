@@ -76,6 +76,21 @@ def grab(w, name, scale=2):
     return harness.grab(w, out(name), scale)
 
 
+def grab_union(ws, name, top=None):
+    """The bounding box of several parts of the window (e.g. the Plan and Slice windows together)."""
+    top = top or panel
+    flush()
+    tmp = os.path.join(FIG, "_whole.png")
+    harness.grab(top, tmp)
+    ps = [(w.mapTo(top, QtCore.QPoint(0, 0)), w) for w in ws]
+    x0 = min(p.x() for p, w in ps)
+    y0 = min(p.y() for p, w in ps)
+    x1 = max(p.x() + w.width() for p, w in ps)
+    y1 = max(p.y() + w.height() for p, w in ps)
+    Image.open(tmp).crop((2 * x0, 2 * y0, 2 * x1, 2 * y1)).save(out(name))
+    os.remove(tmp)
+
+
 def grab_in(w, name, top=None):
     """A part of the CloudPro window, cut out of a grab of the whole window, so it keeps the window's
     backgrounds (a part rendered on its own has transparent ones)."""
@@ -416,11 +431,11 @@ def zoom_slice(width_m=36.0):
 win.slice_pane.thick.setValue(1.0)
 win._slice_at(PX, PY)
 zoom_slice()
-grab_in(win.slice_pane, "slice.png")
+grab_in(win.docks["slice"], "slice.png")
 win.slice_pane._rotate()
 win._slice_at(PX, PY)
 zoom_slice(60.0)
-grab_in(win.slice_pane, "slice_profile.png")
+grab_in(win.docks["slice"], "slice_profile.png")
 win.slice_pane._rotate()
 win._slice_at(PX, PY)
 zoom_slice()
@@ -431,7 +446,7 @@ cor = rect_corners(win.box["cx"], win.box["cy"], win.box["length"], win.box["wid
 mx, my = (cor[1] + cor[2]) / 2
 sx, sy = win.plan.to_screen(mx, my)
 mouse(win.plan, "move", sx, sy)
-grab_in(win.plan_pane, "plan.png")
+grab_in(win.docks["plan"], "plan.png")
 
 # ---- Plan grid: Coverage against a target density (the whole project, 1 m cells)
 mouse(win.plan, "move", 5, 5)
@@ -439,7 +454,7 @@ win.sp_cell.setValue(1.0)
 win.plan_pane.grid.setCurrentText("Coverage")
 win.plan_pane.target.setValue(100)
 win.plan.zoom_project()
-grab_in(win.plan_pane, "coverage.png")
+grab_in(win.docks["plan"], "coverage.png")
 win.plan_pane.grid.setCurrentText("Mean height")
 win.sp_cell.setValue(0.5)
 win.plan.zoom_box()
@@ -468,17 +483,17 @@ zoom_slice()
 assert len(win.ps) and int(best.max()) < len(win.ps)
 
 # ---- 3D view and its navigation arrows
-grab_in(win.v3d_pane, "view3d.png")
+grab_in(win.docks["3d"], "view3d.png")
 harness.grab(win.v3d, os.path.join(FIG, "nav_arrows.png"), scale=4)
 MADE.append("nav_arrows.png")
 Image.open(os.path.join(FIG, "nav_arrows.png")).crop((0, 0, 4 * 66, 4 * 66)).save(os.path.join(FIG, "nav_arrows.png"))
 
 # ---- automatic filters: feature extraction, previewed and accepted
 fp = win.filters
-win.tabs.setCurrentWidget(fp)
+win.show_dock("filters")
 fp.cmb.setCurrentIndex([g.name for g in fp.groups].index("Feature extraction (road and street furniture)"))
 fp.cmb_f.setCurrentIndex(5)
-grab_in(win.tabs, "filters.png")
+grab_in(win.docks["filters"], "filters.png")
 win.plan_pane.colour.setCurrentText("Classification")
 win.v3d_pane.colour.setCurrentText("Classification")
 win.slice_pane.link.setCurrentIndex(win.slice_pane.link.findData("plan"))
@@ -494,8 +509,8 @@ print("accept:", fp.lbl_status.text())
 # ---- colours: Plan by classification, Slice linked to the Plan, 3D by intensity
 win.v3d_pane.colour.setCurrentText("Intensity")
 harness.settle(10)
-grab_in(win.left, "colours.png")
-grab_in(win.v3d_pane, "view3d_intensity.png")
+grab_union([win.docks["plan"], win.docks["slice"]], "colours.png")
+grab_in(win.docks["3d"], "view3d_intensity.png")
 win.v3d_pane.colour.setCurrentText("Classification")
 
 # ---- a preview that rejects and re-accepts points
@@ -505,7 +520,7 @@ fp.btn_prev.setChecked(True)
 harness.wait(lambda: win.preview is not None or "failed" in fp.lbl_status.text(), 900)
 harness.settle(10)
 print("preview 2:", fp.lbl_status.text())
-grab_in(win.plan_pane, "preview_reject.png")
+grab_in(win.docks["plan"], "preview_reject.png")
 fp.btn_prev.setChecked(False)
 harness.settle(6)
 
@@ -537,7 +552,7 @@ x0, y0 = sv.to_screen(PV - 1.0, ZHI + 0.5)
 x1, y1 = sv.to_screen(PV + 1.0, ZLO + 0.3)
 mask = sv.selection_mask([(x0, y0), (x1, y1)], "rect")
 win.edit_selection(sv, mask)
-grab_in(win.slice_pane, "select.png")
+grab_in(win.docks["slice"], "select.png")
 expect("menu", "selection_menu.png", open_sub="Selection")
 mouse(sv, "press", (x0 + x1) / 2, (y0 + y1) / 2, Qt.RightButton)
 win.clear_selection()
@@ -551,24 +566,24 @@ for x, y in pts:
     mouse(sv, "press", x, y, Qt.LeftButton)
     mouse(sv, "release", x, y, Qt.LeftButton)
 mouse(sv, "move", *sv.to_screen(PV + 12, zg - 0.3))
-grab_in(win.slice_pane, "line_tool.png")
+grab_in(win.docks["slice"], "line_tool.png")
 win.set_tool("measure")
 bx, by = sv.to_screen(PV, ZLO)
 tx, ty = sv.to_screen(PV, ZHI)
 for x, y in ((bx, by), (tx, ty)):
     mouse(sv, "press", x, y, Qt.LeftButton)
     mouse(sv, "release", x, y, Qt.LeftButton)
-grab_in(win.slice_pane, "measure.png")
+grab_in(win.docks["slice"], "measure.png")
 win.set_tool("pan")
 
-# ---- Lines · Classes · Info, History (the right-hand quarters made wider, as by dragging the splitter)
-win.outer.setSizes([560, 940])
+# ---- Lines · Classes · Info, History (the right-hand windows made wider, as by dragging the edge)
+win.resizeDocks([win.docks["plan"], win.docks["3d"]], [560, 940], Qt.Horizontal)
 j = int(best[np.argmax(win.ps.z[best])])
 win.show_point(j)
-grab_in(win.tabs, "info_tab.png")
-win.tabs.setCurrentWidget(win.history)
-grab_in(win.tabs, "history.png")
-win.outer.setSizes([750, 750])
+grab_in(win.docks["info"], "info_tab.png")
+win.show_dock("history")
+grab_in(win.docks["history"], "history.png")
+win.resizeDocks([win.docks["plan"], win.docks["3d"]], [750, 750], Qt.Horizontal)
 
 # ---- Project Properties
 win.show_properties()

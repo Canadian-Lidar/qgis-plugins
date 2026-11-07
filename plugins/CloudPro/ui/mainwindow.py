@@ -105,7 +105,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # =================================================================== build
     def _build(self):
-        self.setMenuWidget(self._header())
+        self._header()
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self._tools())
         self.plan_pane = PlanPane()
         self.slice_pane = SlicePane()
@@ -153,39 +153,129 @@ class MainWindow(QtWidgets.QMainWindow):
         self.classes_w.itemChanged.connect(self._class_toggled)
         self.history = QtWidgets.QListWidget()
         self.history.setFont(theme.mono(10))
-        self.tabs = QtWidgets.QTabWidget()
-        self.tabs.addTab(self.filters, "AUTOMATIC FILTERS")
-        self.tabs.addTab(self.infop, "LINES · CLASSES · INFO")
-        self.tabs.addTab(self.history, "HISTORY")
-
-        self.left = chrome.Splitter(Qt.Orientation.Vertical)
-        self.left.addWidget(self.plan_pane)
-        self.left.addWidget(self.slice_pane)
-        self.right = chrome.Splitter(Qt.Orientation.Vertical)
-        self.right.addWidget(self.v3d_pane)
-        self.right.addWidget(self.tabs)
-        self.outer = chrome.Splitter(Qt.Orientation.Horizontal)
-        self.outer.addWidget(self.left)
-        self.outer.addWidget(self.right)
-        for s in (self.left, self.right, self.outer):
-            s.setHandleWidth(3)
-            s.setChildrenCollapsible(False)
-        self.left.setSizes([500, 500])
-        self.right.setSizes([500, 500])
-        self.outer.setSizes([840, 840])
-        host = QtWidgets.QWidget()
-        hl = QtWidgets.QVBoxLayout(host)
-        hl.setContentsMargins(0, 0, 0, 0)
-        hl.setSpacing(0)
+        # every view and panel is its own dock window: move, resize, float, tab together or close
+        self.setDockOptions(QtWidgets.QMainWindow.DockOption.AnimatedDocks |
+                            QtWidgets.QMainWindow.DockOption.AllowNestedDocks |
+                            QtWidgets.QMainWindow.DockOption.AllowTabbedDocks |
+                            QtWidgets.QMainWindow.DockOption.GroupedDragging)
+        self.setTabPosition(Qt.DockWidgetArea.AllDockWidgetAreas, QtWidgets.QTabWidget.TabPosition.North)
+        self.docks = {}
+        self._view_vis = {"plan": True, "slice": True, "3d": True}
+        self._view_stale = set()
+        for key, title, pane in (("plan", "PLAN", self.plan_pane), ("slice", "SLICE", self.slice_pane),
+                                 ("3d", "3D", self.v3d_pane)):
+            pane.layout().removeWidget(pane.head)           # the pane's header becomes the dock's title bar
+            self._make_dock(key, title, pane, pane.head, pane.hl)
+        for key, title, w in (("filters", "AUTOMATIC FILTERS", self.filters),
+                              ("info", "LINES · CLASSES · INFO", self.infop), ("history", "HISTORY", self.history)):
+            head = chrome.Strip()
+            head.setFixedHeight(34)
+            hl = QtWidgets.QHBoxLayout(head)
+            hl.setContentsMargins(8, 2, 6, 2)
+            hl.setSpacing(4)
+            lab = QtWidgets.QLabel(title)
+            lab.setFont(theme.ui_font(13))
+            lab.setStyleSheet("color: %s; letter-spacing: 1px;" % theme.ACCENT)
+            hl.addWidget(lab)
+            hl.addStretch(1)
+            self._make_dock(key, title, w, head, hl)
+        self._default_layout()
+        self.top_host = QtWidgets.QWidget()
+        tl = QtWidgets.QVBoxLayout(self.top_host)
+        tl.setContentsMargins(0, 0, 0, 0)
+        tl.setSpacing(0)
+        tl.addWidget(self.header)
         from .workflow import WorkflowStrip
         self.workflow = WorkflowStrip({"georef": self.georeference,
-                                       "clean": lambda: self.tabs.setCurrentWidget(self.filters),
+                                       "clean": lambda: self.show_dock("filters"),
                                        "publish": self._publish_or_export})
         self.workflow.hide()                    # shown when a project is open
-        hl.addWidget(self.workflow)
-        hl.addWidget(self.outer, 1)
-        hl.addWidget(self._status_strip())
-        self.setCentralWidget(host)
+        tl.addWidget(self.workflow)
+        self.setMenuWidget(self.top_host)
+        sb = QtWidgets.QStatusBar()
+        sb.setSizeGripEnabled(False)
+        sb.setContentsMargins(0, 0, 0, 0)
+        sb.setStyleSheet("QStatusBar { padding: 0; margin: 0; } QStatusBar::item { border: 0; }")
+        sb.addWidget(self._status_strip(), 1)
+        self.setStatusBar(sb)
+        self._restore_layout()
+        self._shortcuts()
+        self._apply_tool()
+
+    # ------------------------------------------------------------------ dock windows
+    LAYOUT_VERSION = 1
+
+    def _make_dock(self, key, title, widget, head, head_layout):
+        d = QtWidgets.QDockWidget(title, self)
+        d.setObjectName("cloudpro_dock_" + key)            # names are what saveState / restoreState match
+        d.setFeatures(QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetMovable |
+                      QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetFloatable |
+                      QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetClosable)
+        d.setWidget(widget)
+        fl = chrome.IconButton("float", "Float this window on its own, or dock it again (or double click "
+                               "the title bar). Drag the title bar onto another window to tab them together.",
+                               size=26)
+        fl.clicked.connect(lambda: d.setFloating(not d.isFloating()))
+        cl = chrome.IconButton("close", "Close this window (MENU > Windows brings it back)", size=26)
+        cl.clicked.connect(d.close)
+        head_layout.addSpacing(4)
+        head_layout.addWidget(fl)
+        head_layout.addWidget(cl)
+        head.setToolTip("Drag to move this window; drop it on another window's title to tab them together")
+        d.setTitleBarWidget(head)
+        if key in self._view_vis:
+            d.visibilityChanged.connect(lambda on, k=key: self._dock_visible(k, on))
+        self.docks[key] = d
+        return d
+
+    def _default_layout(self):
+        """Plan over Slice on the left; 3D over the tabbed panels (filters, lines, history) on the right."""
+        D = self.docks
+        for d in D.values():
+            d.setFloating(False)
+            d.show()
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, D["plan"])
+        self.splitDockWidget(D["plan"], D["slice"], Qt.Orientation.Vertical)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, D["3d"])
+        self.splitDockWidget(D["3d"], D["filters"], Qt.Orientation.Vertical)
+        self.tabifyDockWidget(D["filters"], D["info"])
+        self.tabifyDockWidget(D["info"], D["history"])
+        D["filters"].raise_()
+        self.resizeDocks([D["plan"], D["3d"]], [840, 840], Qt.Orientation.Horizontal)
+        self.resizeDocks([D["plan"], D["slice"]], [500, 500], Qt.Orientation.Vertical)
+        self.resizeDocks([D["3d"], D["filters"]], [500, 500], Qt.Orientation.Vertical)
+
+    def reset_layout(self):
+        self._default_layout()
+        self.status("Window layout reset", 4000)
+
+    def _restore_layout(self):
+        try:
+            from qgis.PyQt.QtCore import QSettings
+            st = QSettings().value("CloudPro/window_layout")
+            if st:
+                self.restoreState(st, self.LAYOUT_VERSION)
+        except Exception:       # noqa: BLE001  (a layout from another version: keep the default)
+            pass
+
+    def save_layout(self):
+        try:
+            from qgis.PyQt.QtCore import QSettings
+            QSettings().setValue("CloudPro/window_layout", self.saveState(self.LAYOUT_VERSION))
+        except Exception:       # noqa: BLE001
+            pass
+
+    def show_dock(self, key):
+        d = self.docks[key]
+        d.show()
+        d.raise_()
+
+    def _dock_visible(self, key, on):
+        """A view that is closed or behind another tab is not drawn or refreshed; it catches up when shown."""
+        self._view_vis[key] = on
+        if on and key in self._view_stale:
+            self._view_stale.discard(key)
+            QtCore.QTimer.singleShot(0, lambda: self.refresh_views(which=(key,)))
         self._shortcuts()
         self._apply_tool()
 
@@ -256,10 +346,19 @@ class MainWindow(QtWidgets.QMainWindow):
                             ("Add other .clraw files to the job...", self.import_lines, ""),
                             ("Memory limit (points loaded at once)...", self.set_max_load, ""),
                             ("Remove all points (keep settings)...", self.reset_points, ""),
+                            ("Windows", "windows", ""),
                             (None, None, None), ("Keys and mouse", self.show_help, "F1"),
                             ("User guide (this version)", self.open_guide, "Shift+F1")):
             if txt is None:
                 m.addSeparator()
+                continue
+            if fn == "windows":
+                w = m.addMenu("Windows")
+                for k in ("plan", "slice", "3d", "filters", "info", "history"):
+                    w.addAction(self.docks[k].toggleViewAction())
+                w.addSeparator()
+                w.addAction("Reset the window layout", self.reset_layout)
+                theme.dark_menu(w)
                 continue
             a = m.addAction(txt, fn)
             if sc:
@@ -643,6 +742,7 @@ class MainWindow(QtWidgets.QMainWindow):
             t.join(wait_s)
         still = t is not None and t.is_alive()
         self._closing = still or self._closing
+        self.save_layout()
         try:
             if not still:
                 self.save_project(quiet=True)
@@ -1659,6 +1759,11 @@ class MainWindow(QtWidgets.QMainWindow):
         return col
 
     def refresh_views(self, fit=False, which=("plan", "slice", "3d")):
+        vis_now = getattr(self, "_view_vis", {})
+        hidden = [k for k in which if not vis_now.get(k, True)]
+        if hidden:
+            self._view_stale.update(hidden)
+            which = tuple(k for k in which if k not in hidden)
         ps = self.ps
         cols = {}
 
@@ -1985,7 +2090,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                  st, ("(" + ", ".join(why) + ")") if why else "") +
                ("dz       %+.3f m\n" % (ps.dz[j] * 1e-3) if ps.dz[j] else ""))
         self.info.setPlainText(txt + "\n" + self._area_text())
-        self.tabs.setCurrentWidget(self.infop)
+        self.show_dock("info")
 
     def _area_text(self):
         ps = self.ps
