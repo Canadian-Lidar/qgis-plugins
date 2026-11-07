@@ -44,6 +44,7 @@ FILE_COLOURS = np.array([render.hex_rgb(c) for c in ("#00e5aa", "#3ab4f2", "#9b7
 class Bridge(QtCore.QObject):
     progress = Signal(float, str)
     done = Signal(object, object)
+    grids = Signal(object)                  # tile keys whose grids a worker thread rebuilt
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -93,6 +94,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bridge = Bridge()
         self.bridge.progress.connect(self._on_progress)
         self.bridge.done.connect(self._on_done)
+        self.bridge.grids.connect(self._grids_rebuilt)
+        self._grid_worker = None
         self._build()
         theme.apply(self)
         self._grid_timer = QtCore.QTimer(self)
@@ -637,6 +640,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                "first; two editors would overwrite each other's edits." % ex)
                 return
         if self.project is not None and not same:
+            self._wait_grids()
             self.save_project(quiet=True)
             self.project.store.close()
             if self._edit_lock is not None:
@@ -744,6 +748,7 @@ class MainWindow(QtWidgets.QMainWindow):
         still = t is not None and t.is_alive()
         self._closing = still or self._closing
         self.save_layout()
+        self._wait_grids()
         try:
             if not still:
                 self.save_project(quiet=True)
@@ -2072,23 +2077,43 @@ class MainWindow(QtWidgets.QMainWindow):
             self.after_edit()
 
     def _rebuild_dirty_grids(self):
-        """Grids of tiles edited by hand, a few at a time (at most ~120 ms per tick, so the window stays
-        responsive; the tiled filter runs rebuild theirs in the worker)."""
+        """Grids of tiles edited by hand, rebuilt in a worker thread (a tile of 10 M points takes about half
+        a second, which would freeze the window); the Plan redraws those tiles when the worker is done. The
+        tiled filter runs rebuild theirs in their own worker."""
         st = self.project.store if self.project else None
         if st is None or self._busy:
             return
         d = getattr(st, "dirty_tiles", set())
-        if not d:
+        if not d or (self._grid_worker is not None and self._grid_worker.is_alive()):
             return
-        t0 = time.time()
-        keys = []
-        for k in list(d):
-            st.build_grid(k)
-            d.discard(k)
-            keys.append(k)
-            if time.time() - t0 > 0.12:
-                break
-        self.plan.invalidate(keys)
+        keys = list(d)
+        d.difference_update(keys)              # edits made meanwhile mark their tiles again
+
+        def work(keys=keys, st=st):
+            done = []
+            for k in keys:
+                try:
+                    st.build_grid(k)
+                    done.append(k)
+                except Exception:       # noqa: BLE001  (a tile changing under us: rebuilt on the next tick)
+                    st.dirty_tiles = getattr(st, "dirty_tiles", set()) | {k}
+            try:
+                self.bridge.grids.emit(done)
+            except RuntimeError:        # the window is gone
+                pass
+        import threading
+        self._grid_worker = threading.Thread(target=work, daemon=True, name="CloudPro grids")
+        self._grid_worker.start()
+
+    def _grids_rebuilt(self, keys):
+        if keys and self.project is not None:
+            self.plan.invalidate(keys)
+
+    def _wait_grids(self, timeout=30.0):
+        """Let a running grid rebuild finish (before a job, a save or closing)."""
+        w = self._grid_worker
+        if w is not None and w.is_alive():
+            w.join(timeout)
 
     def _refresh_history(self):
         if self.project is None:
@@ -2429,6 +2454,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._busy:
             theme.msg_info(self, "CloudPro", "Another task is still running.")
             return
+        self._wait_grids()                       # a job may replace or close the store
         self._busy = True
         self._busy_tag = tag
         self._lock_actions(True)

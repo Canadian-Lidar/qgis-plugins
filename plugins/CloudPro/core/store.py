@@ -296,37 +296,48 @@ class Store:
                 self._close_mm(k)
 
     # -- overview grids -------------------------------------------------------------
-    def build_grid(self, key):
+    def grid_stats(self, key):
+        """Per 0.5 m cell of a tile, over its accepted points: count, rejected count, mean / min / max height,
+        mean intensity (dict of (n, n) arrays). Cell indices come straight from the integer millimetres and
+        each statistic is one pass over the accepted points only."""
         a = self.tile_array(key)
         i, j = parse_key(key)
         n = int(round(self.tile / GRID_CELL))
         out = {"n": n}
         if len(a) == 0:
-            np.savez(self.grid_path(key), **out)
-            return
-        x = a["x"] * 1e-3 - i * self.tile
-        y = a["y"] * 1e-3 - j * self.tile
-        z = a["z"] * 1e-3
-        cx = np.clip((x / GRID_CELL).astype(np.int64), 0, n - 1)
-        cy = np.clip((y / GRID_CELL).astype(np.int64), 0, n - 1)
-        cell = cy * n + cx
+            return out
+        cmm = int(round(GRID_CELL * 1000))
+        cx = np.clip((a["x"] - int(round(i * self.tile * 1000))) // cmm, 0, n - 1)
+        cy = np.clip((a["y"] - int(round(j * self.tile * 1000))) // cmm, 0, n - 1)
+        cell = (cy * n + cx).astype(np.int64)
         acc = (a["flag"] & REJECTED) == 0
         N = n * n
-        cnt = np.bincount(cell[acc], minlength=N)
-        rej = np.bincount(cell[~acc], minlength=N)
-        zs = np.bincount(cell[acc], z[acc], minlength=N)
-        ins = np.bincount(cell[acc], a["i"][acc].astype(float), minlength=N)
+        rej = np.bincount(cell[~acc], minlength=N) if not acc.all() else np.zeros(N, np.int64)
+        ca = cell[acc]
+        za = a["z"][acc].astype(np.float64) * 1e-3
+        cnt = np.bincount(ca, minlength=N)
+        zs = np.bincount(ca, za, minlength=N)
+        ins = np.bincount(ca, a["i"][acc], minlength=N)
         zmax = np.full(N, -np.inf)
         zmin = np.full(N, np.inf)
-        np.maximum.at(zmax, cell[acc], z[acc])
-        np.minimum.at(zmin, cell[acc], z[acc])
+        np.maximum.at(zmax, ca, za)
+        np.minimum.at(zmin, ca, za)
         with np.errstate(invalid="ignore", divide="ignore"):
             zmean = zs / cnt
             imean = ins / cnt
         out.update(count=cnt.reshape(n, n).astype(np.uint32), rej=rej.reshape(n, n).astype(np.uint32),
                    zmean=zmean.reshape(n, n).astype(np.float32), zmin=zmin.reshape(n, n).astype(np.float32),
                    zmax=zmax.reshape(n, n).astype(np.float32), imean=imean.reshape(n, n).astype(np.float32))
-        np.savez(self.grid_path(key), **out)
+        return out
+
+    def build_grid(self, key):
+        """Write a tile's grid (written to a temporary file first, so a reader never sees half a file;
+        safe to call from a worker thread)."""
+        out = self.grid_stats(key)
+        p = self.grid_path(key)
+        tmp = p[:-4] + ".tmp.npz"
+        np.savez(tmp, **out)
+        os.replace(tmp, p)
 
     def load_grid(self, key):
         p = self.grid_path(key)

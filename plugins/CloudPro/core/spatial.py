@@ -158,6 +158,41 @@ def disk(r):
     return (x * x + y * y) <= r * r
 
 
+def _disk_rows(r):
+    """Half-widths of the rows of disk(r): row dy spans |dx| <= w[dy + r]."""
+    r = int(max(1, r))
+    dy = np.arange(-r, r + 1)
+    return dy, np.floor(np.sqrt(np.maximum(r * r - dy * dy, 0)) + 1e-9).astype(int)
+
+
+def _disk_morph(G, r, op):
+    """Grey erosion (op 'min') or dilation ('max') of G by disk(r), identical to scipy.ndimage
+    grey_erosion / grey_dilation with footprint=disk(r) and mode 'reflect': the disk is cut into rows, each
+    row a 1-D running min / max (whose cost does not grow with its length), and the rows are combined with
+    shifts. O(r) passes instead of O(r^2) comparisons per cell."""
+    from scipy import ndimage
+    r = int(max(1, r))
+    f1 = ndimage.minimum_filter1d if op == "min" else ndimage.maximum_filter1d
+    comb = np.minimum if op == "min" else np.maximum
+    P = np.pad(G, r, mode="symmetric")                  # scipy 'reflect' == numpy 'symmetric'
+    ny, nx = G.shape
+    dy, w = _disk_rows(r)
+    out = None
+    rows = {}
+    for d, half in zip(dy, w):
+        R = rows.get(half)
+        if R is None:
+            R = rows[half] = f1(P, size=2 * half + 1, axis=1, mode="nearest")
+        part = R[r + d:r + d + ny, r:r + nx]
+        out = part.copy() if out is None else comb(out, part, out=out)
+    return out
+
+
+def disk_opening(G, r):
+    """scipy.ndimage.grey_opening(G, footprint=disk(r)), much faster for large r."""
+    return _disk_morph(_disk_morph(G, r, "min"), r, "max")
+
+
 def parse_set(text, offset=0):
     """'1,2,4-6' -> set of ints (minus offset)."""
     out = set()
