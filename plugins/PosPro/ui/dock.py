@@ -344,6 +344,12 @@ class DataPage(Page):
         row("IMU (packet 28)", "%s samples at %.0f Hz; %s gaps" % (ex.get("imu_samples"), float(ex.get("imu_rate_hz", 0)),
                                                                  ex.get("imu_gaps", "0")),
             warn=int(ex.get("imu_gaps", "0") or 0) > 0)
+        miss = float(ex.get("imu_missing_pct", "0") or 0)
+        if miss >= 2.0:
+            row("", "%.0f%% of the IMU data is missing (longest hole %.1f s). The recording lost Certus data: "
+                    "inertial processing bridges each hole on the IMU's last motion, so results are poorer "
+                    "than the data allow. Check the Certus link on the mapper." % (
+                        miss, float(ex.get("imu_longest_gap_s", "0") or 0)), True)
         if int(ex.get("imu_before_time_valid", "0") or 0):
             row("", "%s IMU samples before GNSS time was valid were skipped" % ex.get("imu_before_time_valid"))
         if int(ex.get("imu_pairing_lag", "0") or 0):

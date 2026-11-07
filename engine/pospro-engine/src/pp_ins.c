@@ -826,7 +826,7 @@ int cmd_ins(int argc, char **argv)
     double facc[3] = {0}, wacc[3] = {0}, dtacc = 0;
     int nacc = 0, last_status = PPST_NONE, last_ns = 0;
     double last_ratio = 0;
-    long gi = 0, ngnss = 0, nused = 0, nzupt = 0, nout = 0, nfix = 0, n_short_gaps = 0;
+    long gi = 0, ngnss = 0, nused = 0, nzupt = 0, nout = 0, nfix = 0, n_short_gaps = 0, n_realign = 0;
     int nrej = 0;
     char err[512];
 
@@ -1113,6 +1113,54 @@ int cmd_ins(int argc, char **argv)
                     PK(IR + i, IR + i) += 0.01 * dt * dt;
                 }
                 pp_warn("IMU data gap of %.1f s at GPS %.1f", fabs(dt), ra.t);
+                /* After a long gap the vehicle may have turned (e.g. it turned
+                 * round between two survey lines): carrying the old attitude
+                 * with its small covariance leaves the heading up to 180 deg
+                 * wrong for the rest of the pass, which linear updates cannot
+                 * correct. Start again from the Certus state (packet 20) at
+                 * the first sample after the gap, as the initial alignment does. */
+                {
+                    const rt_rec_t *q = rt_near(&rt, rb.t, 0.5);
+                    if (q && (q->filt_status & 0x02) && (q->filt_status & 0x01)) {
+                        double l3[3] = {q->lat, q->lon, q->h}, vn[3] = {q->vel[0], q->vel[1], q->vel[2]};
+                        double rpy[3] = {q->att[0], q->att[1], q->att[2]}, Cne[9], Cbn[9], D[9], A[9], B[9];
+                        double psd = fmax(fmax(q->sd[0], q->sd[1]), q->sd[2]) + 0.5;
+                        double rsd = o.rp0, hsd = o.hdg0;
+                        int a2, b2, have_h = (q->filt_status & 0x04) != 0;
+                        if (have_h && (q->filt_status & 0x0400))
+                            hsd = fmin(hsd, cfg_num(&cfg, "init.heading_sd_dual_deg", 0.5) * D2R);
+                        if (!have_h) {
+                            /* no Certus heading: the course over ground (forward travel) */
+                            rpy[2] = atan2(vn[1], vn[0]);
+                            hsd = fmax(o.hdg0, 5.0 * D2R);
+                        }
+                        pp_Cne(q->lat, q->lon, Cne);
+                        pp_euler2C(rpy[0], rpy[1], rpy[2], Cbn);
+                        m3_mul(Cne, Cbn, s.C);
+                        pp_llh2ecef(l3, s.r);
+                        m3_vec(Cne, vn, s.v);
+                        for (a2 = 0; a2 < 9; a2++)
+                            for (b2 = 0; b2 < NMAX; b2++) { PK(a2, b2) = 0; PK(b2, a2) = 0; }
+                        for (i = 0; i < 3; i++) {
+                            PK(IR + i, IR + i) = psd * psd;
+                            PK(IV + i, IV + i) = o.vel0 * o.vel0;
+                        }
+                        memset(D, 0, sizeof(D));
+                        D[0] = D[4] = rsd * rsd; D[8] = hsd * hsd;
+                        m3_mul(Cne, D, A);
+                        m3_mulT(A, Cne, B);
+                        for (a2 = 0; a2 < 3; a2++) for (b2 = 0; b2 < 3; b2++) PK(IA + a2, IA + b2) = B[a2*3 + b2];
+                        have_lp = 0;
+                        n_realign++;
+                        pp_info("%s pass re-aligned after the gap at GPS %.3f: roll %.2f pitch %.2f heading %.2f deg",
+                                dir > 0 ? "forward" : "backward", rb.t, rpy[0]*R2D, rpy[1]*R2D, rpy[2]*R2D);
+                    } else {
+                        /* nothing to align on: the attitude is unknown after the gap */
+                        for (i = 0; i < 3; i++) PK(IA + i, IA + i) += (30.0 * D2R) * (30.0 * D2R);
+                        pp_warn("no Certus attitude after the IMU gap at GPS %.1f: heading may be wrong until "
+                                "the vehicle moves", rb.t);
+                    }
+                }
                 s.t = rb.t;
                 tlast_cov = s.t;
                 continue;
@@ -1273,6 +1321,7 @@ int cmd_ins(int argc, char **argv)
     pp_result("gnss_fixed", "%ld", nfix);
     pp_result("zupt_updates", "%ld", nzupt);
     pp_result("imu_short_gaps", "%ld", n_short_gaps);
+    pp_result("imu_gap_realigned", "%ld", n_realign);
     pp_result("filter_states_refused", "%ld", n_amb_full);
     {
         int kp = kf_find_amb(&kf, 0, NHC_MIS_P), ky = kf_find_amb(&kf, 0, NHC_MIS_Y);
