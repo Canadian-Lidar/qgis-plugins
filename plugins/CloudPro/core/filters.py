@@ -19,6 +19,7 @@ import math
 
 import numpy as np
 
+from . import engine
 from . import spatial as sp
 from .store import REASONS, REJ_AUTO, REJ_MANUAL, REJ_ORIG, REJECTED
 
@@ -814,17 +815,33 @@ class VerticalPlane(Filter):
             best = (0, None)
             sample = idx if len(idx) < 300000 else rng.choice(idx, 300000, replace=False)
             P2 = pts[sample, :2]
-            for _it in range(300):
-                a, b = rng.choice(len(sample), 2, replace=False)
-                d = P2[b] - P2[a]
-                L = np.hypot(*d)
-                if L < 0.5:
-                    continue
-                nrm = np.array([-d[1], d[0]]) / L
-                dist = np.abs((P2 - P2[a]) @ nrm)
-                cnt = int((dist < thick / 2).sum())
-                if cnt > best[0]:
-                    best = (cnt, (nrm, float(P2[a] @ nrm)))
+            if engine.available() and P2.dtype == np.float32:
+                # the same 300 random draws, scored together by the engine on every core
+                cand = []
+                for _it in range(300):
+                    a, b = rng.choice(len(sample), 2, replace=False)
+                    d = P2[b] - P2[a]
+                    L = np.hypot(*d)
+                    if L >= 0.5:
+                        cand.append((a, np.array([-d[1], d[0]]) / L))
+                if cand:
+                    cnts = engine.line_counts(P2, P2[[a for a, _n in cand]], np.array([n for _a, n in cand]),
+                                              thick / 2)
+                    for (a, nrm), cnt in zip(cand, cnts):
+                        if cnt > best[0]:
+                            best = (int(cnt), (nrm, float(P2[a] @ nrm)))
+            else:
+                for _it in range(300):
+                    a, b = rng.choice(len(sample), 2, replace=False)
+                    d = P2[b] - P2[a]
+                    L = np.hypot(*d)
+                    if L < 0.5:
+                        continue
+                    nrm = np.array([-d[1], d[0]]) / L
+                    dist = np.abs((P2 - P2[a]) @ nrm)
+                    cnt = int((dist < thick / 2).sum())
+                    if cnt > best[0]:
+                        best = (cnt, (nrm, float(P2[a] @ nrm)))
             if best[1] is None:
                 break
             nrm, off = best[1]
@@ -1263,7 +1280,14 @@ class DynamicObjects(Filter):
         keys_parts, cnt_parts = [], []
         chunk = max(1, int(3_000_000 / max(1.0, Lmax.max() / step)))
         rl = ctx.ps.line[rays].astype(np.int64)
-        for s in range(0, len(rays), chunk):
+        if engine.available() and len(rays):
+            # the C engine marches the rays on every core and counts in a hash table (same keys and counts)
+            k_, c_ = engine.ray_count(o, u, Lmax, rl, step, lo, vs, dims, lid_bits)
+            keys_parts, cnt_parts = [k_], [c_]
+            rays_py = range(0)
+        else:
+            rays_py = range(0, len(rays), chunk)
+        for s in rays_py:
             e = slice(s, s + chunk)
             ns = np.ceil(np.maximum(Lmax[e], 0) / step).astype(np.int64)
             tot = int(ns.sum())
