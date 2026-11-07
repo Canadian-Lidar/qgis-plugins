@@ -84,6 +84,18 @@ def findings(qc, engine_summary=None):
         lvl = "ok" if p95 < 0.05 else "warn" if p95 < 0.2 else "bad"
         out.append((lvl, "Forward/backward separation: 95%% below %.3f m horizontally, maximum %.3f m." %
                     (p95, s_sorted[-1]), None, None))
+        # where one pass is float and the other fixed the combination follows the fixed one, so the
+        # separation there says little about the result: show the fixed-fixed agreement on its own
+        fs, bs = qc.get("fwd_status") or [], qc.get("bwd_status") or []
+        if len(fs) == n and len(bs) == n:
+            ff = sorted(v for v, a, b in zip(qc["sep_h"], fs, bs) if a == 6 and b == 6 and v > 0)
+            one = sum(1 for a, b in zip(fs, bs) if (a == 6) != (b == 6))
+            if ff and one >= 0.02 * n:
+                q95 = ff[int(0.95 * (len(ff) - 1))]
+                out.append(("ok" if q95 < 0.05 else "warn" if q95 < 0.2 else "bad",
+                            "Where both passes are fixed (%.0f%% of the drive) they agree: 95%% below %.3f m. "
+                            "For %.0f%% of the drive only one pass is fixed; the result follows that pass there."
+                            % (100.0 * len(ff) / n, q95, 100.0 * one / n), None, None))
         bad = _runs(t, [v > 0.10 for v in qc["sep_h"]])
         bad = sorted(bad, key=lambda g: g[1] - g[0], reverse=True)[:5]
         for a, b in bad:

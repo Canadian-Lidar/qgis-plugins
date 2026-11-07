@@ -36,6 +36,9 @@ void settime(gtime_t time)
     pp_progress(d > 1 ? 1 : d, "GNSS %.0f%%", (d > 1 ? 1 : d) * 100);
 }
 
+extern double pp_gnss_reset_gap_s;
+extern long pp_gnss_resets;
+
 int cmd_gnss(int argc, char **argv)
 {
     prcopt_t popt = prcopt_default;
@@ -44,7 +47,7 @@ int cmd_gnss(int argc, char **argv)
     gtime_t ts = {0}, te = {0};
     const char *infile[64], *outfile = "", *conf = NULL;
     int i, n = 0, dir = 1, have_base = 0, ret, enu = 0;
-    double rb[3] = {0};
+    double rb[3] = {0}, reset_gap = 30.0;
 
     for (i = 0; i < argc; i++) if (!strcmp(argv[i], "-k") && i + 1 < argc) conf = argv[i + 1];
     if (conf) {
@@ -55,6 +58,7 @@ int cmd_gnss(int argc, char **argv)
     for (i = 0; i < argc; i++) {
         if (!strcmp(argv[i], "-k") && i + 1 < argc) { i++; continue; }
         else if (!strcmp(argv[i], "-o") && i + 1 < argc) outfile = argv[++i];
+        else if (!strcmp(argv[i], "--reset-gap") && i + 1 < argc) reset_gap = atof(argv[++i]);
         else if (!strcmp(argv[i], "--enu")) enu = 1;       /* baseline E N U from the base (moving base) */
         else if (!strcmp(argv[i], "-d") && i + 1 < argc) {
             const char *d = argv[++i];
@@ -84,6 +88,8 @@ int cmd_gnss(int argc, char **argv)
     sopt.trace = 0;
     strcpy(sopt.sep, " ");
     snprintf(sopt.prog, sizeof(sopt.prog), "PosPro %s / RTKLIB %s %s", PP_VERSION, VER_RTKLIB, PATCH_LEVEL);
+    pp_gnss_reset_gap_s = reset_gap;     /* default 30 s: only breaks such as between survey lines (shorter holes keep the fix) */
+    pp_gnss_resets = 0;
     pp_progress(0, "GNSS processing");
     ret = postpos(ts, te, 0.0, 0.0, &popt, &sopt, &fopt, infile, n, outfile, "", "");
     if (ret) return pp_fail("GNSS processing failed (RTKLIB code %d): check the input files", ret);
@@ -93,6 +99,7 @@ int cmd_gnss(int argc, char **argv)
         if (!enu && read_pos_file(outfile, &b)) {
             for (i = 0; i < b.n; i++) if (b.s[i].q >= 0 && b.s[i].q < 8) nq[b.s[i].q]++;
             pp_result("solutions", "%d", b.n);
+            pp_result("filter_restarts", "%ld", pp_gnss_resets);
             pp_result("fixed", "%d", nq[1]);
             pp_result("float", "%d", nq[2]);
             pp_result("dgps", "%d", nq[4]);
