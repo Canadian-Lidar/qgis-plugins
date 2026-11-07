@@ -31,7 +31,7 @@
 <div style="break-inside:avoid"><h2>What is new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
-<tr><td><b>1.8.0</b></td><td><b>Dockable windows:</b> Plan, Slice, 3D, Automatic filters, Lines · Classes · Info and History are each a window that can be moved, resized, tabbed together, floated or closed; <span class="ui">MENU › Windows</span> reopens them or resets the layout, and the layout is remembered. Closed or hidden views are not drawn. <b>Faster 3D view:</b> about twice as fast per frame, and the full-detail picture after a move is drawn in the background so the window stays responsive.</td></tr>
+<tr><td><b>1.8.0</b></td><td><b>Dockable windows:</b> Plan, Slice, 3D, Automatic filters, Lines · Classes · Info and History are each a window that can be moved, resized, tabbed together, floated or closed; <span class="ui">MENU › Windows</span> reopens them or resets the layout, and the layout is remembered. Closed or hidden views are not drawn. <b>Rejected points hidden by default</b>, with an eye per view to show them in red; views colour and draw only the points they show. <b>Faster 3D view:</b> about twice as fast per frame, and the full-detail picture after a move is drawn in the background so the window stays responsive.</td></tr>
 <tr><td><b>1.7.1</b></td><td><b>Coordinate epoch</b> in Project properties › Geodetics: the points are delivered at the provincial NAD83(CSRS) epoch (New Brunswick 1997.0 for New Brunswick Stereographic, else the federal 2010.0), or as observed. A trajectory in another epoch is moved with NRCan's velocity grid. Needs DCS Core 1.9.0.</td></tr>
 <tr><td><b>1.7.0</b></td><td><b>Update keeps your work safe:</b> the new points are built beside the old ones and only replace them when georeferencing succeeds, so a cancel, an error or a trajectory that does not cover a line no longer loses manual and filter edits. Actions that change points or the project wait while a job runs; closing the window stops the job. <b>PPP trajectories</b> from PosPro (ITRF2020 at the observation date) are moved to NAD83(CSRS)v8 before georeferencing (about 1.4 m horizontally and 1.1 m vertically in Atlantic Canada); <code>cloud.json</code> and the report say so. <code>cloud.json</code> takes its frame and epoch from the trajectory actually used. Exports are written under a temporary name and removed when cancelled. Faster grids after whole-project filters and a faster Poles filter. Map layers and menus fixed for QGIS 4. Needs DCS Core 1.8.0.</td></tr>
 <tr><td><b>1.6.0</b></td><td>Guided workflow: a strip under the header shows the three steps (Georeference, Clean &amp; classify, Publish) with their state, and one <span class="ui">Next</span> button does the next thing (Georeference, or Update when the inputs changed; the Automatic filters; Publish for the job). The version number is shown after the plugin name in the header. Needs DCS Core 1.6.0.</td></tr>
@@ -190,7 +190,7 @@
 <tr><td>Class list</td><td>Shown with Classify: the class it sets (1–7, 9, 11, 14, 18, 64–71).</td></tr>
 <tr><td>Line list</td><td><i>All lines</i>, or <i>Only L1</i>, <i>Only L2</i>…: edits and line-limited filter runs leave the other lines alone.</td></tr>
 <tr><td>Undo, Redo</td><td><kbd>Ctrl+Z</kbd>, <kbd>Ctrl+Y</kbd>. The Undo tooltip names the step it would undo.</td></tr>
-<tr><td>Eye</td><td>Rejected points shown in red, or hidden (<kbd>H</kbd>).</td></tr>
+<tr><td>Eye</td><td>Rejected points hidden, or shown in red, in every view at once (<kbd>H</kbd>). Each view also has its own eye in its title bar.</td></tr>
 <tr><td>Magnifier</td><td>Zoom all views to the Inspection Area (<kbd>Ctrl+Home</kbd>).</td></tr>
 <tr><td><span class="ui">Cell</span></td><td>Cell of the project grid under the Plan: 0.5, 1, 2, 2.5, 5, 10, 12.5 or 25 m (the stored 0.5 m grid summed into larger cells).</td></tr>
 <tr><td><span class="ui">Point</span></td><td>Point size in pixels (1–6).</td></tr>
@@ -266,7 +266,7 @@
 <tr><td>Channel</td><td>The laser (1–32).</td></tr>
 <tr><td>Time, Range</td><td>Firing time (UTC), distance from the Lidar.</td></tr>
 </table>
-<p>On top of any scheme: rejected points are red; in a filter preview, orange points will be rejected and green ones re-accepted; selected points are white.</p>
+<p>On top of any scheme: rejected points are red (where a view shows them); in a filter preview, orange points will be rejected and green ones re-accepted; selected points are white.</p>
 <figure class="h80"><img src="fig/colours.png"><figcaption><b>Figure {N}.8</b> Plan coloured by classification, with the Slice linked to it (<span class="ui">Link: = Plan</span>; its own Colour list is greyed out). Each scale bar lists the classes in the Inspection Area with their point counts.</figcaption></figure>
 <ul>
 <li><b>Scale bar</b> (the bar icon): a ramp with values (absolute heights in metres, intensity, UTC time, range or laser), or the classes, lines or files present with their counts, followed by rows for rejected, preview and selected points.</li>
@@ -279,7 +279,7 @@
 <li><b>Lines</b>: untick a line in <span class="ui">Lines · Classes · Info</span> to hide its points in every view.</li>
 <li><b>Classes</b>: untick a class there to hide it.</li>
 <li><b>Files</b>: Project Properties › Project files hides a file's points (<span class="ui">Points</span>) or its drive line (<span class="ui">Track</span>).</li>
-<li><b>Rejected points</b>: the eye button or <kbd>H</kbd>.</li>
+<li><b>Rejected points</b>: hidden by default. The eye in a view's title bar shows them in red in that view only; the tool bar eye or <kbd>H</kbd> sets every view. Choosing the <i>accept</i> action shows them everywhere, so they can be selected.</li>
 </ul>
 <p>Hidden points are not edited, by hand or by a filter run from a shape.</p>
 
@@ -327,7 +327,7 @@
 <h2>Undo, rejected points</h2>
 <ul>
 <li>Every edit is written to the point store at once and listed in the History tab. Undo (<kbd>Ctrl+Z</kbd>) and redo (<kbd>Ctrl+Y</kbd>) have no fixed number of steps; up to 60 million changed points are kept, after which the oldest steps are dropped.</li>
-<li>Rejected points are never deleted. Each keeps the reason it was rejected: <i>manual</i>, <i>automatic</i> (a filter) or <i>original</i>. The filter <i>Reset modifications</i> re-accepts by reason, so it can, for example, take back only the automatic rejections.</li>
+<li>Every point is either <b>accepted</b> or <b>rejected</b>. Rejected points are never deleted: they stay in the point store and are only hidden, so rejecting points by hand or with a filter makes them disappear from the views (unless that view's eye shows rejected points) and they can be brought back at any time. Views draw and colour only the points they show, so hiding the rejected points also makes them faster. Filters work on accepted points only, and rejected points are not used as neighbours. Each rejected point keeps the reason it was rejected: <i>manual</i>, <i>automatic</i> (a filter) or <i>original</i>. The filter <i>Reset modifications</i> re-accepts by reason, so it can, for example, take back only the automatic rejections.</li>
 <li>Making an edit while a filter preview is shown ends the preview without accepting it.</li>
 </ul>
 
@@ -601,7 +601,7 @@ python -m cloudpro.cli info    D:/Job/Processing/Street/Street.dcsproj</pre>
 <tr><td><kbd>Space</kbd>, <kbd>G</kbd>, <kbd>P</kbd>, <kbd>L</kbd>, <kbd>B</kbd></td><td>Pan, rectangle, polygon, lasso, brush</td></tr>
 <tr><td><kbd>U</kbd>, <kbd>J</kbd>, <kbd>M</kbd>, <kbd>I</kbd></td><td>Above a line, below a line, measure, point information</td></tr>
 <tr><td><kbd>X</kbd>, <kbd>V</kbd>, <kbd>S</kbd>, <kbd>K</kbd>, <kbd>F</kbd></td><td>Reject, accept, select, classify, filter</td></tr>
-<tr><td><kbd>H</kbd></td><td>Show / hide rejected points</td></tr>
+<tr><td><kbd>H</kbd></td><td>Show / hide rejected points in every view</td></tr>
 <tr><td><kbd>Delete</kbd>, <kbd>Ctrl+D</kbd></td><td>Reject the selection, clear the selection</td></tr>
 <tr><td><kbd>Ctrl+Z</kbd>, <kbd>Ctrl+Y</kbd></td><td>Undo, redo</td></tr>
 <tr><td><kbd>PgUp</kbd> / <kbd>PgDn</kbd>, <kbd>]</kbd> / <kbd>[</kbd>, <kbd>.</kbd> / <kbd>,</kbd></td><td>Next / previous slice</td></tr><tr><td><kbd>Ctrl+PgUp</kbd> / <kbd>Ctrl+PgDn</kbd>, <kbd>}</kbd> / <kbd>{</kbd></td><td>Five slices on / back</td></tr>

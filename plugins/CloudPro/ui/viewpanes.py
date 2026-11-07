@@ -40,6 +40,7 @@ class _Pane(QtWidgets.QWidget):
     colourChanged = Signal(str)
     legendToggled = Signal(bool)
     linkChanged = Signal(str)            # "" = own colours, else "plan" / "slice" / "3d"
+    rejToggled = Signal(bool)            # this view's "show rejected points" eye
     KEY = ""
 
     def __init__(self, title, parent=None):
@@ -61,6 +62,12 @@ class _Pane(QtWidgets.QWidget):
         lay.addWidget(self.head)
 
     def add_colour(self):
+        self.rej_btn = chrome.IconButton("", options=[("hide", "eye_off", "Rejected points hidden in this view "
+                                                                         "(click to show them in red)"),
+                                                      ("show", "eye", "Rejected points shown in red in this view "
+                                                                      "(click to hide them)")], size=28)
+        self.rej_btn.optionChanged.connect(lambda k: self.rejToggled.emit(k == "show"))
+        self.hl.addWidget(self.rej_btn)
         self.hl.addWidget(chrome.label("COLOUR"))
         self.hl.addWidget(self.colour)
         self.legend_btn = chrome.IconButton("legend", "Colour scale bar of this view on / off", checkable=True, size=28)
@@ -77,6 +84,10 @@ class _Pane(QtWidgets.QWidget):
         self.link.currentIndexChanged.connect(lambda _i: self.linkChanged.emit(self.link.currentData() or ""))
         self.hl.addWidget(icons_label())
         self.hl.addWidget(self.link)
+
+    def set_show_rejected(self, on):
+        """Set the eye without signalling (the tool bar's eye sets every view)."""
+        self.rej_btn.set_key("show" if on else "hide")
 
     def set_linked(self, key, mode=None):
         """Follow another view's colour scheme (the combo is greyed out while linked)."""

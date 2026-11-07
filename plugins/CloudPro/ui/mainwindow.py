@@ -58,7 +58,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ps = PointSet(0)
         self.box = None
         self.lut = "Rainbow"
-        self.show_rejected = True
+        # rejected points stay in the store (nothing is deleted); each view hides them unless its own
+        # "show rejected" eye is on. Hidden by default: views then draw and colour only accepted points.
+        self.show_rej = {"plan": False, "slice": False, "3d": False}
         self.tool = "pan"
         self.shape = "rect"
         self.linemode = "above"
@@ -132,6 +134,7 @@ class MainWindow(QtWidgets.QMainWindow):
             pane.colourChanged.connect(lambda m, k=k: self._view_colour(k, m))
             pane.legendToggled.connect(lambda _on, k=k: self.refresh_views(which=(k,)))
             pane.linkChanged.connect(lambda t, k=k: self._set_link(k, t))
+            pane.rejToggled.connect(lambda on, k=k: self._toggle_view_rej(k, on))
         self.plan_pane.grid.currentTextChanged.connect(self._grid_attr)
         self.plan_pane.target.setValue(self._saved_target())
         self.plan.set_target(self.plan_pane.target.value())
@@ -426,8 +429,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.b_redo = chrome.IconButton("redo", "Redo (Ctrl+Y)")
         self.b_undo.clicked.connect(self.undo)
         self.b_redo.clicked.connect(self.redo)
-        self.b_rej = chrome.IconButton("", options=[("show", "eye", "Rejected points shown in red (H)"),
-                                                    ("hide", "eye_off", "Rejected points hidden (H)")])
+        self.b_rej = chrome.IconButton("", options=[("hide", "eye_off", "Rejected points hidden in every view (H). "
+                                                                        "Each view has its own eye too."),
+                                                    ("show", "eye", "Rejected points shown in red in every view (H)")])
         self.b_rej.optionChanged.connect(lambda k: self._toggle_rej(k == "show"))
         self.b_zoom = chrome.IconButton("zoomall", "Zoom all views to the Inspection Area (Ctrl+Home)")
         self.b_zoom.clicked.connect(self.zoom_all)
@@ -523,7 +527,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         ("I", lambda: self.set_tool("pick")), ("X", lambda: self.set_mode("reject")),
                         ("V", lambda: self.set_mode("accept")), ("K", lambda: self.set_mode("class")),
                         ("F", lambda: self.set_mode("filter")), ("S", lambda: self.set_mode("select")),
-                        ("H", lambda: self.b_rej.set_key("hide" if self.show_rejected else "show", emit=True)),
+                        ("H", lambda: self.b_rej.set_key("hide" if any(self.show_rej.values()) else "show", emit=True)),
                         ("Delete", lambda: self.edit_selected("reject")), ("Ctrl+D", self.clear_selection)):
             s = QShortcut(QtGui.QKeySequence(seq), self)
             s.setContext(Qt.ShortcutContext.WindowShortcut)
@@ -563,8 +567,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.action = k
         self.b_action.set_key(k)
         self.a_class.setVisible(k == "class")
-        if k == "accept" and not self.show_rejected:
-            self.b_rej.set_key("show", emit=True)
+        if k == "accept" and not all(self.show_rej.values()):
+            self.b_rej.set_key("show", emit=True)          # re-accepting needs the rejected points in sight
         if self.tool in ("pan", "measure", "pick"):
             self.set_tool(self.shape)
 
@@ -1659,7 +1663,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 extra.append((render.PREVIEW_REJECT_RGB, "Rejected by the preview"))
             if (rej & ~prej).any():
                 extra.append(((120, 255, 120), "Re-accepted by the preview"))
-        if self.show_rejected and self.ps.rejected.any():
+        if self.show_rej.get(getattr(self, "_legend_key", ""), False) and self.ps.rejected.any():
             extra.append((render.REJECT_RGB, "Rejected"))
         if self.selected is not None and self.selected.any():
             extra.append((render.SELECT_RGB, "Selected"))
@@ -1712,10 +1716,22 @@ class MainWindow(QtWidgets.QMainWindow):
             w.update()
 
     def _toggle_rej(self, on):
-        self.show_rejected = on
+        """Tool bar eye (H): rejected points shown or hidden in every view."""
+        for k in self.show_rej:
+            self.show_rej[k] = on
+            self.panes[k].set_show_rejected(on)
         self.refresh_views()
 
-    def _visible(self):
+    def _toggle_view_rej(self, key, on):
+        """A view's own eye: show its rejected points (red) or hide them."""
+        self.show_rej[key] = on
+        self.b_rej.set_key("show" if all(self.show_rej.values()) else "hide")
+        self.refresh_views(which=(key,))
+
+    def _visible(self, key=None):
+        """Points a view shows: lines, files and classes switched on; rejected points only where that view's
+        "show rejected" eye is on (key None: shown if any view shows them). Points a filter preview would
+        reject stay visible (orange) so the preview can be judged."""
         ps = self.ps
         n = len(ps)
         if n == 0:
@@ -1729,24 +1745,25 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.class_hidden:
             cls = self.preview.cls if self.preview is not None else ps.cls
             vis &= ~np.isin(cls, list(self.class_hidden))
-        rej = ps.rejected
-        if self.preview is not None:
-            prej = (self.preview.flag & REJECTED) != 0
-            newly = prej & ~rej
-            if not self.show_rejected:
-                vis &= ~rej | newly
-                vis &= ~(prej & ~newly)
-        elif not self.show_rejected:
-            vis &= ~rej
+        show = any(self.show_rej.values()) if key is None else self.show_rej.get(key, False)
+        if not show:
+            vis &= ~ps.rejected
         return vis
 
-    def _colours(self, mode):
-        col = self._colours_for(mode).copy()
-        if len(col) == 0:
+    def _colours(self, mode, idx=None):
+        """Colours of the points idx (all when None): the scheme's cached colours, gathered for those points
+        only, then rejected / preview / selected marks over the same points."""
+        base = self._colours_for(mode)
+        if len(base) == 0:
+            return base.copy()
+        if idx is None:
+            idx = slice(None)
+        col = base[idx]
+        if not isinstance(idx, slice) and len(col) == 0:
             return col
-        rej = self.ps.rejected
+        rej = (self.ps.flag[idx] & REJECTED) != 0
         if self.preview is not None:
-            prej = (self.preview.flag & REJECTED) != 0
+            prej = (self.preview.flag[idx] & REJECTED) != 0
             newly = prej & ~rej
             reacc = rej & ~prej
             col[rej & prej] = render.pack(np.array(render.REJECT_RGB, np.uint8))
@@ -1754,8 +1771,8 @@ class MainWindow(QtWidgets.QMainWindow):
             col[reacc] = render.pack(np.array((120, 255, 120), np.uint8))
         else:
             col[rej] = render.pack(np.array(render.REJECT_RGB, np.uint8))
-        if self.selected is not None and len(self.selected) == len(col):
-            col[self.selected] = render.pack(np.array(render.SELECT_RGB, np.uint8))
+        if self.selected is not None and len(self.selected) == len(self.ps):
+            col[self.selected[idx]] = render.pack(np.array(render.SELECT_RGB, np.uint8))
         return col
 
     def refresh_views(self, fit=False, which=("plan", "slice", "3d")):
@@ -1765,53 +1782,59 @@ class MainWindow(QtWidgets.QMainWindow):
             self._view_stale.update(hidden)
             which = tuple(k for k in which if k not in hidden)
         ps = self.ps
-        cols = {}
-
-        def colours(mode):                      # once per colour mode, not once per view
-            if mode not in cols:
-                cols[mode] = self._colours(mode)
-            return cols[mode]
         o = self._origin()
         b = self.box or {"cx": 0, "cy": 0, "bearing": 0, "length": 1, "width": 1}
-        vis = self._visible()
-        u, v = to_box_frame(ps.x, ps.y, b["cx"], b["cy"], b["bearing"]) if len(ps) else (np.zeros(0), np.zeros(0))
         z = ps.z if self.preview is None else self.preview.z
         along, pos, th, full = self._slice()
-        if along:
-            sm = vis if full else vis & (np.abs(v - pos) <= th / 2)
-        else:
-            sm = vis & (np.abs(u - pos) <= th / 2)
+        base = self._visible(key=None) if len(ps) else np.zeros(0, bool)
+        rej = ps.rejected if len(ps) else np.zeros(0, bool)
+
+        def shown(key):                         # each view: rejected points only if its eye is on
+            return np.flatnonzero(base if self.show_rej.get(key, False) else base & ~rej)
+
+        def in_slab(idx):                       # the slice slab, worked out for these points only
+            if len(idx) == 0:
+                return idx, np.zeros(0), np.zeros(0)
+            u, v = to_box_frame(ps.x[idx], ps.y[idx], b["cx"], b["cy"], b["bearing"])
+            if along:
+                keep = np.ones(len(idx), bool) if full else np.abs(v - pos) <= th / 2
+            else:
+                keep = np.abs(u - pos) <= th / 2
+            return idx[keep], u[keep], v[keep]
         if "plan" in which:
-            idx = np.flatnonzero(vis)
-            col = colours(self._mode("plan"))
+            idx = shown("plan")
+            col = self._colours(self._mode("plan"), idx)
+            self._legend_key = "plan"
             self._set_legend("plan", self.plan)
             self.plan.a_offset, self.plan.b_offset = o[0], o[1]
-            self.plan.set_points(ps.x[idx], ps.y[idx], z[idx], col[idx], idx, fit=False)
+            self.plan.set_points(ps.x[idx], ps.y[idx], z[idx], col, idx, fit=False)
             self.plan_pane.title.setText("PLAN  %s pts" % "{:,}".format(len(idx)))
         if "slice" in which:
-            idx = np.flatnonzero(sm)
-            col = colours(self._mode("slice"))
+            idx, u, v = in_slab(shown("slice"))
+            col = self._colours(self._mode("slice"), idx)
+            self._legend_key = "slice"
             self._set_legend("slice", self.slice)
             self.slice.b_offset = o[2]
             if along:
                 self.slice.kind = "profile"
                 self.slice.a_offset = b["length"] / 2
-                self.slice.set_points(u[idx], z[idx], v[idx], col[idx], idx, fit=fit or len(self.slice.a) == 0)
+                self.slice.set_points(u, z[idx], v, col, idx, fit=fit or len(self.slice.a) == 0)
                 self.slice_pane.lbl.setText("offset %+.2f m" % pos if not full else "full width")
-                self.slice_pane.title.setText("SLICE  %s pts" % "{:,}".format(len(idx)))
             else:
                 self.slice.kind = "section"
                 self.slice.a_offset = 0.0
-                self.slice.set_points(v[idx], z[idx], -u[idx], col[idx], idx, fit=fit or len(self.slice.a) == 0)
+                self.slice.set_points(v, z[idx], -u, col, idx, fit=fit or len(self.slice.a) == 0)
                 self.slice_pane.lbl.setText("chainage %.2f m" % (pos + b["length"] / 2))
-                self.slice_pane.title.setText("SLICE  %s pts" % "{:,}".format(len(idx)))
+            self.slice_pane.title.setText("SLICE  %s pts" % "{:,}".format(len(idx)))
         if "3d" in which:
-            m = sm if self.v3d_pane.what.currentText() == "Slice" else vis
-            idx = np.flatnonzero(m)
-            col = colours(self._mode("3d"))
+            idx = shown("3d")
+            if self.v3d_pane.what.currentText() == "Slice":
+                idx = in_slab(idx)[0]
+            col = self._colours(self._mode("3d"), idx)
+            self._legend_key = "3d"
             self._set_legend("3d", self.v3d)
             P = np.column_stack([ps.x[idx], ps.y[idx], z[idx]])
-            self.v3d.set_points(P, col[idx], idx, fit=fit or len(self.v3d.P) == 0)
+            self.v3d.set_points(P, col, idx, fit=fit or len(self.v3d.P) == 0)
             self.v3d_pane.title.setText("3D  %s pts" % "{:,}".format(len(idx)))
             self.v3d.overlay_lines = self._box_lines3d()
         nsel = int(self.selected.sum()) if self.selected is not None else 0
