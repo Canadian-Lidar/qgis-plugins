@@ -30,6 +30,12 @@ def check_available():
                          env=dict(os.environ, CLOUDPRO_NO_ENGINE="1"), capture_output=True, text=True).stdout
     assert out.startswith("False Python"), out
     print("engine:", engine.status(), "| CLOUDPRO_NO_ENGINE=1 ->", out.strip())
+    if os.path.exists("/proc/self/maps"):                 # loaded from the per-user copy, never the plugin folder
+        maps = [l.split()[-1] for l in open("/proc/self/maps") if "cpengine" in l]
+        plugin_dir = os.path.dirname(os.path.dirname(os.path.abspath(engine.__file__)))
+        assert maps and all(not m.startswith(plugin_dir) for m in maps), maps
+        assert all(m.startswith(engine._cache_dir()) for m in maps), maps
+        print("library loaded from", os.path.dirname(maps[0]), "(the plugin folder stays free for upgrades)")
 
 
 def _tiles(p):
