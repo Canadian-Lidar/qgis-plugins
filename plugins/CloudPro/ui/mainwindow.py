@@ -1788,8 +1788,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 extra.append((render.PREVIEW_REJECT_RGB, "Rejected by the preview"))
             if (rej & ~prej).any():
                 extra.append(((120, 255, 120), "Re-accepted by the preview"))
-        if self.show_rej.get(getattr(self, "_legend_key", ""), False) and self.ps.rejected.any():
-            extra.append((render.REJECT_RGB, "Rejected"))
+        # no "Rejected" row: rejected points are magenta everywhere in CloudPro
         if self.selected is not None and self.selected.any():
             extra.append((render.SELECT_RGB, "Selected"))
         info["extra"] = extra

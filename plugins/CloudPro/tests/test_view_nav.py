@@ -109,6 +109,11 @@ win.cb_cell.setCurrentIndex(win.cb_cell.findData(5.0))
 assert pl.cell == 5.0
 from CloudPro.qt import QtWidgets                                 # noqa: E402
 assert win.tabPosition(Qt.DockWidgetArea.RightDockWidgetArea) == QtWidgets.QTabWidget.TabPosition.South
+win._toggle_rej(True)
+win.refresh_views()
+for k in ("plan", "slice", "3d"):
+    L = win.panes[k].view.legend
+    assert L is None or all(t != "Rejected" for _c, t in L.get("extra", [])), k
 print("selection colours by mode, white area, magenta rejects, plain titles, cell list, tabs at the bottom")
 win.shutdown()
 print("test_view_nav: OK")
