@@ -37,7 +37,7 @@ print("3D centre = Inspection Area centre (%.2f, %.2f, %.2f)" % tuple(v3.center)
 
 # arrows: 22.5 degrees per click
 y0, p0 = v3.yaw, v3.pitch
-v3.nav_rotate("left")
+v3.nav_rotate("right")
 assert abs(math.degrees(v3.yaw - y0) - 22.5) < 1e-9
 v3.nav_rotate("up")
 assert abs(math.degrees(p0 - v3.pitch) - 22.5) < 1e-9
@@ -77,5 +77,43 @@ span = (W - 40) / sl.scale
 half = nb["length"] / 2 if win.slice_pane.along else nb["width"] / 2
 assert abs(sl.ca) < 1e-6 and span >= 2 * half - 1e-6, (sl.ca, span, half)
 print("slice: zoom to the area (%.1f m across)" % span)
+
+# dragging right (and the right arrow) moves the near side of the cloud right, as if holding it
+from CloudPro.qt import QtCore, QtGui, Qt                        # noqa: E402
+eye_dir, fwd, right, up = v3._basis()
+near = v3.center + eye_dir * (v3.dist * 0.3)                     # a point between the centre and the camera
+x_before = float(v3.project(near[None, :])[0][0])
+v3._drag = ("orbit", QtCore.QPointF(100, 100), v3.yaw, v3.pitch)
+ev = QtGui.QMouseEvent(QtCore.QEvent.Type.MouseMove, QtCore.QPointF(160, 100), QtCore.QPointF(160, 100),
+                       Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+v3.mouseMoveEvent(ev)
+v3._drag = None
+x_after = float(v3.project(near[None, :])[0][0])
+assert x_after > x_before, (x_before, x_after)
+x0 = float(v3.project(near[None, :])[0][0])
+v3.nav_rotate("right")
+assert float(v3.project(near[None, :])[0][0]) > x0
+print("3D drag right / right arrow: the near side moves right (%.0f -> %.0f px)" % (x_before, x_after))
+
+# edit mode colours of the selection shapes, white Inspection Area, magenta rejects, titles, cell list, tabs
+from CloudPro.ui import render                                    # noqa: E402
+for mode, rgb in (("reject", (255, 59, 59)), ("accept", (46, 204, 64)), ("select", (160, 160, 160))):
+    win.set_mode(mode)
+    for v in (win.plan, win.slice, v3):
+        c = render.edit_qcolor(v.edit_mode)
+        assert (c.red(), c.green(), c.blue()) == rgb, (mode, v)
+assert render.REJECT_RGB == (255, 0, 255) and win._box_lines3d()[0][1] == "#ffffff"
+assert [win.panes[k].title.text() for k in ("plan", "slice", "3d")] == ["PLAN", "SLICE", "3D"]
+assert [win.cb_cell.itemData(i) for i in range(win.cb_cell.count())] == list(pl.CELL_CHOICES)
+win.cb_cell.setCurrentIndex(win.cb_cell.findData(5.0))
+assert pl.cell == 5.0
+from CloudPro.qt import QtWidgets                                 # noqa: E402
+assert win.tabPosition(Qt.DockWidgetArea.RightDockWidgetArea) == QtWidgets.QTabWidget.TabPosition.South
+win._toggle_rej(True)
+win.refresh_views()
+for k in ("plan", "slice", "3d"):
+    L = win.panes[k].view.legend
+    assert L is None or all(t != "Rejected" for _c, t in L.get("extra", [])), k
+print("selection colours by mode, white area, magenta rejects, plain titles, cell list, tabs at the bottom")
 win.shutdown()
 print("test_view_nav: OK")

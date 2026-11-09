@@ -271,10 +271,10 @@ class CloudView3D(QtWidgets.QWidget):
             self.pitch = max(-math.radians(89.9), self.pitch - d)
         elif key == "down":
             self.pitch = min(math.radians(89.9), self.pitch + d)
-        elif key == "right":
-            self.yaw -= d
-        elif key == "left":
+        elif key == "right":                       # the near side of the cloud moves right
             self.yaw += d
+        elif key == "left":
+            self.yaw -= d
         elif key == "cw":
             self.roll += d
         elif key == "ccw":
@@ -468,8 +468,9 @@ class CloudView3D(QtWidgets.QWidget):
         self._draw_axes(p)
         self._draw_nav(p)
         if self._poly:
-            p.setPen(QtGui.QPen(QtGui.QColor(theme.ACCENT), 1.5, Qt.PenStyle.DashLine))
-            p.setBrush(QtGui.QColor(0, 229, 170, 30))
+            mode = getattr(self, "edit_mode", "")       # red reject, green accept, grey select
+            p.setPen(QtGui.QPen(render.edit_qcolor(mode), 1.5, Qt.PenStyle.DashLine))
+            p.setBrush(render.edit_qcolor(mode, 45))
             pts = [QtCore.QPointF(*q) for q in self._poly]
             if self.sel_mode == "rect" and len(pts) >= 2:
                 p.drawRect(QtCore.QRectF(pts[0], pts[-1]).normalized())
@@ -569,7 +570,7 @@ class CloudView3D(QtWidgets.QWidget):
         k = self._drag[0]
         if k == "orbit":
             _, p0, y0, pt0 = self._drag
-            self.yaw = y0 - (pos.x() - p0.x()) * 0.008
+            self.yaw = y0 + (pos.x() - p0.x()) * 0.008     # the cloud turns the way the mouse moves (as if held)
             self.pitch = float(np.clip(pt0 + (pos.y() - p0.y()) * 0.008, -math.radians(89.9), math.radians(89.9)))
             self._changed()
         elif k == "pan":

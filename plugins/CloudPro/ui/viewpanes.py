@@ -70,8 +70,8 @@ class _Pane(QtWidgets.QWidget):
 
     def add_colour(self):
         self.rej_btn = chrome.IconButton("", options=[("hide", "eye_off", "Rejected points hidden in this view "
-                                                                         "(click to show them in red)"),
-                                                      ("show", "eye", "Rejected points shown in red in this view "
+                                                                         "(click to show them in magenta)"),
+                                                      ("show", "eye", "Rejected points shown in magenta in this view "
                                                                       "(click to hide them)")], size=28)
         self.rej_btn.optionChanged.connect(lambda k: self.rejToggled.emit(k == "show"))
         self.hl.addWidget(self.rej_btn)

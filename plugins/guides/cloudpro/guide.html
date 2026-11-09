@@ -31,6 +31,7 @@
 <div style="break-inside:avoid"><h2>What is new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>1.9.2</b></td><td><b>Clearer editing:</b> the selection shape is red for Reject, green for Accept, grey for Select; rejected points are magenta (no longer listed on the scale bars); the Inspection Area outline is white. Window tabs along the bottom; view titles without point counts; the Plan cell size is a list. In 3D, dragging (and the left / right arrows) turns the cloud the way you move.</td></tr>
 <tr><td><b>1.9.1</b></td><td><b>Easier navigation:</b> a <span class="ui">Zoom to the Inspection Area</span> button in every view and <span class="ui">Zoom to the extents</span> in the Plan; the 3D view turns around the centre of the Inspection Area and follows it when it moves; the 3D navigation arrows turn 22.5° per click. <b>Colour range per view:</b> right-click the scale bar for automatic over the Inspection Area or the whole project, or a fixed minimum and maximum (<a href="#colours">Colours</a>); linked views follow the view they are linked to.</td></tr>
 <tr><td><b>1.9.0</b></td><td><b>CloudPro engine:</b> georeferencing (packets, Hesai decoding, skipping stopped packets, georeferencing, tiles) runs in a compiled library on every core, about 3 times faster per core; the grids are built in parallel; <span class="ui">Moving objects</span>, <span class="ui">Guardrails</span>, <span class="ui">Poles</span>, <span class="ui">Traffic signs</span> and <span class="ui">Vertical plane</span> use it too. Exactly the same results as before (see <a href="#large">Large areas</a>).</td></tr>
 <tr><td><b>1.8.1</b></td><td><b>Faster filters and grids:</b> the morphological ground filter (SMRF) is about 8 times faster with exactly the same ground points; <span class="ui">Moving objects</span> is quicker; the grids behind the views are built twice as fast and, after an edit, in the background, so the window no longer pauses.</td></tr>
@@ -153,7 +154,7 @@
 <tr><th>To</th><th>Do this</th></tr>
 <tr><td>Resize</td><td>Drag the line between two windows.</td></tr>
 <tr><td>Move</td><td>Drag the window's title bar (an empty part of the strip) to another side; a highlight shows where it will go.</td></tr>
-<tr><td>Tab windows together</td><td>Drop a window's title bar on another window. Tabs appear along the top; click one to bring it to the front.</td></tr>
+<tr><td>Tab windows together</td><td>Drop a window's title bar on another window. Tabs appear along the bottom; click one to bring it to the front.</td></tr>
 <tr><td>Float a window</td><td>Click its float button (two overlapping squares, top right of the strip) or double click its title bar. It becomes a window of its own, for example on a second screen. Float it again, or drag it back, to dock it.</td></tr>
 <tr><td>Close a window</td><td>Click its &times;. <span class="ui">MENU › Windows</span> brings it back.</td></tr>
 <tr><td>Start again</td><td><span class="ui">MENU › Windows › Reset the window layout</span>.</td></tr>
@@ -189,14 +190,14 @@
 <tr><td>Line</td><td>Above a line (<kbd>U</kbd>), Below a line (<kbd>J</kbd>).</td></tr>
 <tr><td>Ruler</td><td>Measure (<kbd>M</kbd>): distance, bearing, height difference, slope.</td></tr>
 <tr><td>i</td><td>Point information (<kbd>I</kbd>): click a point.</td></tr>
-<tr><td>Action</td><td>Reject (<kbd>X</kbd>, red), Accept (<kbd>V</kbd>), Select (<kbd>S</kbd>), Classify (<kbd>K</kbd>, with the class list next to it), Filter (<kbd>F</kbd>: runs the current filter group on the shape).</td></tr>
+<tr><td>Action</td><td>Reject (<kbd>X</kbd>), Accept (<kbd>V</kbd>), Select (<kbd>S</kbd>), Classify (<kbd>K</kbd>, with the class list next to it), Filter (<kbd>F</kbd>: runs the current filter group on the shape). The shape you draw (rectangle, polygon, lasso, brush, above / below) shows the action: <b>red</b> for Reject, <b>green</b> for Accept, <b>grey</b> for Select (teal for Classify and Filter).</td></tr>
 <tr><td>Inside / outside</td><td>Edit the points inside the shape, or the visible points outside it.</td></tr>
 <tr><td>Class list</td><td>Shown with Classify: the class it sets (1–7, 9, 11, 14, 18, 64–71).</td></tr>
 <tr><td>Line list</td><td><i>All lines</i>, or <i>Only L1</i>, <i>Only L2</i>…: edits and line-limited filter runs leave the other lines alone.</td></tr>
 <tr><td>Undo, Redo</td><td><kbd>Ctrl+Z</kbd>, <kbd>Ctrl+Y</kbd>. The Undo tooltip names the step it would undo.</td></tr>
-<tr><td>Eye</td><td>Rejected points hidden, or shown in red, in every view at once (<kbd>H</kbd>). Each view also has its own eye in its title bar.</td></tr>
+<tr><td>Eye</td><td>Rejected points hidden, or shown in magenta, in every view at once (<kbd>H</kbd>). Each view also has its own eye in its title bar.</td></tr>
 <tr><td>Magnifier</td><td>Zoom all views to the Inspection Area (<kbd>Ctrl+Home</kbd>).</td></tr>
-<tr><td><span class="ui">Cell</span></td><td>Cell of the project grid under the Plan: 0.5, 1, 2, 2.5, 5, 10, 12.5 or 25 m (the stored 0.5 m grid summed into larger cells).</td></tr>
+<tr><td><span class="ui">Cell</span></td><td>Cell of the project grid under the Plan, chosen from the list: 0.5, 1, 2, 2.5, 5, 10, 12.5 or 25 m (the stored 0.5 m grid summed into larger cells).</td></tr>
 <tr><td><span class="ui">Point</span></td><td>Point size in pixels (1–6).</td></tr>
 <tr><td><span class="ui">Brush</span></td><td>Brush radius in pixels (2–200).</td></tr>
 <tr><td><span class="ui">Colours</span></td><td>Colour ramp for height, intensity and range: Rainbow, Viridis, Terrain, Mint, Grey.</td></tr>
@@ -252,9 +253,9 @@
 <figure class="h58"><img src="fig/view3d.png"><figcaption><b>Figure {N}.6</b> The 3D view, oblique: the navigation arrows top left, the colour scale bar, the Inspection Area outline, the drive lines and the axes (E, N, U) bottom left.</figcaption></figure>
 <p>The header has what to show (<i>Inspection Area</i> or <i>Slice</i>), four view presets (top <kbd>1</kbd>, look across to see the side <kbd>2</kbd>, look along the area <kbd>3</kbd>, oblique <kbd>4</kbd>), eye-dome lighting (depth shading, on by default) and the colour controls.</p>
 <figure class="small" style="float:right;width:28%;margin:0 0 2mm 4mm"><img src="fig/nav_arrows.png" style="max-width:100%"><figcaption><b>Figure {N}.7</b> The navigation arrows.</figcaption></figure>
-<p><b>Navigation arrows.</b> Click an arrow head to turn the cloud that way: <b>blue</b> tips it up or down (into the page), <b>red</b> turns it left or right, <b>green</b> turns the picture clockwise or anticlockwise on the screen. Each click turns 22.5° (16 clicks round); hold the button to keep turning smoothly. The presets undo any on-screen turn.</p>
+<p><b>Navigation arrows.</b> Click an arrow head to turn the cloud that way (its near side moves in the arrow's direction): <b>blue</b> tips it up or down (into the page), <b>red</b> turns it left or right, <b>green</b> turns the picture clockwise or anticlockwise on the screen. Each click turns 22.5° (16 clicks round); hold the button to keep turning smoothly. The presets undo any on-screen turn.</p>
 <p><b>Centre of rotation.</b> The 3D view turns around the centre of the Inspection Area, at the middle height of its points, and the centre follows the area when you move or step it. Panning or double-clicking a point moves the centre for a closer look; the <span class="ui">Zoom to the Inspection Area</span> button in the 3D header (corner brackets around a rectangle), <kbd>0</kbd> or <kbd>Home</kbd> bring it back and show the whole area.</p>
-<p><b>Mouse.</b> Left drag orbits; <kbd>Shift</kbd> + left drag or middle drag pans; the wheel zooms; <kbd>Ctrl</kbd> + wheel scales Z (shown as <i>Z x2.0</i>); double-click a point to make it the centre (its information appears in the Info tab); right drag draws a lasso, or a rectangle when the Rectangle tool is active, and applies the current action.</p>
+<p><b>Mouse.</b> Left drag turns the cloud the way you move, as if holding it (drag right and its near side moves right); <kbd>Shift</kbd> + left drag or middle drag pans; the wheel zooms; <kbd>Ctrl</kbd> + wheel scales Z (shown as <i>Z x2.0</i>); double-click a point to make it the centre (its information appears in the Info tab); right drag draws a lasso, or a rectangle when the Rectangle tool is active, and applies the current action.</p>
 <p><b>Keys</b> (click the view first): <kbd>W</kbd> / <kbd>A</kbd> / <kbd>D</kbd> fly forward, left and right and <kbd>Q</kbd> / <kbd>E</kbd> down and up, by the arrow / fly step; <kbd>O</kbd> switches orthographic projection; <kbd>0</kbd> or <kbd>Home</kbd> zooms to the Inspection Area; <kbd>+</kbd> / <kbd>-</kbd> zoom; <kbd>Esc</kbd> cancels a selection.</p>
 <div class="note"><b>Flying</b> <kbd>W</kbd> <kbd>S</kbd> <kbd>A</kbd> <kbd>D</kbd> <kbd>Q</kbd> <kbd>E</kbd> fly while the 3D view has the keyboard: click in it first. Elsewhere <kbd>S</kbd> is the key for the Select action.</div>
 <p>The 3D view is drawn without graphics drivers, so it works on any computer. While you move, it draws fewer points to stay fluid; a still frame that would take more than about 0.3 s also draws a part only and says <i>showing N %</i> beside the title (<a href="#large">Large areas</a>).</p>
@@ -271,10 +272,10 @@
 <tr><td>Channel</td><td>The laser (1–32).</td></tr>
 <tr><td>Time, Range</td><td>Firing time (UTC), distance from the Lidar.</td></tr>
 </table>
-<p>On top of any scheme: rejected points are red (where a view shows them); in a filter preview, orange points will be rejected and green ones re-accepted; selected points are white.</p>
+<p>On top of any scheme: rejected points are magenta (where a view shows them); in a filter preview, orange points will be rejected and green ones re-accepted; selected points are white.</p>
 <figure class="h80"><img src="fig/colours.png"><figcaption><b>Figure {N}.8</b> Plan coloured by classification, with the Slice linked to it (<span class="ui">Link: = Plan</span>; its own Colour list is greyed out). Each scale bar lists the classes in the Inspection Area with their point counts.</figcaption></figure>
 <ul>
-<li><b>Scale bar</b> (the bar icon): a ramp with values (absolute heights in metres, intensity, UTC time, range or laser), or the classes, lines or files present with their counts, followed by rows for rejected, preview and selected points.</li>
+<li><b>Scale bar</b> (the bar icon): a ramp with values (absolute heights in metres, intensity, UTC time, range or laser), or the classes, lines or files present with their counts, followed by rows for preview and selected points (rejected points are always magenta, so they have no row).</li>
 <li><b>Colour range</b>: right-click a view's scale bar (Height, Intensity, Range or Time colours) and choose <span class="ui">Automatic: Inspection Area</span> (the default: 2–98 % of the area's points, the same in every view), <span class="ui">Automatic: whole project</span> (an even sample of up to 2 million accepted points from every tile, so colours mean the same wherever the area is) or <span class="ui">Fixed minimum / maximum…</span> (heights as elevations, times in UTC; points outside get the end colours). The scale bar title shows <i>(project)</i> or <i>(fixed)</i>; each view keeps its own choice per colour scheme, saved with the project.</li>
 <li><b>Link</b>: <i>Own</i>, or <i>= Plan</i>, <i>= Slice</i>, <i>= 3D</i>: the view follows that view's scheme and colour range, whatever range it has itself (right-clicking its scale bar says so and offers <span class="ui">Unlink</span>). A view cannot follow one that follows it.</li>
 </ul>
@@ -285,7 +286,7 @@
 <li><b>Lines</b>: untick a line in <span class="ui">Lines · Classes · Info</span> to hide its points in every view.</li>
 <li><b>Classes</b>: untick a class there to hide it.</li>
 <li><b>Files</b>: Project Properties › Project files hides a file's points (<span class="ui">Points</span>) or its drive line (<span class="ui">Track</span>).</li>
-<li><b>Rejected points</b>: hidden by default. The eye in a view's title bar shows them in red in that view only; the tool bar eye or <kbd>H</kbd> sets every view. Choosing the <i>accept</i> action shows them everywhere, so they can be selected.</li>
+<li><b>Rejected points</b>: hidden by default. The eye in a view's title bar shows them in magenta in that view only; the tool bar eye or <kbd>H</kbd> sets every view. Choosing the <i>accept</i> action shows them everywhere, so they can be selected.</li>
 </ul>
 <p>Hidden points are not edited, by hand or by a filter run from a shape.</p>
 

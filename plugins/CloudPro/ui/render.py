@@ -44,9 +44,21 @@ for k, c in {0: (120, 120, 120), 1: (170, 170, 170), 2: (180, 120, 60), 3: (120,
     CLASS_COLOURS[k] = c
 
 CHANNEL_COLOURS = np.array([LUTS["Rainbow"][int(i * 255 / 31)] for i in range(32)], np.uint8)
-REJECT_RGB = (232, 72, 85)
+REJECT_RGB = (255, 0, 255)                  # rejected points: magenta
 PREVIEW_REJECT_RGB = (255, 120, 0)
 SELECT_RGB = (255, 255, 255)
+BOX_RGB = (255, 255, 255)                   # Inspection Area outline
+
+# the selection shape (rectangle, polygon, lasso, brush, above / below) in the colour of the edit it will make
+EDIT_RGB = {"reject": (255, 59, 59), "accept": (46, 204, 64), "select": (160, 160, 160)}
+
+
+def edit_qcolor(mode, alpha=255):
+    from ..qt import QtGui
+    from . import theme
+    c = QtGui.QColor(*EDIT_RGB[mode]) if mode in EDIT_RGB else QtGui.QColor(theme.ACCENT)
+    c.setAlpha(alpha)
+    return c
 
 
 def hex_rgb(h):
