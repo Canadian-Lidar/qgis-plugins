@@ -354,7 +354,7 @@ def _painter():
                         return True
                     if obj.property("ppViewport"):
                         p = QPainter(obj)
-                        p.fillRect(obj.rect(), QColor(SURF))
+                        p.fillRect(obj.rect(), QColor(obj.property("ppViewportBg") or SURF))
                         p.end()
                         return False            # the items paint on top
                 except RuntimeError:
@@ -606,6 +606,61 @@ def _delegate_class():
 _DELEGATES = []
 
 
+def _view_delegate_class():
+    """Rows of lists, tables and trees: the selection band painted here, everything else (text with its own
+    colours, check boxes, icons, columns) by Qt, without the platform's own selection and hover painting, which
+    the Windows 11 style draws light whatever the palette says."""
+    from qgis.PyQt.QtGui import QPalette
+    from qgis.PyQt.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
+
+    class ViewDelegate(QStyledItemDelegate):
+        def paint(self, p, opt, idx):
+            o = QStyleOptionViewItem(opt)
+            sel = bool(o.state & QStyle.StateFlag.State_Selected)
+            hover = bool(o.state & QStyle.StateFlag.State_MouseOver)
+            if sel or hover:
+                p.fillRect(o.rect, QColor(0, 229, 170, 60 if sel else 22))
+            o.state &= ~(QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver |
+                         QStyle.StateFlag.State_HasFocus)
+            for grp in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+                o.palette.setColor(grp, QPalette.ColorRole.Text, QColor("#ffffff" if sel else BRIGHT))
+                o.palette.setColor(grp, QPalette.ColorRole.Base, QColor(FIELD))
+                o.palette.setColor(grp, QPalette.ColorRole.Window, QColor(FIELD))
+            super().paint(p, o, idx)
+            # the check box, drawn here too: the platform's indicator loses its frame on a dark row
+            from qgis.PyQt.QtCore import QPointF, QRectF, Qt
+            from qgis.PyQt.QtGui import QPen
+            st = idx.data(Qt.ItemDataRole.CheckStateRole)
+            if st is None:
+                return
+            o2 = QStyleOptionViewItem(opt)
+            self.initStyleOption(o2, idx)
+            w = opt.widget
+            style = w.style() if w is not None else None
+            if style is None:
+                return
+            r = QRectF(style.subElementRect(QStyle.SubElement.SE_ItemViewItemCheckIndicator, o2, w))
+            side = min(r.width(), r.height(), 14.0)
+            box = QRectF(r.center().x() - side / 2, r.center().y() - side / 2, side, side)
+            p.save()
+            p.setRenderHint(p.RenderHint.Antialiasing, True)
+            p.fillRect(box.adjusted(-1, -1, 1, 1), QColor(FIELD))
+            try:
+                checked = int(st) == int(Qt.CheckState.Checked.value)
+            except (TypeError, AttributeError):
+                checked = st == Qt.CheckState.Checked
+            p.setPen(QPen(QColor(ACCENT if checked else DIM), 1.3))
+            p.setBrush(QColor(0, 229, 170, 40) if checked else QColor(FIELD))
+            p.drawRoundedRect(box, 2, 2)
+            if checked:
+                p.setPen(QPen(QColor(ACCENT), 2.0, cap=Qt.PenCapStyle.RoundCap, join=Qt.PenJoinStyle.RoundJoin))
+                x, y, s_ = box.left(), box.top(), box.width()
+                p.drawPolyline([QPointF(x + s_ * 0.22, y + s_ * 0.52), QPointF(x + s_ * 0.43, y + s_ * 0.72),
+                                QPointF(x + s_ * 0.78, y + s_ * 0.30)])
+            p.restore()
+    return ViewDelegate
+
+
 def _treat_calendar(cw):
     from qgis.PyQt.QtCore import Qt
     from qgis.PyQt.QtGui import QBrush, QTextCharFormat
@@ -711,6 +766,19 @@ def treat(w):
     if isinstance(w, QAbstractItemView):
         w.setProperty("ppDone", True)
         w.setPalette(palette())
+        # lists, tables and trees: the Windows 11 style paints their background and rows light whatever the
+        # palette and style sheet say, so the background is filled here and the rows use a dark delegate
+        # (only where the view has Qt's standard delegate, so custom delegates are kept)
+        from qgis.PyQt.QtWidgets import QStyledItemDelegate
+        vp = w.viewport()
+        vp.setProperty("ppViewport", True)
+        vp.setProperty("ppViewportBg", FIELD)
+        vp.installEventFilter(pt)
+        if type(w.itemDelegate()) is QStyledItemDelegate:
+            d = _view_delegate_class()(w)
+            _DELEGATES.append(d)
+            w.setItemDelegate(d)
+        vp.update()
         return
 
 
