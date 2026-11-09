@@ -253,11 +253,12 @@ class CloudView2D(QtWidgets.QWidget):
 
     def _draw_tool(self, p):
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-        acc = QtGui.QColor(theme.ACCENT)
+        mode = getattr(self, "edit_mode", "")
+        acc = render.edit_qcolor(mode)              # red reject, green accept, grey select
         if self._poly:
             pen = QtGui.QPen(acc, 1.5, Qt.PenStyle.DashLine)
             p.setPen(pen)
-            p.setBrush(QtGui.QColor(0, 229, 170, 30) if self.tool in ("rect", "poly", "lasso") else
+            p.setBrush(render.edit_qcolor(mode, 45) if self.tool in ("rect", "poly", "lasso") else
                        Qt.BrushStyle.NoBrush)
             pts = [QtCore.QPointF(*q) for q in self._poly]
             if self.tool == "rect" and len(pts) == 2:
@@ -273,7 +274,7 @@ class CloudView2D(QtWidgets.QWidget):
                                                 [QtCore.QPointF(pts[-1].x(), self.height()),
                                                  QtCore.QPointF(pts[0].x(), self.height())]))
                     p.setPen(Qt.PenStyle.NoPen)
-                    p.setBrush(QtGui.QColor(232, 72, 85, 40))
+                    p.setBrush(render.edit_qcolor(mode, 45))
                     p.drawPolygon(sh)
             else:
                 if self.tool == "poly" and self._cursor is not None:
@@ -281,7 +282,7 @@ class CloudView2D(QtWidgets.QWidget):
                 p.drawPolygon(QtGui.QPolygonF(pts))
         if self.tool == "brush" and self._cursor is not None:
             p.setPen(QtGui.QPen(acc, 1))
-            p.setBrush(QtGui.QColor(0, 229, 170, 40))
+            p.setBrush(render.edit_qcolor(mode, 50))
             p.drawEllipse(self._cursor, self.brush_px, self.brush_px)
         if self._measure:
             p.setPen(QtGui.QPen(QtGui.QColor(theme.AMBER), 1.5))

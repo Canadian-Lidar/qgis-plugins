@@ -333,7 +333,8 @@ class PlanView(CloudView2D):
         cor, rot = self.handles()
         sc = [QtCore.QPointF(*self.to_screen(*c)) for c in cor]
         hl = self._bhover is not None or self._bdrag is not None
-        p.setPen(QtGui.QPen(QtGui.QColor(theme.BRIGHT if hl else theme.ACCENT), 2 if hl else 1.4, Qt.PenStyle.DashLine))
+        box_col = QtGui.QColor(*render.BOX_RGB)                 # the Inspection Area outline: white
+        p.setPen(QtGui.QPen(box_col, 2.4 if hl else 1.4, Qt.PenStyle.DashLine))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawPolygon(QtGui.QPolygonF(sc))
         b = self.box
@@ -341,7 +342,7 @@ class PlanView(CloudView2D):
         u = np.array([math.sin(br), math.cos(br)])
         c = np.array([b["cx"], b["cy"]])
         tip = c + u * b["length"] / 2
-        p.setPen(QtGui.QPen(QtGui.QColor(theme.ACCENT), 1.2))
+        p.setPen(QtGui.QPen(box_col, 1.2))
         p.drawLine(QtCore.QPointF(*self.to_screen(*c)), QtCore.QPointF(*self.to_screen(*tip)))
         if self.tool == "pan" and (hl or self._bdrag):
             p.setPen(QtGui.QPen(QtGui.QColor(theme.BRIGHT), 1))

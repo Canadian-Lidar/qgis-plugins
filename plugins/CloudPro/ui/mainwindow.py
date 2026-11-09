@@ -135,6 +135,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plan = self.plan_pane.view
         self.slice = self.slice_pane.view
         self.v3d = self.v3d_pane.view
+        for v in (self.plan, self.slice, self.v3d):
+            v.edit_mode = self.action                     # the selection shape's colour (set_mode keeps it)
         for v in (self.plan, self.slice):
             v.selectionMade.connect(lambda m, t, vv=v: self.edit_selection(vv, m))
             v.pointPicked.connect(lambda j, vv=v: self.show_point(vv.idx[j] if j >= 0 else -1))
@@ -190,7 +192,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             QtWidgets.QMainWindow.DockOption.AllowNestedDocks |
                             QtWidgets.QMainWindow.DockOption.AllowTabbedDocks |
                             QtWidgets.QMainWindow.DockOption.GroupedDragging)
-        self.setTabPosition(Qt.DockWidgetArea.AllDockWidgetAreas, QtWidgets.QTabWidget.TabPosition.North)
+        self.setTabPosition(Qt.DockWidgetArea.AllDockWidgetAreas, QtWidgets.QTabWidget.TabPosition.South)
         self.docks = {}
         self._view_vis = {"plan": True, "slice": True, "3d": True}
         self._view_stale = set()
@@ -453,7 +455,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.b_redo.clicked.connect(self.redo)
         self.b_rej = chrome.IconButton("", options=[("hide", "eye_off", "Rejected points hidden in every view (H). "
                                                                         "Each view has its own eye too."),
-                                                    ("show", "eye", "Rejected points shown in red in every view (H)")])
+                                                    ("show", "eye", "Rejected points shown in magenta in every view (H)")])
         self.b_rej.optionChanged.connect(lambda k: self._toggle_rej(k == "show"))
         self.b_zoom = chrome.IconButton("zoomall", "Zoom all views to the Inspection Area (Ctrl+Home)")
         self.b_zoom.clicked.connect(self.zoom_all)
@@ -461,17 +463,14 @@ class MainWindow(QtWidgets.QMainWindow):
             tb.addWidget(b)
         tb.add_sep()
         tb.addWidget(chrome.label(" CELL "))
-        self.sp_cell = QtWidgets.QDoubleSpinBox()
-        self.sp_cell.setRange(0.5, 25.0)
-        self.sp_cell.setSingleStep(0.5)
-        self.sp_cell.setDecimals(1)
-        self.sp_cell.setValue(0.5)
-        self.sp_cell.setSuffix(" m")
-        self.sp_cell.setKeyboardTracking(False)
-        self.sp_cell.setToolTip("Cell size of the project grid under the Plan view (0.5, 1, 2, 2.5, 5, 10, 12.5 or "
-                                "25 m: the stored 0.5 m grid summed into larger cells)")
-        self.sp_cell.valueChanged.connect(self._cell)
-        tb.addWidget(self.sp_cell)
+        self.cb_cell = QtWidgets.QComboBox()
+        from .planview import PlanView
+        for c in PlanView.CELL_CHOICES:
+            self.cb_cell.addItem("%g m" % c, c)
+        self.cb_cell.setToolTip("Cell size of the project grid under the Plan view (the stored 0.5 m grid summed "
+                                "into larger cells)")
+        self.cb_cell.currentIndexChanged.connect(lambda i: self._cell(self.cb_cell.itemData(i)))
+        tb.addWidget(self.cb_cell)
         tb.addWidget(chrome.label(" POINT "))
         self.sp_size = QtWidgets.QSpinBox()
         self.sp_size.setRange(1, 6)
@@ -588,6 +587,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def set_mode(self, k):
         self.action = k
         self.b_action.set_key(k)
+        for v in (self.plan, self.slice, self.v3d):         # selection shapes drawn in the edit's colour
+            v.edit_mode = k
+            v.update()
         self.a_class.setVisible(k == "class")
         if k == "accept" and not all(self.show_rej.values()):
             self.b_rej.set_key("show", emit=True)          # re-accepting needs the rejected points in sight
@@ -1819,11 +1821,14 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
 
     def _cell(self, v):
-        c = self.plan.set_cell(v)
-        if abs(c - v) > 1e-6:
-            self.sp_cell.blockSignals(True)
-            self.sp_cell.setValue(c)
-            self.sp_cell.blockSignals(False)
+        if v is None:
+            return
+        c = self.plan.set_cell(float(v))
+        i = self.cb_cell.findData(c)
+        if i >= 0 and i != self.cb_cell.currentIndex():
+            self.cb_cell.blockSignals(True)
+            self.cb_cell.setCurrentIndex(i)
+            self.cb_cell.blockSignals(False)
 
     def _lut(self, m):
         self.lut = m
@@ -1846,7 +1851,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_views()
 
     def _toggle_view_rej(self, key, on):
-        """A view's own eye: show its rejected points (red) or hide them."""
+        """A view's own eye: show its rejected points (magenta) or hide them."""
         self.show_rej[key] = on
         self.b_rej.set_key("show" if all(self.show_rej.values()) else "hide")
         self.refresh_views(which=(key,))
@@ -1940,7 +1945,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_legend("plan", self.plan)
             self.plan.a_offset, self.plan.b_offset = o[0], o[1]
             self.plan.set_points(ps.x[idx], ps.y[idx], z[idx], col, idx, fit=False)
-            self.plan_pane.title.setText("PLAN  %s pts" % "{:,}".format(len(idx)))
+            self.plan_pane.title.setText("PLAN")
         if "slice" in which:
             idx, u, v = in_slab(shown("slice"))
             col = self._colours(self._mode("slice"), idx, "slice")
@@ -1957,7 +1962,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.slice.a_offset = 0.0
                 self.slice.set_points(v, z[idx], -u, col, idx, fit=fit or len(self.slice.a) == 0)
                 self.slice_pane.lbl.setText("chainage %.2f m" % (pos + b["length"] / 2))
-            self.slice_pane.title.setText("SLICE  %s pts" % "{:,}".format(len(idx)))
+            self.slice_pane.title.setText("SLICE")
         if "3d" in which:
             idx = shown("3d")
             if self.v3d_pane.what.currentText() == "Slice":
@@ -1967,7 +1972,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_legend("3d", self.v3d)
             P = np.column_stack([ps.x[idx], ps.y[idx], z[idx]])
             self.v3d.set_points(P, col, idx, fit=fit or len(self.v3d.P) == 0)
-            self.v3d_pane.title.setText("3D  %s pts" % "{:,}".format(len(idx)))
+            self.v3d_pane.title.setText("3D")
             self.v3d.overlay_lines = self._box_lines3d()
         nsel = int(self.selected.sum()) if self.selected is not None else 0
         self.lbl_cnt.setText("%s pts  ·  %s rejected%s" % (
@@ -1986,7 +1991,7 @@ class MainWindow(QtWidgets.QMainWindow):
         z0 = self._z0
         cor = rect_corners(b["cx"], b["cy"], b["length"], b["width"], b["bearing"])
         out = [(np.column_stack([np.r_[cor[:, 0], cor[0, 0]], np.r_[cor[:, 1], cor[0, 1]], np.full(5, z0)]),
-                theme.ACCENT)]
+                "#ffffff")]                                  # the Inspection Area outline: white
         for l, tr in self.tracks.items():
             if not self.line_enabled.get(l, True):
                 continue
