@@ -51,6 +51,47 @@ def _path():
     return None
 
 
+def _cache_dir():
+    """Per-user folder for the loaded copy of the library (outside the plugin folder)."""
+    if sys.platform.startswith("win"):
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or os.path.expanduser("~")
+    else:
+        base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "CloudPro", "engine")
+
+
+def _loadable_copy(src):
+    """A copy of the library to load, named by its content, in the per-user cache folder.
+
+    Windows keeps a loaded DLL locked until QGIS closes; loaded from the plugin folder, it stops the plugin manager
+    from upgrading or removing CloudPro. The copy is loaded instead, so the plugin folder is never locked. Copies
+    of older versions are removed when they are no longer in use. Falls back to the original when the copy fails."""
+    import hashlib
+    import shutil
+    import tempfile
+    try:
+        with open(src, "rb") as f:
+            h = hashlib.sha1(f.read()).hexdigest()[:12]
+        name, ext = os.path.splitext(os.path.basename(src))
+        dst_dir = _cache_dir()
+        os.makedirs(dst_dir, exist_ok=True)
+        dst = os.path.join(dst_dir, "%s-%s%s" % (name, h, ext))
+        if not os.path.exists(dst) or os.path.getsize(dst) != os.path.getsize(src):
+            fd, tmp = tempfile.mkstemp(dir=dst_dir, suffix=ext + ".tmp")
+            os.close(fd)
+            shutil.copyfile(src, tmp)
+            os.replace(tmp, dst)
+        for f in os.listdir(dst_dir):                       # older copies (fails silently while in use)
+            if f != os.path.basename(dst) and f.startswith(name + "-"):
+                try:
+                    os.remove(os.path.join(dst_dir, f))
+                except OSError:
+                    pass
+        return dst
+    except OSError:
+        return src
+
+
 def _load():
     global _lib, _why
     if _lib is not None or _why:
@@ -63,7 +104,7 @@ def _load():
         _why = "no engine for this platform" if not p else "library missing"
         return None
     try:
-        lib = C.CDLL(p)
+        lib = C.CDLL(_loadable_copy(p))
         if lib.cp_version() != VERSION:
             _why = "engine version %d, CloudPro expects %d" % (lib.cp_version(), VERSION)
             return None
