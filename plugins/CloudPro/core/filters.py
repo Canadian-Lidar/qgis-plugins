@@ -620,8 +620,7 @@ class AreaOutlier(Filter):
     def run(self, ctx, sel):
         tr, acc = ctx.neighbours()
         k = int(self.v("k"))
-        d, _ = tr.query(ctx.xyz(sel), k=k + 1, workers=-1)
-        md = d[:, 1:].mean(1)
+        md = sp.mean_knn_distance(tr, ctx.xyz(sel), k)          # in blocks: bounded memory
         if self.v("adaptive"):
             r = np.maximum(ctx.ps.rng[sel] * 0.01, 1.0)
             md = md / r
@@ -636,8 +635,8 @@ class RadiusOutlier(Filter):
 
     def run(self, ctx, sel):
         tr, acc = ctx.neighbours()
-        n = tr.query_ball_point(ctx.xyz(sel), self.v("r"), workers=-1, return_length=True) - 1
-        return _res(reject=sel[n < self.v("nmin")])
+        few = sp.fewer_than(tr, ctx.xyz(sel), self.v("r"), int(self.v("nmin")))   # nearest-neighbour test
+        return _res(reject=sel[few])
 
 
 class Weather(Filter):
@@ -679,8 +678,8 @@ class Weather(Filter):
             rad = np.full(len(ci), self.v("ror_r"))
         else:
             rad = np.maximum(self.v("srmin"), self.v("beta") * r[ci] * math.radians(self.v("alpha")))
-        n = tr.query_ball_point(q, rad, workers=-1, return_length=True) - 1
-        return _res(reject=sel[ci[n < self.v("kmin")]])
+        few = sp.fewer_than(tr, q, rad, int(self.v("kmin")))      # nearest-neighbour test, any density
+        return _res(reject=sel[ci[few]])
 
 
 class IsolatedCluster(Filter):

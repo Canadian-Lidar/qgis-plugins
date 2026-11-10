@@ -2174,6 +2174,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.after_edit()
 
     def after_edit(self):
+        self._edit_rev = getattr(self, "_edit_rev", 0) + 1     # a preview from before this edit is stale
         self._col_cache = {}
         self._fill_classes()
         self.refresh_views()
@@ -2385,10 +2386,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._prev_pending = True
             return
         g = F.FilterGroup.from_dict(self.filters.group.to_dict())
-        scope = self._scope_mask(self.filters.cmb_scope.currentText())
+        scope_name = self.filters.cmb_scope.currentText()
+        scope = self._scope_mask(scope_name)
         ps = self.ps
         flag = [False]
         self._prev_cancel = flag
+        self._prev_key = (repr(g.to_dict()), scope_name, id(ps), getattr(self, "_edit_rev", 0))
         ref, tracks, origin = self._reference(), self.tracks, self._origin()
         self.filters.set_status("Preview running...")
 
@@ -2420,6 +2423,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if ps is not self.ps:
             return
         self.preview = ctx
+        self.preview_key = getattr(self, "_prev_key", None)
         newly = int((((ctx.flag & REJECTED) != 0) & ~self.ps.rejected).sum())
         reacc = int((((ctx.flag & REJECTED) == 0) & self.ps.rejected).sum())
         ncls = int((ctx.cls != self.ps.cls).sum())
@@ -2459,6 +2463,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.edits is None or self.filters.group is None or self._guard("running another filter"):
             return
         g = F.FilterGroup.from_dict(self.filters.group.to_dict())
+        if scope in ("Inspection Area", "Slice"):
+            # the live preview already ran exactly this group on these points: use its result, no second run
+            key = (repr(g.to_dict()), scope, id(self.ps), getattr(self, "_edit_rev", 0))
+            if self.preview is not None and self._prev_cancel is None and getattr(self, "preview_key", None) == key:
+                self.accept_preview()
+                return
+        # never two runs of a group at once: a preview still computing is stopped (it would share the cores and
+        # double the memory)
+        if self._prev_cancel is not None:
+            self._prev_cancel[0] = True
+            self._prev_pending = False
+        if self.filters.btn_prev.isChecked():
+            self.clear_preview(refresh=False)
+            self.filters.preview_done()
         if scope in ("Inspection Area", "Slice"):
             mask = self._scope_mask(scope)
             ps = self.ps
@@ -2509,17 +2527,25 @@ class MainWindow(QtWidgets.QMainWindow):
         box = self.box if d.scope.currentText() == "Inspection Area" else None
         lines, classes = d.selected_lines(), parse_set(d.classes.text()) or None
         inc, per_line = d.rejected.isChecked(), d.per_line.isChecked()
-        cell, stat, fill = d.cell.value(), d.stat.currentText(), d.fill.value()
+        cell, stat, fill = float(d.cell.currentData()), d.stat.currentText(), d.fill.value()
+        spacing, thin_mode = float(d.thin.currentData() or 0) or None, d.thin_mode.currentData()
+        tile = int(d.tile.currentData() or 0) or None
         add = d.add_qgis.isChecked()
         project = self.project
+        if tile and kind in (0, 1):
+            nt = EX.plan(project, box, tile)
+            if nt > 400 and theme.msg_question(self, "CloudPro", "%d m tiles make up to %d files here.\n\nExport "
+                                               "anyway?" % (tile, nt)) != QtWidgets.QMessageBox.StandardButton.Yes:
+                return
         project.store.sync()
 
         def job(progress, cancel):
             if kind == 0:
                 return ("las", path, EX.export_las(project, path, box, lines, inc, classes, per_line, progress,
-                                                   cancel), add)
+                                                   cancel, spacing=spacing, thin_mode=thin_mode, tile=tile), add)
             if kind == 1:
-                return ("xyz", path, EX.export_xyz(project, path, box, lines, inc, classes, progress, cancel), add)
+                return ("xyz", path, EX.export_xyz(project, path, box, lines, inc, classes, progress, cancel,
+                                                   spacing=spacing, thin_mode=thin_mode, tile=tile), add)
             G, x0, yt = EX.grid_surface(project, cell, stat, box, lines, classes, fill, progress)
             return ("grid", EX.write_grid(path, G, x0, yt, cell, project.crs), int(np.isfinite(G).sum()), add)
         self._run("export", job, "Exporting")
@@ -2714,8 +2740,15 @@ class MainWindow(QtWidgets.QMainWindow):
             if act is not None:
                 self.project.record_filter(self.filters.group.to_dict(), self.filters.cmb_scope.currentText(),
                                            act.size)
-            self.filters.set_status("%s points changed%s" % ("{:,}".format(act.size if act else 0),
-                                                             ("\n" + "\n".join(ctx.messages)) if ctx.messages else ""))
+            tim = getattr(ctx, "timings", [])
+            ttxt = ("%s points in %.1f s: " % ("{:,}".format(len(ps)), sum(t for _n, t in tim)) +
+                    ", ".join("%s %.1f s" % (n, t) for n, t in tim)) if tim else ""
+            self.filters.set_status("%s points changed%s%s" % ("{:,}".format(act.size if act else 0),
+                                                               ("\n" + ttxt) if ttxt else "",
+                                                               ("\n" + "\n".join(ctx.messages)) if ctx.messages else ""))
+            if ttxt:
+                self.project.log("Filter '%s' on the %s: %s" % (self.filters.group.name,
+                                                               self.filters.cmb_scope.currentText().lower(), ttxt))
             self.after_edit()
         elif tag == "filter_tiled":
             self.filters.set_status("%s points changed" % "{:,}".format(res))
@@ -2725,12 +2758,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self._edited(None)
         elif tag == "export":
             kind, path, n, add = res
-            self.status("Exported %s to %s" % ("{:,}".format(n), path), 10000)
+            files = getattr(self.project, "last_export_files", None) if kind != "grid" else None
+            files = files if files else [path]
+            where = path if len(files) == 1 else "%d files in %s" % (len(files), os.path.dirname(files[0]))
+            self.status("Exported %s to %s" % ("{:,}".format(n), where), 10000)
             if add and self.iface is not None:
                 from . import qgis_layers
-                qgis_layers.add_file(self.iface, path, kind)
-            theme.msg_info(self, "CloudPro", "Exported %s %s to\n%s" % (
-                "{:,}".format(n), "cells" if kind == "grid" else "points", path))
+                for fp in files[:50]:                    # many tiles: the first 50 on the map
+                    qgis_layers.add_file(self.iface, fp, kind)
+            theme.msg_info(self, "CloudPro", "Exported %s %s to\n%s%s" % (
+                "{:,}".format(n), "cells" if kind == "grid" else "points", where,
+                "\n\nThe first 50 tiles were added to the map." if add and len(files) > 50 else ""))
         self._refresh_history()
 
     def _error(self, title, ex):

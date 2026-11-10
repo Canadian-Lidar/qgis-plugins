@@ -14,6 +14,7 @@ Stand-alone projects (no chain):
     python -m cloudpro.cli import  D:/jobs/MyJob/MyJob.cloudpro.json --sbet sbet_20261102.out --clraw D:/captures
     python -m cloudpro.cli filter  D:/jobs/MyJob/MyJob.cloudpro.json --group "Mobile mapping - standard clean"
     python -m cloudpro.cli export  D:/jobs/MyJob/MyJob.cloudpro.json --las out.las [--per-line] [--classes 2]
+                                   [--spacing 0.1 [--thin-2d]] [--tile 250]
     python -m cloudpro.cli export  D:/jobs/MyJob/MyJob.cloudpro.json --grid dem.tif --cell 0.5 --classes 2
     python -m cloudpro.cli info    D:/jobs/MyJob/MyJob.cloudpro.json
 
@@ -70,6 +71,9 @@ def main(argv=None):
     e.add_argument("--classes", default="")
     e.add_argument("--lines", default="")
     e.add_argument("--per-line", action="store_true")
+    e.add_argument("--spacing", type=float, default=None, help="thin to one point per cell of this size (m)")
+    e.add_argument("--thin-2d", action="store_true", help="thin in plan cells instead of 3-D cells")
+    e.add_argument("--tile", type=float, default=None, help="split into tiles of this size (m)")
     e.add_argument("--include-rejected", action="store_true")
     n = sub.add_parser("info")
     n.add_argument("project")
@@ -157,10 +161,12 @@ def main(argv=None):
         classes = parse_set(a.classes) or None
         lines = [l - 1 for l in parse_set(a.lines)] or None
         if a.las:
-            k = EX.export_las(prj, a.las, None, lines, a.include_rejected, classes, a.per_line, _progress)
+            k = EX.export_las(prj, a.las, None, lines, a.include_rejected, classes, a.per_line, _progress,
+                              spacing=a.spacing, thin_mode="2D" if a.thin_2d else "3D", tile=a.tile)
             print("\rLAS: %s points -> %s" % ("{:,}".format(k), a.las))
         if a.xyz:
-            k = EX.export_xyz(prj, a.xyz, None, lines, a.include_rejected, classes, _progress)
+            k = EX.export_xyz(prj, a.xyz, None, lines, a.include_rejected, classes, _progress,
+                              spacing=a.spacing, thin_mode="2D" if a.thin_2d else "3D", tile=a.tile)
             print("\rXYZ: %s points -> %s" % ("{:,}".format(k), a.xyz))
         if a.grid:
             G, x0, yt = EX.grid_surface(prj, a.cell, a.stat, None, lines, classes, 0, _progress)
