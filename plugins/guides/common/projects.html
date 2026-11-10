@@ -4,7 +4,7 @@
 <tr><th>Path</th><th>Holds</th></tr>
 <tr><td><code>Job_Oct20/</code></td><td>The job folder: the capture folders recorded by the mapper (read only)</td></tr>
 <tr><td><code>Job_Oct20/Processing/&lt;Name&gt;/&lt;Name&gt;.dcsproj</code></td><td>The shared project: captures, shared settings (coordinate system, base station, antennas, Lidar mounting, vehicle) and the state of each stage. A <code>.bak</code> copy is kept beside it.</td></tr>
-<tr><td><code>01_PosPro/</code>, <code>02_AlignPro/</code>, <code>03_CloudPro/</code></td><td>Each stage's own settings file, <code>work/</code>, <code>log/</code>, and <code>out/</code> with what it publishes</td></tr>
+<tr><td><code>01_PosPro/</code>, <code>02_AlignPro/</code>, <code>03_CloudPro/</code></td><td>Each stage's own settings file, <code>work/</code>, <code>log/</code>, and <code>out/</code> with what it finalizes</td></tr>
 <tr><td><code>&lt;Name&gt;.qgz</code></td><td>The QGIS project, when you save it from the project menu</td></tr>
 </table>
 <h2>Mapper 2.10 projects</h2>
@@ -37,4 +37,4 @@
 <p>If the captures are not where they were (another drive letter, a copied job), {NAME} says so when the project opens and asks for the job folder's new location; <span class="ui">Raw data moved? Relocate the job folder…</span> in the project menu does the same at any time. The captures are found again by their place in the job folder; nothing goes out of date because of the move.</p>
 
 <h2>Out-of-date results</h2>
-<p>Each stage records what it was built from. When an earlier stage publishes again, the raw data changes, or a shared setting it depends on is edited, the stage turns <b>⚠ stale</b> in the workflow boxes, with the reason on hover. Run that stage again to bring it up to date. A run that fails or is cancelled keeps the earlier results.</p>
+<p>Each stage records what it was built from. When an earlier stage finalizes again, the raw data changes, or a shared setting it depends on is edited, the stage turns <b>amber (out of date)</b> in the chain in the header, with the reason on hover. Run that stage again to bring it up to date. A run that fails or is cancelled keeps the earlier results.</p>

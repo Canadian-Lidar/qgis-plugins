@@ -35,7 +35,7 @@ class TrajectoryBox(QGroupBox):
         super().__init__("Trajectory", parent)
         cfg = cfg or {}
         f = QFormLayout(self)
-        self.r_pp = QRadioButton("PosPro trajectory published for this project (trajectory.json)")
+        self.r_pp = QRadioButton("PosPro trajectory finalized for this project (trajectory.json)")
         self.pp_state = QLabel("")
         self.pp_state.setObjectName("ppHint")
         self.pp_state.setWordWrap(True)

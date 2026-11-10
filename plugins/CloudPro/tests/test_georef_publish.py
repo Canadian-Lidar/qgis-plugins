@@ -156,7 +156,7 @@ def main():
                       "source": "calibration"},
         "lidar_lever_m": {"value": p.lines[0]["lever"], "source": "capture"}, "latency_s": 0.0,
         "trajectory": {"handover_id": dcs.stage("pospro").get("handover_id")}}, "AlignPro", "test")
-    assert any("AlignPro has published" in w for w in chain.quick_state(p)), chain.quick_state(p)
+    assert any("AlignPro has finalized" in w for w in chain.quick_state(p)), chain.quick_state(p)
     inp, out = georef(p, dcs, override={"source": "recorded"})
     assert not chain.quick_state(p), chain.quick_state(p)
     doc = deliver(p, dcs, las=True)

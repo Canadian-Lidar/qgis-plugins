@@ -1,8 +1,13 @@
 <!--#vars {
 "EXTRAS_ROW": "",
-"WINDOW_EXTRA": ", and Open the Data View",
-"PROJECT_MENU_TABLE": "<table><tr><th>Item</th><th>What it does</th></tr><tr><td><span class='ui'>New project…</span></td><td>Creates a shared processing project in a job folder (below) and opens it.</td></tr><tr><td><span class='ui'>Open project…</span></td><td>Opens a <code>.dcsproj</code>, for example the one PosPro made. The file dialog also offers older stand-alone AlignPro projects (<code>*.alignpro.json</code>); they open without the workflow boxes and cannot publish.</td></tr><tr><td><span class='ui'>Recent projects</span></td><td>The last 15 projects AlignPro opened, as <i>name — folder</i>; <i>(none)</i> when the list is empty. Projects that no longer exist are left out. When AlignPro starts it reopens the most recent one.</td></tr><tr><td><span class='ui'>Open the project folder</span></td><td>Opens <code>Processing/&lt;Name&gt;/</code> in your file manager.</td></tr><tr><td><span class='ui'>Raw data moved? Relocate the job folder…</span></td><td>Asks for the job folder's new location and finds the captures there (see below).</td></tr><tr><td><span class='ui'>Save the QGIS project in the project folder</span></td><td>Saves the QGIS project, with AlignPro's map layers, as <code>&lt;Name&gt;.qgz</code> in the project folder. If another QGIS project is open, AlignPro asks before saving it under the new name.</td></tr><tr><td><span class='ui'>Reset AlignPro to the recorded values…</span></td><td>After a confirmation: puts the mounting angles, lever arm and latency back to the values recorded in the <code>.clraw</code> files, uses every line again, removes the calibration result and places the inspection boxes again. The processing settings stay (Settings has <i>Restore defaults</i>), and nothing is published by the reset itself. Available once the data is read.</td></tr><tr><td><span class='ui'>Show the log</span></td><td>The <i>AlignPro log</i> window: this session's messages followed by the project's own log (the last 500 entries).</td></tr><tr><td><span class='ui'>User guide (this version)</span></td><td>Opens this guide.</td></tr></table>",
-"AFTER_CREATE": "AlignPro then looks for the survey lines' <code>.clraw</code> files in the job folder (mapper 2.10 navigation recordings are left out); when the project has no captures recorded yet it lists the files it found and asks whether to use them, then reads them straight away (see the Data chapter)."
+"PROJECT_MENU_TABLE": "<table><tr><th>Item</th><th>What it does</th></tr><tr><td><span class='ui'>New project…</span></td><td>Creates a shared processing project in a job folder (below) and opens it.</td></tr><tr><td><span class='ui'>Open project…</span></td><td>Opens a <code>.dcsproj</code>, for example the one PosPro made. The file dialog also offers older stand-alone AlignPro projects (<code>*.alignpro.json</code>); they open without the workflow boxes and cannot finalize.</td></tr><tr><td><span class='ui'>Recent projects</span></td><td>The last 15 projects AlignPro opened, as <i>name — folder</i>; <i>(none)</i> when the list is empty. Projects that no longer exist are left out. When AlignPro starts it reopens the most recent one.</td></tr><tr><td><span class='ui'>Open the project folder</span></td><td>Opens <code>Processing/&lt;Name&gt;/</code> in your file manager.</td></tr><tr><td><span class='ui'>Raw data moved? Relocate the job folder…</span></td><td>Asks for the job folder's new location and finds the captures there (see below).</td></tr><tr><td><span class='ui'>Save the QGIS project in the project folder</span></td><td>Saves the QGIS project, with AlignPro's map layers, as <code>&lt;Name&gt;.qgz</code> in the project folder. If another QGIS project is open, AlignPro asks before saving it under the new name.</td></tr><tr><td><span class='ui'>Reset AlignPro to the recorded values…</span></td><td>After a confirmation: puts the mounting angles, lever arm and latency back to the values recorded in the <code>.clraw</code> files, uses every line again, removes the calibration result and places the inspection boxes again. The processing settings stay (Settings has <i>Restore defaults</i>), and nothing is finalized by the reset itself. Available once the data is read.</td></tr><tr><td><span class='ui'>Show the log</span></td><td>The <i>AlignPro log</i> window: this session's messages followed by the project's own log (the last 500 entries).</td></tr><tr><td><span class='ui'>User guide (this version)</span></td><td>Opens this guide.</td></tr><tr><td><span class='ui'>Open the Data View</span></td><td>Opens the Data View window (<a href='#dataview'>Data View</a>).</td></tr><tr><td><span class='ui'>Reset window</span></td><td>The window back to its default size, centred.</td></tr></table>",
+"AFTER_CREATE": "AlignPro then looks for the survey lines' <code>.clraw</code> files in the job folder (mapper 2.10 navigation recordings are left out); when the project has no captures recorded yet it lists the files it found and asks whether to use them, then reads them straight away (see the Data chapter).",
+"STEPS_EXAMPLE": "PREPARE › CALIBRATE › REPORT",
+"STEPS_ROW": "The step list on the left in three phases: Prepare (Data, Installation, Quality), Calibrate (Pairs, Calibration: Apply finalizes the result for CloudPro) and Report (Analyze, Report).",
+"TOOLS_CAPTION": "",
+"MENU_NOTE": ", which also opens the Data View",
+"TOOLS_ROW": "",
+"NAV_TEXT": "Under the step pages, <span class='ui'>‹ Back</span> goes to the previous step and <span class='ui'>Next: &lt;step&gt; ›</span> to the next one; Next is greyed out until a required step is done and reads <span class='ui'>Skip to &lt;step&gt; ›</span> on optional steps. Hover either button for what is done and what to do. On the last step Next becomes <span class='ui'>Continue in CloudPro ›</span>, which opens CloudPro on the same project once the calibration is finalized. The step list on the left and the steps in the header still open any step at any time."
 }-->
 <!--#contents-->
 
@@ -14,11 +19,12 @@
 <p>A patch test drives past the same solid surfaces (walls, building corners, poles, open ground) several times, in opposite directions and at different distances. With the wrong angles the passes do not agree: a wall seen from both sides of the road appears twice, a little apart. AlignPro finds small flat <b>patches</b> that two or more passes see, and solves the three angles that bring the points of every pass onto the same planes (a point-to-plane adjustment). This correction to the recorded mounting is the <b>boresight</b>. With three or more passes it also solves with each pass left out in turn; the spread of those answers is the <b>SDEV</b> of each angle.</p>
 
 <h2>AlignPro in the DCS chain</h2>
-<p>AlignPro is stage 02 of the Data Collection Systems (DCS) chain. It reads the captures (<code>.clraw</code>) and PosPro's trajectory, and publishes <code>alignment.json</code> for CloudPro when you <b>apply</b> values; calibrating alone publishes nothing (Chapter <a href="#publishing">Publishing</a>).</p>
+<p>AlignPro is stage 02 of the Data Collection Systems (DCS) chain. It reads the captures (<code>.clraw</code>) and PosPro's trajectory, and finalizes <code>alignment.json</code> for CloudPro when you <b>apply</b> values; calibrating alone finalizes nothing (Chapter <a href="#publishing">Finalizing</a>).</p>
 
 <h2>What's new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>1.7.0</b></td><td>The new DCS header: the chain and AlignPro's phases (Prepare › Calibrate › Report) as breadcrumbs, with the guidance in their tooltips instead of a sentence under the page. The window and the Data View are always windows of their own (no docking); <span class="ui">Open the Data View</span> and <span class="ui">Reset window</span> are in the project menu. <i>Publish</i> is now <i>Finalize</i>. Needs DCS Core 1.11.0.</td></tr>
 <tr><td><b>1.6.2</b></td><td>Packets recorded while the vehicle is slower than the minimum pass speed (Settings, <i>Passes and pairs</i>) are left out while reading, so parking and waiting no longer use up the point budget of a line; the moving passes get those points instead. Lines are read again once.</td></tr>
 <tr><td><b>1.6.1</b></td><td><b>Point density</b> on the Calibration page (section <a href="#density">Point density</a>): Standard, Dense (now the default for new projects), Very dense or Custom, with an estimate of the memory it needs on this PC; a density that would not fit is refused. Fixes: Apply or a system profile during the full-density read waits for it instead of half-applying; opening a project while a job runs waits for it; STOP no longer shows as an error or saves a partial calibration; holes longer than 1 s in the trajectory are no longer bridged (their points are left out); the Data View places only the points it shows (faster nudges, less memory); drawing tools give the previous map tool back. Needs DCS Core 1.8.0.</td></tr>
 <tr><td><b>1.6.0</b></td><td><b>System profiles.</b> <span class="ui">System profile…</span> on the Installation page (and <span class="ui">Save to system profile…</span> on the Calibration page) keeps the applied Lidar lever arm, mounting angles and latency as the profile of the mapper system that recorded the lines, on this computer. When you open a job from a system that has a profile whose values differ, AlignPro offers to use them (section <a href="#profiles">System profiles</a>). PosPro keeps the antenna offsets in the same profile. Needs DCS Core 1.7.0.</td></tr>
@@ -52,7 +58,7 @@
 <tr><td>2 Installation</td><td>the lever arm</td><td>a lever arm is set</td><td>amber: the lever arm is 0, 0, 0</td></tr>
 <tr><td>3 Quality</td><td>worst PPS lock and lost packets</td><td>PPS lock 100 % and no lost packets</td><td>amber: PPS lock lost or packets lost</td></tr>
 <tr><td>4 Pairs</td><td>pairs and patches</td><td>at least 2 reciprocal pairs and 20 wall patches</td><td>amber: fewer, but at least 6 patches; red: fewer than 6 patches</td></tr>
-<tr><td>5 Calibration</td><td>the advised angles, or what to do next</td><td>calibrated, applied and published, no warnings</td><td>amber: a calibration warning, <i>apply to publish</i>, or <i>out of date: re-run</i></td></tr>
+<tr><td>5 Calibration</td><td>the advised angles, or what to do next</td><td>calibrated, applied and finalized, no warnings</td><td>amber: a calibration warning, <i>apply to finalize</i>, or <i>out of date: re-run</i></td></tr>
 <tr><td>6 Analyze</td><td>latency, lever, angles</td><td colspan="2">optional; always grey</td></tr>
 <tr><td>7 Report</td><td>the last report's file name</td><td>a report was written in this session</td><td>–</td></tr>
 </table>
@@ -109,12 +115,12 @@
 <p>The trajectory gives the vehicle's position and attitude for every point. Choose one of three:</p>
 <table>
 <tr><th>Option</th><th>Use it</th></tr>
-<tr><td><span class="ui">PosPro trajectory published for this project (trajectory.json)</span></td><td>For the final calibration. This is the choice for a new project. The line under it says PosPro's state: <i>published and current</i> (green), <i>published, but out of date</i> with the reasons, <i>PosPro is processing now</i>, <i>the last PosPro run failed</i>, or <i>not run yet</i> (amber). While PosPro has not published a trajectory, AlignPro uses the Certus real-time trajectory and says so in a warning. GPS week and leap seconds come from PosPro's file.</td></tr>
+<tr><td><span class="ui">PosPro trajectory finalized for this project (trajectory.json)</span></td><td>For the final calibration. This is the choice for a new project. The line under it says PosPro's state: <i>finalized and current</i> (green), <i>finalized, but out of date</i> with the reasons, <i>PosPro is processing now</i>, <i>the last PosPro run failed</i>, or <i>not run yet</i> (amber). While PosPro has not finalized a trajectory, AlignPro uses the Certus real-time trajectory and says so in a warning. GPS week and leap seconds come from PosPro's file.</td></tr>
 <tr><td><span class="ui">Post-processed SBET file(s)</span></td><td>One SBET for the whole drive, or <b>one per capture</b> (see below). <span class="ui">Add…</span> picks one or more files (<code>*.out</code>, <code>*.sbet</code>) and selects this option; <span class="ui">Remove</span> takes the selected ones out. A date in the first file's name such as <code>sbet_20261020.out</code> fills the date. <span class="ui">Find the GPS week from the .clraw times</span> (on by default) works out the GPS week from the capture times; turn it off to give the <span class="ui">Date (UTC)</span> yourself. <span class="ui">Leap seconds</span> is GPS − UTC (18 s since 2017). Without a file name this option falls back to the real-time trajectory.</td></tr>
 <tr><td><span class="ui">Certus real-time (packet 20 in the .clraw), quick look</span></td><td>A first look in the field. Without RTK fixed throughout, the real-time position wanders between passes and the solved angles absorb it; AlignPro warns when it is RTK fixed less than 95 % of the time.</td></tr>
 </table>
 <p><b>One SBET per capture.</b> With the older MapPro format the Certus was logged only during each capture, and every Start/Stop made a new project folder, so each capture has its own SBET. Add every capture folder to the project (<span class="ui">Add folder…</span> above) and every SBET to the list. AlignPro places each SBET by its GPS time and uses it for the captures it covers; the order of the list does not matter. Nothing is interpolated between two SBETs. Under <i>What the files contain</i>, each SBET is listed with the lines it covers, and a warning names any line that no SBET covers (that line is then left without points).</p>
-<p>A calibration solved on anything other than PosPro's trajectory is marked on the Calibration page (<i>Solved on the SBET file trajectory, not PosPro's…</i>) and in <code>alignment.json</code>. When PosPro later publishes, AlignPro turns stale in the workflow boxes.</p>
+<p>A calibration solved on anything other than PosPro's trajectory is marked on the Calibration page (<i>Solved on the SBET file trajectory, not PosPro's…</i>) and in <code>alignment.json</code>. When PosPro later finalizes, AlignPro turns stale in the workflow boxes.</p>
 
 <h2>What the files contain</h2>
 <table>
@@ -156,7 +162,7 @@
 <li><span class="ui">Lidar latency (ms)</span>: added to the Lidar time. Leave it at 0 while the PPS time lock is good.</li>
 <li><span class="ui">Revert to recorded</span> puts the recorded lever arm and angles back in the fields and sets the latency to 0. Nothing changes until you press Apply.</li>
 <li><span class="ui">System profile…</span> saves the applied values as the profile of this system, or uses a saved profile (below).</li>
-<li><span class="ui">Apply</span> re-georeferences every line with the values in the fields, finds the planar surfaces again, and publishes <code>alignment.json</code> for CloudPro.</li>
+<li><span class="ui">Apply</span> re-georeferences every line with the values in the fields, finds the planar surfaces again, and finalizes <code>alignment.json</code> for CloudPro.</li>
 <li><span class="ui">Certus as recorded</span>: the Certus model, the alignment the Certus applies, both antenna offsets and the Lidar model, for reference.</li>
 </ul>
 <h3 id="profiles">System profiles</h3>
@@ -164,7 +170,7 @@
 <ul>
 <li>A profile knows the system it was made for: the mapper unit's serial number (from the survey line's <code>session.json</code>) and the Certus serial number (from <code>hardware.json</code>).</li>
 <li><b>Save:</b> after <span class="ui">Apply advised</span>, press <span class="ui">Save to system profile…</span> (Calibration) or <span class="ui">System profile…</span> (Installation). <span class="ui">New…</span> makes a profile for this job's system; <span class="ui">Save this job's values to the profile</span> updates the selected one. Only the Lidar section is written; the antenna offsets PosPro saved stay as they are.</li>
-<li><b>Use:</b> when the lines are read and a profile matches the system that recorded them, AlignPro shows the values that differ and asks whether to use them. <span class="ui">Use profile values</span> applies them as if you had typed them and pressed <span class="ui">Apply</span>: the lines are georeferenced again, the profile's mounting becomes the job's starting mounting (shared with CloudPro) and the result is published. You are asked once per job for each version of a profile.</li>
+<li><b>Use:</b> when the lines are read and a profile matches the system that recorded them, AlignPro shows the values that differ and asks whether to use them. <span class="ui">Use profile values</span> applies them as if you had typed them and pressed <span class="ui">Apply</span>: the lines are georeferenced again, the profile's mounting becomes the job's starting mounting (shared with CloudPro) and the result is finalized. You are asked once per job for each version of a profile.</li>
 <li>The table in the System profiles window shows the profile beside this job; values that differ are amber. A profile made for another system can still be used, after a question.</li>
 <li>Keep the profile up to date when the hardware changes (the Lidar is remounted, an antenna is moved): save the new values after the next patch test.</li>
 </ul>
@@ -239,14 +245,14 @@
 
 <h1><span class="num">{N}</span>5 Calibration</h1>
 <p><span class="ui">Auto calibrate</span> solves roll, pitch and heading from every planar patch with all used lines, then again with each line left out when there are at least three. It starts from the current (applied) angles. It holds the AlignPro stage lock while it runs, so a second QGIS cannot work on AlignPro in the same project at the same time.</p>
-<figure><img src="fig/calibration.png" style="max-height:70mm"><figcaption><b>Figure {N}.1</b> The Calibration page right after Auto calibrate: the advised angles with their SDEV, the error before and after, and <i>not published yet</i>.</figcaption></figure>
+<figure><img src="fig/calibration.png" style="max-height:70mm"><figcaption><b>Figure {N}.1</b> The Calibration page right after Auto calibrate: the advised angles with their SDEV, the error before and after, and <i>not finalized yet</i>.</figcaption></figure>
 
 <h2>Calibrate, check, apply</h2>
 <ol class="steps">
-<li>Press <span class="ui">Auto calibrate</span>. When it ends, the bar says <i>Calibration done … Apply to publish it.</i> and the Data View opens with the advised angles as live values over the applied ones in grey.</li>
+<li>Press <span class="ui">Auto calibrate</span>. When it ends, the bar says <i>Calibration done … Apply to finalize it.</i> and the Data View opens with the advised angles as live values over the applied ones in grey.</li>
 <li>Read the cards. Each angle card shows the advised value and its SDEV: green below 0.02°, amber from 0.02° to 0.05°, red above. <span class="ui">Error before → after</span> is the mean point-to-plane error with the starting and the advised angles; after should be about 1 cm or less (green below 1 cm).</li>
 <li>Check the Data View (Chapter <a href="#dataview">Data View</a>): the passes should fall on one surface in the roll, pitch and heading boxes.</li>
-<li>Press <span class="ui">Apply advised</span>. AlignPro re-georeferences every line with the advised angles and publishes <code>alignment.json</code> for CloudPro.</li>
+<li>Press <span class="ui">Apply advised</span>. AlignPro re-georeferences every line with the advised angles and finalizes <code>alignment.json</code> for CloudPro.</li>
 <li>Press <span class="ui">Copy for mapper</span> and paste the angles into the mapper: <i>Settings › Hardware › Survey sensor › Mounting angles</i>.</li>
 </ol>
 
@@ -259,25 +265,25 @@
 <tr><td>Trajectory</td><td>The trajectory the calibration was solved on</td></tr>
 </table>
 <p>Calibration warnings appear in amber under these rows (Chapter <a href="#trouble">Troubleshooting</a>).</p>
-<p><span class="ui">Copy for mapper</span> copies the line <code>Roll 89.7187   Pitch 44.6997   Heading 0.6480</code> to the clipboard, to four decimals. It copies the <b>applied</b> angles, the ones published for CloudPro, so press it after <span class="ui">Apply advised</span> (or after applying your own values). To copy trial values you have not applied, use <span class="ui">Copy for mapper</span> in the Data View.</p>
+<p><span class="ui">Copy for mapper</span> copies the line <code>Roll 89.7187   Pitch 44.6997   Heading 0.6480</code> to the clipboard, to four decimals. It copies the <b>applied</b> angles, the ones finalized for CloudPro, so press it after <span class="ui">Apply advised</span> (or after applying your own values). To copy trial values you have not applied, use <span class="ui">Copy for mapper</span> in the Data View.</p>
 
-<h2>Published for CloudPro</h2>
-<figure><img src="fig/calibration_published.png" style="max-height:80mm"><figcaption><b>Figure {N}.2</b> After Apply advised: the state is <i>current</i>, with the published values, time and identifier. The amber line is a reminder that this result was solved on an SBET file, not on PosPro's trajectory.</figcaption></figure>
+<h2>Finalized for CloudPro</h2>
+<figure><img src="fig/calibration_published.png" style="max-height:80mm"><figcaption><b>Figure {N}.2</b> After Apply advised: the state is <i>current</i>, with the finalized values, time and identifier. The amber line is a reminder that this result was solved on an SBET file, not on PosPro's trajectory.</figcaption></figure>
 <ul>
-<li><b>State</b>: <i>current</i>, <i>out of date</i> (with the reasons), <i>not published yet</i>, <i>running now</i> or <i>the last run failed</i>.</li>
-<li><b>Values</b> and <b>Published</b>: the published roll, pitch and heading, the time (UTC) and the start of the publication's identifier.</li>
-<li>Amber notes: why it is out of date; <i>The applied values differ from the published ones</i>; or that the calibration was not solved on PosPro's trajectory.</li>
-<li><span class="ui">Publish the applied values</span> writes <code>alignment.json</code> again with the values applied now. It is available when nothing is published, the publication is out of date, or the applied values differ from it, for example after <span class="ui">Reset AlignPro to the recorded values…</span>.</li>
+<li><b>State</b>: <i>current</i>, <i>out of date</i> (with the reasons), <i>not finalized yet</i>, <i>running now</i> or <i>the last run failed</i>.</li>
+<li><b>Values</b> and <b>Finalized</b>: the finalized roll, pitch and heading, the time (UTC) and the start of the publication's identifier.</li>
+<li>Amber notes: why it is out of date; <i>The applied values differ from the finalized ones</i>; or that the calibration was not solved on PosPro's trajectory.</li>
+<li><span class="ui">Finalize the applied values</span> writes <code>alignment.json</code> again with the values applied now. It is available when nothing is finalized, the publication is out of date, or the applied values differ from it, for example after <span class="ui">Reset AlignPro to the recorded values…</span>.</li>
 </ul>
 
 <h2>Current angles</h2>
-<p><b>Recorded</b> shows the angles recorded in the capture; <b>Current</b> holds the applied ones. Type values and press <span class="ui">Apply</span> to apply and publish your own.</p>
+<p><b>Recorded</b> shows the angles recorded in the capture; <b>Current</b> holds the applied ones. Type values and press <span class="ui">Apply</span> to apply and finalize your own.</p>
 
 <h2>Combinations</h2>
 <p>One row per solve: <i>All lines</i>, then <i>Without 001</i>, <i>Without 002</i> and so on when there are at least three used lines. Columns: the lines used, the solved roll, pitch and heading, their change from the starting angles (Δ), the mean error before and after (cm), and the points and patches used. A solve that did not converge says so in red.</p>
 <ul>
 <li><b>Select</b> a row to try its angles in the Data View (as trial values; nothing is applied).</li>
-<li><b>Right-click</b> a row: <span class="ui">Apply and publish these angles (…)</span> applies those angles and publishes them for CloudPro; <span class="ui">Copy for mapper</span> copies them.</li>
+<li><b>Right-click</b> a row: <span class="ui">Apply and finalize these angles (…)</span> applies those angles and finalizes them for CloudPro; <span class="ui">Copy for mapper</span> copies them.</li>
 </ul>
 <p>A combination clearly apart from the others points at a line that disagrees: check that line's quality and its error in the Data page, and leave it out if it is bad.</p>
 
@@ -288,10 +294,10 @@
 <h2>Opening it</h2>
 <ul>
 <li><span class="ui">Data View · Fine Tune</span> under the steps or on the Calibration page: as a floating window.</li>
-<li><span class="ui">Open the Data View</span> in the Window menu: where you left it.</li>
-<li>After reading the data AlignPro docks it at the bottom of the QGIS window; after Auto calibrate it opens floating.</li>
+<li><span class="ui">Open the Data View</span> in the project menu: where you left it.</li>
+<li>After reading the data and after Auto calibrate it opens by itself.</li>
 </ul>
-<p>It is a standard DCS window with its own <span class="ui">⤢</span> Window menu (top right of the toolbar) and title bar menu: floating, maximise, dock right, left, bottom or top, reset, close.</p>
+<p>It is a standard DCS window: a window of its own (it does not dock), with a Window menu (top right of its toolbar) to maximise, reset or close it.</p>
 
 <h2>The four views</h2>
 <ul>
@@ -337,7 +343,7 @@
 <li><span class="ui">Lever arm (m)</span>: forward, starboard, down, with a step of 0.001 to 0.1 m, and <span class="ui">Latency ms</span> in steps of 1 ms. A latency change takes a little longer to draw.</li>
 <li><b>Δ R P H</b>, <b>Δ F S D</b>: trial minus applied values.</li>
 <li><span class="ui">Start from</span>: <span class="ui">Recorded</span> (the angles and lever arm recorded in the <code>.clraw</code>, latency 0), <span class="ui">Applied</span> (the values applied to the project) or <span class="ui">Advised</span> (the auto calibration result).</li>
-<li><span class="ui">Apply to project</span> applies the trial angles, lever arm and latency, finds the planar surfaces again and publishes <code>alignment.json</code>.</li>
+<li><span class="ui">Apply to project</span> applies the trial angles, lever arm and latency, finds the planar surfaces again and finalizes <code>alignment.json</code>.</li>
 <li><span class="ui">Copy for mapper</span> copies the trial angles; the button reads <i>COPIED ✓</i> for two seconds.</li>
 </ul>
 <p>Until you apply, the panel says <b>● Trial values not applied yet</b>.</p>
@@ -350,7 +356,7 @@
 <li>Nudge until the passes fall on one surface and Error now is at its lowest.</li>
 <li>Press <span class="ui">Apply to project</span>, then copy the angles to the mapper.</li>
 </ol>
-<div class="note"><b>Note</b> The fields show angles to 0.0001°, the lever arm to the millimetre and the latency to 0.1&nbsp;ms. Values equal to the applied ones at that precision count as applied, so after <span class="ui">Apply advised</span> the panel shows nothing to apply, and <span class="ui">Apply</span> keeps the advised angles exactly (published as <i>calibration</i>).</div>
+<div class="note"><b>Note</b> The fields show angles to 0.0001°, the lever arm to the millimetre and the latency to 0.1&nbsp;ms. Values equal to the applied ones at that precision count as applied, so after <span class="ui">Apply advised</span> the panel shows nothing to apply, and <span class="ui">Apply</span> keeps the advised angles exactly (finalized as <i>calibration</i>).</div>
 
 <h1><span class="num">{N}</span>6 Analyze</h1>
 <p>Analyze sweeps one value with everything else fixed and plots the mean point-to-plane error against it (the planar surfaces are fitted again at each step). The lowest point is the best value. Use it to check the latency or a lever arm component, or to confirm an angle.</p>
@@ -359,7 +365,7 @@
 <li>Choose the <span class="ui">Parameter</span>: <i>Lidar latency (ms)</i>, <i>Lever forward (m)</i>, <i>Lever starboard (m)</i>, <i>Lever down (m)</i>, <i>Mounting roll (deg)</i>, <i>Mounting pitch (deg)</i> or <i>Mounting heading (deg)</i>. <b>Current value</b> shows the applied value; Centre, Range and Steps are filled with defaults (latency ±20 ms; lever ±0.3 m; roll and pitch ±0.3°; heading ±0.5°; 21 steps).</li>
 <li>Adjust <span class="ui">Centre</span>, <span class="ui">Range ±</span> and <span class="ui">Steps</span> (3 to 201) if needed, then press <span class="ui">Analyze</span>.</li>
 <li>The plot shows the error at each step, with the best value as an amber line and the current value as a grey one. <b>BEST</b> gives the value and its error, and the Centre moves to it, so pressing Analyze again with a smaller range refines it.</li>
-<li><span class="ui">Apply best value</span> sets the parameter to the best value and publishes <code>alignment.json</code>.</li>
+<li><span class="ui">Apply best value</span> sets the parameter to the best value and finalizes <code>alignment.json</code>.</li>
 </ol>
 <p>Latency shows as an along-track shift that flips with the driving direction, so it needs passes in both directions; a latency pair (Pairs page) helps. If the curve is jumpy, widen the range and add steps. Small values found on a quiet drive are usually noise: if it isn't broken, don't fix it.</p>
 
@@ -392,13 +398,13 @@
 <h2>Export corrected LAS</h2>
 <p><span class="ui">Export corrected LAS…</span> writes the points of the used lines with the applied values to a LAS file (default <code>02_AlignPro/&lt;Name&gt;_corrected.las</code>), to check them in other tools. Coordinates are in the coordinate system recorded in the capture (EPSG:2953 when none is recorded) with ellipsoidal heights; each point keeps its intensity, its line number as point source ID and its GPS time. These are the thinned points AlignPro works with; full point cloud products come from CloudPro.</p>
 
-<h1 id="publishing"><span class="num">{N}</span>Publishing for CloudPro and the mapper</h1>
-<p>CloudPro reads only what AlignPro publishes; the mapper keeps its own settings, so copy the angles there too (<span class="ui">Copy for mapper</span>) and enter a corrected lever arm or latency by hand. Every apply publishes: <span class="ui">Apply advised</span>, <span class="ui">Apply</span> on the Calibration or Installation page, a right-click <span class="ui">Load these angles</span>, <span class="ui">Apply to project</span> in the Data View, <span class="ui">Apply best value</span> on the Analyze page and <span class="ui">Publish the applied values</span>. Each one writes, in <code>02_AlignPro/out/</code>:</p>
+<h1 id="publishing"><span class="num">{N}</span>Finalizing for CloudPro and the mapper</h1>
+<p>CloudPro reads only what AlignPro finalizes; the mapper keeps its own settings, so copy the angles there too (<span class="ui">Copy for mapper</span>) and enter a corrected lever arm or latency by hand. Every apply finalizes: <span class="ui">Apply advised</span>, <span class="ui">Apply</span> on the Calibration or Installation page, a right-click <span class="ui">Load these angles</span>, <span class="ui">Apply to project</span> in the Data View, <span class="ui">Apply best value</span> on the Analyze page and <span class="ui">Finalize the applied values</span>. Each one writes, in <code>02_AlignPro/out/</code>:</p>
 <ul>
 <li><code>alignment.json</code>: the file CloudPro reads (schema <code>dcs.alignment/1</code>);</li>
 <li><code>alignment_report.txt</code> (the text report) and <code>alignment_combinations.csv</code> (one row per combination).</li>
 </ul>
-<p>Publishing holds the AlignPro stage lock and writes a log in <code>02_AlignPro/log/</code>. If it fails, the earlier publication stays. CloudPro turns stale when AlignPro publishes again.</p>
+<p>Finalizing holds the AlignPro stage lock and writes a log in <code>02_AlignPro/log/</code>. If it fails, the earlier publication stays. CloudPro turns stale when AlignPro finalizes again.</p>
 
 <h2>What alignment.json holds</h2>
 <table>
@@ -412,7 +418,7 @@
 <tr><td><code>trajectory</code></td><td>Which trajectory the values were solved on (<i>pospro</i>, <i>sbet</i> or <i>realtime</i>), PosPro's publication identifier, and a description</td></tr>
 <tr><td><code>convention</code>, <code>built_from</code></td><td>The mounting convention (Chapter <a href="#reference">Reference</a>), and what the result was made from, used to tell when it is out of date</td></tr>
 </table>
-<p>An excerpt of the file published in this guide's example:</p>
+<p>An excerpt of the file finalized in this guide's example:</p>
 <pre class="code" style="font-family:'Source Code Pro',monospace;font-size:8pt;background:#f3f5f6;padding:2.5mm 3mm;border-radius:2px;white-space:pre-wrap">"mount_deg": {"roll": 89.71865, "pitch": 44.69973, "heading": 0.64803,
               "sd": {"roll": 0.00015, "pitch": 0.00061, "heading": 0.00079},
               "source": "calibration"},
@@ -423,7 +429,7 @@
 <h2>When AlignPro is out of date</h2>
 <p>AlignPro's box in the header turns <b>⚠ stale</b> (reason on hover and on the Calibration page) when:</p>
 <ul>
-<li>PosPro publishes a new trajectory, or publishes one for the first time after AlignPro used an SBET file or the real-time trajectory;</li>
+<li>PosPro finalizes a new trajectory, or finalizes one for the first time after AlignPro used an SBET file or the real-time trajectory;</li>
 <li>a raw capture file changes or is not found;</li>
 <li>the job's coordinate system or starting Lidar mounting (shared settings) is edited.</li>
 </ul>
@@ -447,7 +453,7 @@
 <p>The grid is a five-band GeoTIFF in <code>02_AlignPro/work/</code>. <span class="ui">Save the QGIS project in the project folder</span> keeps the map with the job.</p>
 
 <h2 id="cli">Command-line tool</h2>
-<p>The plugin folder holds <code>tools/alignpro_cli.py</code>, which runs the same calibration without QGIS, for example on a processing server. It makes a stand-alone project (<code>&lt;NAME&gt;.alignpro.json</code>), not a shared DCS project, so it does not publish <code>alignment.json</code>; it prints the results and writes the text report into PROJECT_DIR. It needs Python 3 with NumPy, and DCS Core beside the <code>alignpro</code> folder.</p>
+<p>The plugin folder holds <code>tools/alignpro_cli.py</code>, which runs the same calibration without QGIS, for example on a processing server. It makes a stand-alone project (<code>&lt;NAME&gt;.alignpro.json</code>), not a shared DCS project, so it does not finalize <code>alignment.json</code>; it prints the results and writes the text report into PROJECT_DIR. It needs Python 3 with NumPy, and DCS Core beside the <code>alignpro</code> folder.</p>
 <pre class="code" style="font-family:'Source Code Pro',monospace;font-size:8pt;background:#f3f5f6;padding:2.5mm 3mm;border-radius:2px;white-space:pre-wrap">python3 alignpro_cli.py PROJECT_DIR NAME CLRAW_OR_FOLDER... [--sbet FILE [--date YYYY-MM-DD]]
                         [--apply] [--sweep PARAM CENTER HALF STEPS] [--set KEY VALUE]</pre>
 <table>
@@ -466,7 +472,7 @@
 <tr><td><i>AlignPro needs the DCS Core plugin …</i></td><td>Install DCS Core, then restart QGIS.</td></tr>
 <tr><td><i>No .clraw captures were found in …</i> / <i>No .clraw files found in the project</i></td><td>Check the job folder (relocate it if it moved), or add files on the Data page and press <span class="ui">Read files</span>.</td></tr>
 <tr><td><i>Raw data not found</i> when a project opens, or a red <b>Missing</b> line</td><td>Answer Yes and choose the job folder's new place, or use <span class="ui">Raw data moved? Relocate the job folder…</span>.</td></tr>
-<tr><td><i>PosPro has not published a trajectory for this project yet: using the Certus real-time trajectory …</i></td><td>Run PosPro on the project, then read the data again in AlignPro and calibrate. Meanwhile choose an SBET file if you have one.</td></tr>
+<tr><td><i>PosPro has not finalized a trajectory for this project yet: using the Certus real-time trajectory …</i></td><td>Run PosPro on the project, then read the data again in AlignPro and calibrate. Meanwhile choose an SBET file if you have one.</td></tr>
 <tr><td><i>PosPro's trajectory is out of date …</i> / <i>Real-time trajectory is RTK fixed only …%</i></td><td>Re-run PosPro, then read and calibrate again in AlignPro.</td></tr>
 <tr><td><i>The PosPro trajectory does not cover line …</i> / <i>SBET does not cover line …; check the SBET date and file.</i></td><td>Process that part in PosPro, or check the SBET date, the <span class="ui">Find the GPS week</span> option and the leap seconds.</td></tr>
 <tr><td><i>The Lidar lever arm recorded in the capture is 0, 0, 0 …</i></td><td>Enter the measured lever arm on the Installation page (and in the mapper), then Apply.</td></tr>

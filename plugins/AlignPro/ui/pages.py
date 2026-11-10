@@ -191,7 +191,7 @@ class DataPage(Page):
         self.caps.clear()
         if p.dcs is not None:
             st, why = p.dcs.state("pospro")
-            words = {"done": "published and current", "stale": "published, but out of date: " + "; ".join(why),
+            words = {"done": "finalized and current", "stale": "finalized, but out of date: " + "; ".join(why),
                      "running": "PosPro is processing now", "failed": "the last PosPro run failed",
                      "none": "not run yet: run PosPro on this project (the real-time trajectory is used meanwhile)"}
             self.traj.set_pospro_state(st in ("done", "stale"), "PosPro: " + words.get(st, st))
@@ -551,7 +551,7 @@ class CalibPage(Page):
         self.lay.addWidget(_title("Mounting angles"))
         self.lay.addWidget(_hint("Auto calibrate pairs the lines and solves roll, pitch and heading from every planar "
                                  "patch, then again leaving out each line in turn: the spread of those combinations "
-                                 "is the SDEV. Check the Data View, then Apply: the applied values are published for "
+                                 "is the SDEV. Check the Data View, then Apply: the applied values are finalized for "
                                  "CloudPro (alignment.json). Copy them to the mapper as well (Settings › Hardware › "
                                  "Survey sensor › Mounting angles)."))
         self.b_run = _primary("Auto calibrate")
@@ -588,14 +588,14 @@ class CalibPage(Page):
         self.b_copy = QPushButton("Copy for mapper")
         self.b_copy.setToolTip("Roll, pitch, heading to 4 decimals for the mapper's Settings page")
         self.b_copy.clicked.connect(self._copy)
-        g0, gl0 = _group("Published for CloudPro")
+        g0, gl0 = _group("Finalized for CloudPro")
         self.pub = KV()
         gl0.addWidget(self.pub)
         self.pub_warn = QLabel("")
         self.pub_warn.setWordWrap(True)
         self.pub_warn.setStyleSheet("color: %s;" % theme.AMBER)
         gl0.addWidget(self.pub_warn)
-        self.b_pub = QPushButton("Publish the applied values")
+        self.b_pub = QPushButton("Finalize the applied values")
         self.b_pub.setToolTip("Write alignment.json (02_AlignPro/out) for CloudPro with the values applied now")
         self.b_pub.clicked.connect(self.dock.publish_now)
         gl0.addLayout(_row(None, self.b_pub))
@@ -702,16 +702,16 @@ class CalibPage(Page):
             return
         self._pub_group.setVisible(True)
         st, why, differs = p.published_state()
-        words = {"done": "current", "stale": "out of date", "none": "not published yet", "running": "running now",
+        words = {"done": "current", "stale": "out of date", "none": "not finalized yet", "running": "running now",
                  "failed": "the last run failed"}
         self.pub.set("State", words.get(st, st), {"done": "ok", "stale": "warn", "failed": "bad"}.get(st))
         pub = p.cfg.get("published")
         if pub:
             self.pub.set("Values", "%.4f  %.4f  %.4f" % tuple(pub["mount"]))
-            self.pub.set("Published", "%s \u00b7 %s" % (pub["time"], pub["id"][7:19]))
+            self.pub.set("Finalized", "%s \u00b7 %s" % (pub["time"], pub["id"][7:19]))
         notes = list(why)
         if differs:
-            notes.append("The applied values differ from the published ones: publish them for CloudPro.")
+            notes.append("The applied values differ from the finalized ones: finalize them for CloudPro.")
         if p.traj_info.get("source") != "pospro":
             notes.append("Solved on the %s trajectory, not PosPro's: run PosPro and calibrate again before the "
                          "final result." % ("real-time" if p.traj_info.get("source") == "realtime" else "SBET file"))
@@ -768,7 +768,7 @@ class CalibPage(Page):
             return
         row = r["combis"][i]
         m = theme.dark_menu(QMenu(self))
-        act = m.addAction("Apply and publish these angles (%.4f, %.4f, %.4f)" % (row["roll"], row["pitch"],
+        act = m.addAction("Apply and finalize these angles (%.4f, %.4f, %.4f)" % (row["roll"], row["pitch"],
                                                                               row["heading"]))
         cp = m.addAction("Copy for mapper")
         ch = m.exec(self.tbl.viewport().mapToGlobal(pos))
@@ -791,7 +791,7 @@ class CalibPage(Page):
             if pst == "stale":
                 return "warn", "out of date: re-run"
             if pst != "done" or differs:
-                return "warn", "apply to publish"
+                return "warn", "apply to finalize"
         return st, "%.4f  %.4f  %.4f" % (a["roll"], a["pitch"], a["heading"])
 
 

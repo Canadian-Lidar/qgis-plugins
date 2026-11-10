@@ -69,3 +69,16 @@ def test_header_shows_the_plugin_version(tmp_path):
     assert h.version_label.text() == "v1.6.0"
     # without version=, the caller's own metadata.txt (here: none) decides
     assert header.PluginHeader("pospro", "PosPro").version_label.text() in ("", "v" + header.plugin_version(__file__))
+
+
+def test_header_crumbs_group_the_pages():
+    groups = [("prep", "Prepare", [0, 1]), ("proc", "Process", [2, 3]), ("fin", "Finalize", [4])]
+    titles = ["Data", "Base", "Processing", "Review", "Export"]
+    items, cur = stepnav.crumbs(groups, titles, [("done", "3 files"), ("warn", "approximate"), ("done", ""),
+                                                 ("todo", ""), ("todo", "")], 2, optional={"Review"})
+    assert cur == "proc"
+    assert [i[2] for i in items] == ["warn", "done", "todo"]       # a warning shows; optional Review may stay todo
+    assert "Base: approximate" in items[0][3] and "Review (optional)" in items[1][3]
+    items, _ = stepnav.crumbs(groups, titles, [("done", ""), ("done", ""), ("running", ""), ("todo", ""),
+                                               ("error", "bad")], 4)
+    assert [i[2] for i in items] == ["done", "running", "error"]

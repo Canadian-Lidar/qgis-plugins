@@ -9,7 +9,7 @@ R = QtCore.QRectF
 
 NAMES = ("hand", "rect", "poly", "lasso", "brush", "above", "below", "ruler", "info", "undo", "redo", "eye",
          "eye_off", "reject", "accept", "select", "classify", "filter", "inside", "outside", "menu", "props",
-         "help", "prev", "next", "rotate", "full", "zoomall", "top", "along", "across", "iso", "plus", "minus",
+         "help", "prev", "next", "first", "last", "rotate", "full", "zoomall", "top", "along", "across", "iso", "plus", "minus",
          "copy", "up", "down", "edl", "map", "lines", "cross", "legend", "link", "float", "close")
 
 
@@ -260,6 +260,16 @@ def _next(p, c):
     p.drawPolyline(QtGui.QPolygonF([P(9, 5), P(16, 12), P(9, 19)]))
 
 
+def _first(p, c):
+    p.drawPolyline(QtGui.QPolygonF([P(13, 5), P(6, 12), P(13, 19)]))
+    p.drawPolyline(QtGui.QPolygonF([P(19, 5), P(12, 12), P(19, 19)]))
+
+
+def _last(p, c):
+    p.drawPolyline(QtGui.QPolygonF([P(5, 5), P(12, 12), P(5, 19)]))
+    p.drawPolyline(QtGui.QPolygonF([P(11, 5), P(18, 12), P(11, 19)]))
+
+
 def _rotate(p, c):
     p.drawArc(R(4, 4, 16, 16), 60 * 16, 290 * 16)
     p.drawPolyline(QtGui.QPolygonF([P(16, 2.5), P(16.5, 6.5), P(12.5, 7.5)]))
@@ -416,7 +426,7 @@ _ICONS = {"float": _float, "close": _close, "hand": _hand, "rect": _rect, "poly"
           "below": _below, "ruler": _ruler, "info": _info, "help": _help, "undo": _undo, "redo": _redo, "eye": _eye,
           "eye_off": _eye_off, "reject": _reject, "accept": _accept, "select": _select, "classify": _classify,
           "filter": _filter, "inside": _inside, "outside": _outside, "menu": _menu, "props": _props, "prev": _prev,
-          "next": _next, "rotate": _rotate, "full": _full, "zoomall": _zoomall, "top": _top, "along": _along,
+          "next": _next, "first": _first, "last": _last, "rotate": _rotate, "full": _full, "zoomall": _zoomall, "top": _top, "along": _along,
           "across": _across, "iso": _iso, "plus": _plus, "minus": _minus, "copy": _copy, "up": _up, "down": _down,
           "edl": _edl, "map": _map, "lines": _lines, "cross": _cross,
           "legend": _legend, "link": _link, "zoom_area": _zoom_area, "zoom_extents": _zoom_extents}

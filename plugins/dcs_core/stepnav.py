@@ -14,7 +14,9 @@ todo or running. StepNav turns that into one sentence and a Next button:
 - running              "<Step> is running…"                           Next disabled
 
 On the last step Next becomes "CONTINUE IN <PLUGIN> ›" (set_continue), which opens the next
-plugin of the chain on the same project (registry.open), once this plugin's results are published.
+plugin of the chain on the same project (registry.open), once this plugin's results are finalized.
+1.11.0: the sentence is no longer shown under the page (it was too busy); it is the tooltip of the buttons, and
+the header's step breadcrumbs (PluginHeader.set_steps) show each step's state.
 The sidebar step buttons still work as before: Next only guides, it never locks a page.
 
 Plugin code (PosPro, AlignPro):
@@ -82,8 +84,10 @@ class StepNav(QWidget):
         self.next.setObjectName("ppPrimary")
         self.next.setMinimumWidth(190)
         self.next.clicked.connect(self._next)
+        self.msg.hide()                # 1.11.0: no sentence under the page (too busy); it is the buttons' tooltip
         lay.addWidget(self.back)
-        lay.addWidget(self.msg, 1)
+        lay.addWidget(self.msg)
+        lay.addStretch(1)
         lay.addWidget(self.next)
 
     # ------------------------------------------------------------------ state
@@ -112,9 +116,9 @@ class StepNav(QWidget):
         self.next.setText(("SKIP TO %s  ›" if skip else "NEXT: %s  ›") % nxt)
         self.next.setEnabled(ok)
         self.next.setVisible(True)
-        self.next.setToolTip("" if ok else "Finish %s first (the step list on the left still opens any step)"
-                             % title)
         self._set_msg(text, level)
+        self.next.setToolTip(text if ok else "%s\nFinish %s first (the step list on the left still opens any step)"
+                             % (text, title))
 
     def set_continue(self, stage, ready, why="", project_path=None):
         """For the last step: open the next plugin (stage key) on this project when ready."""
@@ -137,15 +141,16 @@ class StepNav(QWidget):
         if not registry.has(stage):
             hint = "%s is not installed or not enabled." % label
         elif not ready:
-            hint = why or "Publish this step's results first."
+            hint = why or "Finalize this step's results first."
         else:
-            hint = "Results are published: continue in %s." % label
-        self.next.setToolTip(hint)
+            hint = "Results are finalized: continue in %s." % label
         self._set_msg((text + "  " + hint).strip(), level if ready else (level or "warn"))
+        self.next.setToolTip((text + "\n" + hint).strip())
 
     def _set_msg(self, text, level):
         self.msg.setText(text)
         self.msg.setToolTip(text)
+        self.back.setToolTip(text)
         self.msg.setProperty("level", level)
         self.msg.style().unpolish(self.msg)
         self.msg.style().polish(self.msg)
@@ -160,3 +165,34 @@ class StepNav(QWidget):
             self.goto(self.index + 1)
         elif self._cont and self._cont[1] and self._cont[3]:
             registry.open(self._cont[0], self._cont[3])
+
+
+
+def crumbs(groups, titles, states, index, optional=()):
+    """The header's step breadcrumbs (PluginHeader.set_steps) for a plugin with step pages (1.11.0).
+
+    groups: [(key, label, [page index, ...])] - the phases shown in the header (e.g. Prepare, Process, Finalize);
+    titles: the page titles; states: [(state, reason)] per page (done / warn / error / todo / running); index: the
+    page shown now; optional: titles of pages that may stay undone. Returns ([(key, label, state, tooltip)], current
+    key). A phase is running or in error when one of its pages is, done when every required page is done (warn
+    when one of them has a warning), else todo. The tooltip lists each page with its state and reason."""
+    items, current = [], None
+    opt = set(optional)
+    for key, label, pages in groups:
+        sts = [(states[i] if i < len(states) else ("todo", "")) for i in pages]
+        words = [s for s, _r in sts]
+        req = [s for i, (s, _r) in zip(pages, sts) if titles[i] not in opt]
+        if "running" in words:
+            st = "running"
+        elif "error" in words:
+            st = "error"
+        elif (req and all(s in ("done", "warn") for s in req)) or (not req and all(s == "done" for s in words)):
+            st = "warn" if "warn" in req else "done"
+        else:
+            st = "todo"
+        tip = "\n".join("%s %s%s%s" % (_MARK.get(s, "○"), titles[i], " (optional)" if titles[i] in opt else "",
+                                         (": " + r) if r else "") for i, (s, r) in zip(pages, sts))
+        items.append((key, label, st, tip + "\nClick to open %s." % titles[pages[0]]))
+        if index in pages:
+            current = key
+    return items, current

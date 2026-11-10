@@ -247,6 +247,8 @@ def apply_dock(dock):
     dock.setProperty("ppTheme", True)
     install_guard()
     from .widgets import DockTitle
+    if getattr(dock, "_no_title", None) is not None:
+        return                                  # a PluginWindow: the system's title bar only (1.11.0)
     if not isinstance(dock.titleBarWidget(), DockTitle):
         dock.setTitleBarWidget(DockTitle(dock, dock.windowTitle()))
 

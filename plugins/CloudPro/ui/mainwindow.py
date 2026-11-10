@@ -33,7 +33,8 @@ from . import chrome, render, theme
 from .dialogs import ExportDialog, ImportDialog
 from .filterpanel import FilterPanel
 from .props import AreaProperties, InfoPanel, ProjectProperties
-from .viewpanes import PlanPane, SlicePane, View3DPane
+from .planview import ATTRS
+from .viewpanes import COLOUR_MODES, PlanPane, SlicePane, View3DPane
 
 PLUGIN = "CloudPro"
 CLASS_SHORTLIST = [1, 2, 3, 4, 5, 6, 7, 9, 11, 14, 18, 64, 65, 66, 67, 68, 69, 70, 71]
@@ -43,6 +44,24 @@ def engine_status():
 
 
 SCALAR_MODES = ("Height", "Intensity", "Intensity (range normalised)", "Time", "Range")
+
+
+class _HeaderTools:
+    """The edit tools in DCS Core's header, right of the project box (2.0.0; was a tool bar)."""
+
+    def __init__(self, header):
+        self.h = header
+
+    def addWidget(self, w):                     # noqa: N802 - QToolBar's name
+        self.h.add_tool(w)
+        return w
+
+    def add_sep(self):
+        f = QtWidgets.QFrame()
+        f.setFixedSize(9, 24)
+        f.setStyleSheet("QFrame { border: none; border-left: 1px solid %s; margin-left: 4px; }" % theme.BORDER)
+        self.h.add_tool(f)
+        return f
 
 
 def _auto_range(mode, z, i, rng, t):
@@ -134,7 +153,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # =================================================================== build
     def _build(self):
         self._header()
-        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self._tools())
+        self._tools()
         self.plan_pane = PlanPane()
         self.slice_pane = SlicePane()
         self.v3d_pane = View3DPane()
@@ -179,7 +198,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.slice_pane.zoomArea.connect(self._zoom_slice_area)
         self.v3d_pane.zoomArea.connect(self.v3d.fit)
         for k, v in (("plan", self.plan), ("slice", self.slice), ("3d", self.v3d)):
-            v.legendMenu.connect(lambda gpos, k=k: self._scale_menu(k, gpos))
+            v.legendMenu.connect(lambda gpos, k=k: self._legend_menu(k, gpos))
 
         self.filters = FilterPanel()
         self.filters.previewRequested.connect(self.run_preview)
@@ -226,12 +245,7 @@ class MainWindow(QtWidgets.QMainWindow):
         tl.setContentsMargins(0, 0, 0, 0)
         tl.setSpacing(0)
         tl.addWidget(self.header)
-        from .workflow import WorkflowStrip
-        self.workflow = WorkflowStrip({"georef": self.georeference,
-                                       "clean": lambda: self.show_dock("filters"),
-                                       "publish": self._publish_or_export})
-        self.workflow.hide()                    # shown when a project is open
-        tl.addWidget(self.workflow)
+        self._visited_clean = False             # the workflow is the header's step breadcrumbs (2.0.0)
         self.setMenuWidget(self.top_host)
         sb = QtWidgets.QStatusBar()
         sb.setSizeGripEnabled(False)
@@ -244,25 +258,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_tool()
 
     # ------------------------------------------------------------------ dock windows
-    LAYOUT_VERSION = 1
+    LAYOUT_VERSION = 2                          # 2.0.0: views and panels never float
 
     def _make_dock(self, key, title, widget, head, head_layout):
         d = QtWidgets.QDockWidget(title, self)
         d.setObjectName("cloudpro_dock_" + key)            # names are what saveState / restoreState match
-        d.setFeatures(QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetMovable |
-                      QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetFloatable |
-                      QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetClosable)
+        # 2.0.0: views and panels stay inside CloudPro's window (no floating, no dragging around)
+        d.setFeatures(QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetClosable)
+        d.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         d.setWidget(widget)
-        fl = chrome.IconButton("float", "Float this window on its own, or dock it again (or double click "
-                               "the title bar). Drag the title bar onto another window to tab them together.",
-                               size=26)
-        fl.clicked.connect(lambda: d.setFloating(not d.isFloating()))
-        cl = chrome.IconButton("close", "Close this window (MENU > Windows brings it back)", size=26)
+        cl = chrome.IconButton("close", "Hide this view (project menu > Windows brings it back)", size=26)
         cl.clicked.connect(d.close)
         head_layout.addSpacing(4)
-        head_layout.addWidget(fl)
         head_layout.addWidget(cl)
-        head.setToolTip("Drag to move this window; drop it on another window's title to tab them together")
         d.setTitleBarWidget(head)
         if key in self._view_vis:
             d.visibilityChanged.connect(lambda on, k=key: self._dock_visible(k, on))
@@ -298,6 +306,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.restoreState(st, self.LAYOUT_VERSION)
         except Exception:       # noqa: BLE001  (a layout from another version: keep the default)
             pass
+        for d in self.docks.values():
+            if d.isFloating():
+                d.setFloating(False)
 
     def save_layout(self):
         try:
@@ -322,57 +333,49 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------ header
     def _header(self):
-        """DCS Core's header, the same in every plugin: logo, name, workflow boxes, then CloudPro's
-        inputs line, Update and MENU, the project box, the Window button and the user guide."""
+        """DCS Core's header, the same in every plugin: logo, name, the chain and CloudPro's steps as breadcrumbs,
+        the project box (which also holds CloudPro's menu), then the edit tools and the user guide."""
         from dcs_core.header import PluginHeader
         h = PluginHeader("cloudpro", "CloudPro", window=None, guide=self.open_guide)
         self.header = h
         self.chainbar = h.chain
-        self.lbl_inputs = QtWidgets.QLabel("")
-        self.lbl_inputs.setObjectName("ppVal")
-        self.lbl_inputs.setWordWrap(True)
-        self.lbl_inputs.setFixedWidth(250)
-        self.lbl_inputs.hide()                  # shown when a project is open
-        h.add_extra(self.lbl_inputs)
-        self.btn_menu = chrome.IconButton("", "Properties, georeference, publish, export, save, pick on map, QGIS "
-                                          "layers", size=34, text="MENU")
-        self.btn_menu.clicked.connect(self._main_menu)
-        h.add_extra(self.btn_menu)
+        h.stepClicked.connect(self._step_clicked)
+        self.lbl_inputs = QtWidgets.QLabel("")       # the inputs line: now the Georeference step's tooltip
+        self.lbl_inputs.hide()
         m = QtWidgets.QMenu(h.project_btn)
         m.addAction("New job project...", self.new_project)
         m.addAction("Open project...", self.open_project)
         self.recent_menu = m.addMenu("Recent")
         self.recent_menu.aboutToShow.connect(self._fill_recent)
         m.addSeparator()
-        m.addAction("Project properties...", self.show_properties)
+        self._fill_main_menu(m)
+        m.addSeparator()
         m.addAction("Open the project folder", self.open_folder)
         m.addAction("Raw data moved? Relocate the job folder...", self.relocate)
         m.addAction("Save the QGIS project in the project folder", self.save_qgis_project)
-        m.addSeparator()
-        m.addAction("User guide (this version)", self.open_guide)
         m.addAction("Performance report...", self.performance_report)
         h.set_project_menu(m)
         theme.dark_menu(self.recent_menu)
         self.btn_project = h.project_btn
+        self.btn_menu = h.project_btn                # the menu is the project box's (2.0.0)
         self.btn_window = h.window_btn
         self.btn_guide = h.help_btn
         return h
 
     def attach_window(self, panel):
-        """Sit inside DCS Core's standard plugin window: the header's Window button gets its menu."""
-        panel.attach_menu(self.btn_window)
-        self.btn_window.show()
+        """Sit inside DCS Core's standard plugin window (a normal window: nothing to attach since 2.0.0)."""
+        self._panel = panel
 
     def open_guide(self):
         from .. import guide
         return guide.open_guide(self)
 
-    def _main_menu(self):
-        m = QtWidgets.QMenu(self)
+    def _fill_main_menu(self, m):
+        """CloudPro's actions, in the project box's menu (the MENU button before 2.0.0)."""
         for txt, fn, sc in (("Project properties (information, geodetics, survey configuration, files)...",
                              self.show_properties, "Ctrl+R"), (None, None, None),
                             ("Georeference / update the points...", self.georeference, "Ctrl+I"),
-                            ("Publish for the job (LAS, ground grid, cloud.json)...", self.publish_dialog, "Ctrl+P"),
+                            ("Finalize for the job (LAS, ground grid, cloud.json)...", self.publish_dialog, "Ctrl+P"),
                             ("Export (LAS, XYZ, grid) anywhere...", self.export, "Ctrl+E"),
                             ("Save", self.save_project, "Ctrl+S"), (None, None, None),
                             ("Pick the Inspection Area on the QGIS map", self.pick_on_map, ""),
@@ -389,22 +392,28 @@ class MainWindow(QtWidgets.QMainWindow):
                 continue
             if fn == "windows":
                 w = m.addMenu("Windows")
-                for k in ("plan", "slice", "3d", "filters", "info", "history"):
-                    w.addAction(self.docks[k].toggleViewAction())
-                w.addSeparator()
-                w.addAction("Reset the window layout", self.reset_layout)
+                w.aboutToShow.connect(lambda w=w: self._fill_windows(w))
                 theme.dark_menu(w)
                 continue
             a = m.addAction(txt, fn)
             if sc:
                 a.setShortcut(QtGui.QKeySequence(sc))
-        theme.dark_menu(m)
-        exec_(m, self.btn_menu.mapToGlobal(self.btn_menu.rect().bottomLeft()))
+        return m
+
+    def _fill_windows(self, w):
+        w.clear()
+        for k in ("plan", "slice", "3d", "filters", "info", "history"):
+            w.addAction(self.docks[k].toggleViewAction())
+        w.addSeparator()
+        w.addAction("Reset the window layout", self.reset_layout)
+
+    def _main_menu(self):
+        """The project box's menu (kept for keyboard and test code that opened MENU)."""
+        self.btn_project.showMenu()
 
     # ------------------------------------------------------------------ tool bar
     def _tools(self):
-        tb = chrome.ToolBar("Tools", self)
-        tb.setToolTip("Drag the grip to move this tool bar or float it")
+        tb = _HeaderTools(self.header)            # 2.0.0: the edit tools sit in the header, right of the project
         self.b_pan = chrome.IconButton("hand", "Pan (Space): drag to move the view; drag the Inspection Area's "
                                                "edge, corners or round handle in the Plan view")
         self.b_shape = chrome.IconButton("", options=[
@@ -424,7 +433,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.b_line.optionChanged.connect(lambda k: self.set_tool(k))
         self.b_measure.clicked.connect(lambda: self.set_tool("measure"))
         self.b_info.clicked.connect(lambda: self.set_tool("pick"))
-        for b in (self.b_pan, self.b_shape, self.b_line, self.b_measure, self.b_info):
+        for b in (self.b_pan, self.b_shape, self.b_line):
             tb.addWidget(b)
         tb.add_sep()
         self.b_action = chrome.IconButton("", options=[
@@ -450,12 +459,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cmb_class.currentIndexChanged.connect(lambda _: setattr(self, "edit_class", self.cmb_class.currentData()))
         self.a_class = tb.addWidget(self.cmb_class)
         self.a_class.setVisible(False)
-        self.cmb_eline = QtWidgets.QComboBox()
+        self.cmb_eline = QtWidgets.QComboBox(self)  # one line to edit: chosen in the Lines list (2.0.0)
         self.cmb_eline.addItem("All lines", -1)
-        self.cmb_eline.setToolTip("Edit only one line (the other lines are left alone)")
-        self.cmb_eline.setFixedWidth(110)
+        self.cmb_eline.hide()
         self.cmb_eline.currentIndexChanged.connect(lambda _: setattr(self, "edit_line", self.cmb_eline.currentData()))
-        tb.addWidget(self.cmb_eline)
         tb.add_sep()
         self.b_undo = chrome.IconButton("undo", "Undo (Ctrl+Z)")
         self.b_redo = chrome.IconButton("redo", "Redo (Ctrl+Y)")
@@ -465,41 +472,42 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                         "Each view has its own eye too."),
                                                     ("show", "eye", "Rejected points shown in magenta in every view (H)")])
         self.b_rej.optionChanged.connect(lambda k: self._toggle_rej(k == "show"))
-        self.b_zoom = chrome.IconButton("zoomall", "Zoom all views to the Inspection Area (Ctrl+Home)")
+        self.b_zoom = chrome.IconButton("zoom_area", "Zoom all views to the Inspection Area (Ctrl+Home)")
         self.b_zoom.clicked.connect(self.zoom_all)
-        for b in (self.b_undo, self.b_redo, self.b_rej, self.b_zoom):
+        self.b_extents = chrome.IconButton("zoom_extents", "Zoom the Plan view to the whole project")
+        self.b_extents.clicked.connect(lambda: self.plan.zoom_project())
+        for b in (self.b_undo, self.b_redo):
             tb.addWidget(b)
         tb.add_sep()
-        tb.addWidget(chrome.label(" CELL "))
-        self.cb_cell = QtWidgets.QComboBox()
+        for b in (self.b_measure, self.b_zoom, self.b_extents, self.b_rej):
+            tb.addWidget(b)
+        self.b_info.setParent(self)                  # Point information: key I (no button since 2.0.0)
+        self.b_info.hide()
+        # sizes and the colour ramp: chosen from the legends' right-click menus (2.0.0); kept as hidden fields
+        self.cb_cell = QtWidgets.QComboBox(self)
         from .planview import PlanView
         for c in PlanView.CELL_CHOICES:
             self.cb_cell.addItem("%g m" % c, c)
         self.cb_cell.setToolTip("Cell size of the project grid under the Plan view (the stored 0.5 m grid summed "
                                 "into larger cells)")
         self.cb_cell.currentIndexChanged.connect(lambda i: self._cell(self.cb_cell.itemData(i)))
-        tb.addWidget(self.cb_cell)
-        tb.addWidget(chrome.label(" POINT "))
-        self.sp_size = QtWidgets.QSpinBox()
+        self.sp_size = QtWidgets.QSpinBox(self)
         self.sp_size.setRange(1, 6)
         self.sp_size.setValue(2)
         self.sp_size.setToolTip("Point size (pixels)")
         self.sp_size.valueChanged.connect(self._point_size)
-        tb.addWidget(self.sp_size)
-        tb.addWidget(chrome.label(" BRUSH "))
-        self.sp_brush = QtWidgets.QSpinBox()
+        self.sp_brush = QtWidgets.QSpinBox(self)
         self.sp_brush.setRange(2, 200)
         self.sp_brush.setValue(18)
         self.sp_brush.setSuffix(" px")
         self.sp_brush.setToolTip("Brush radius")
         self.sp_brush.valueChanged.connect(lambda v: [setattr(w, "brush_px", v) for w in (self.plan, self.slice)])
-        tb.addWidget(self.sp_brush)
-        tb.addWidget(chrome.label(" COLOURS "))
-        self.cmb_lut = QtWidgets.QComboBox()
+        self.cmb_lut = QtWidgets.QComboBox(self)
         self.cmb_lut.addItems(list(render.LUTS))
         self.cmb_lut.setToolTip("Colour ramp for height, intensity, range")
         self.cmb_lut.currentTextChanged.connect(self._lut)
-        tb.addWidget(self.cmb_lut)
+        for w in (self.cb_cell, self.sp_size, self.sp_brush, self.cmb_lut):
+            w.hide()
         self.toolbar = tb
         return tb
 
@@ -544,8 +552,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _shortcuts(self):
         for seq, fn in (("PgUp", lambda: self.step("sec_next")), ("PgDown", lambda: self.step("sec_prev")),
                         ("Shift+PgUp", lambda: self.step("fwd")), ("Shift+PgDown", lambda: self.step("back")),
-                        ("Ctrl+PgUp", lambda: self.step("sec_next_big")),
-                        ("Ctrl+PgDown", lambda: self.step("sec_prev_big")),
+                        ("Ctrl+PgUp", lambda: self.step("sec_last")),
+                        ("Ctrl+PgDown", lambda: self.step("sec_first")),
                         ("Ctrl+Z", self.undo), ("Ctrl+Y", self.redo), ("Ctrl+Home", self.zoom_all),
                         ("Ctrl+I", self.georeference), ("Ctrl+P", self.publish_dialog), ("Ctrl+E", self.export),
                         ("Ctrl+S", self.save_project), ("F1", self.show_help), ("Ctrl+R", self.show_properties), ("Shift+F1", self.open_guide),
@@ -721,7 +729,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if v.get("slice"):
             sl = v["slice"]
             self.slice_pane.dir.set_key("along" if sl.get("along") else "across")
-            self.slice_pane.thick.setValue(sl.get("th", 0.5))
+            self.slice_pane.set_width(sl.get("w", sl.get("th", 1.0)))
         box = v.get("box") or self._default_box()
         self.set_box(box, load=True, fit=True)
         if v.get("slice"):
@@ -774,7 +782,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sp = self.slice_pane
         self.project.data["view"] = {"box": self.box, "files_hidden": sorted(self.file_hidden),
                                      "tracks_hidden": sorted(self.track_hidden),
-                                     "slice": {"along": sp.along, "th": sp.thick.value(),
+                                     "slice": {"along": sp.along, "w": sp.width(), "th": sp.thickness(),
                                                "pos": sp.position(self._slice_half())},
                                      "scales": {k: {m: list(v) for m, v in d.items()} for k, d in self.scales.items()}}
         self.project.store.sync()
@@ -849,7 +857,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plan.set_project(None, {}, {})
         self.lines_w.clear()
         self.header.set_project_name("")
-        self.workflow.hide()
+        self.header.set_steps([])
         self.lbl_inputs.hide()
         self.refresh_views()
 
@@ -946,18 +954,42 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_workflow()
 
     def refresh_workflow(self):
-        """The guided strip under the header: Georeference, Clean & classify, Publish."""
+        """CloudPro's steps in the header (Georeference › Clean & classify › Finalize), coloured by state, the next
+        one to do marked; the guidance is in their tooltips. Clicking a step does it."""
         p = self.project
-        if p is None or not hasattr(self, "workflow"):
+        if p is None or not hasattr(self, "header"):
             return
-        from .workflow import states
+        from .workflow import STEPS, next_step, states
         hist = p.data.get("history", [])
         n_edits = len(p.data.get("filter_runs", [])) + sum(1 for h in hist if str(h.get("text", "")).endswith(
             "points)") and not str(h.get("text", "")).startswith(("Undo", "Redo")))
         why = getattr(self, "_why", None)
         qs = (lambda _p: why) if why is not None else chain.quick_state      # computed once per refresh
-        self.workflow.show_states(states(p, n_edits, self.workflow.visited_clean, qs))
-        self.workflow.show()
+        st = states(p, n_edits, self._visited_clean, qs)
+        nxt, _label = next_step(st, self._visited_clean)
+        inputs = self.lbl_inputs.text()
+        items = []
+        for k, t in STEPS:
+            state, reason = st[k]
+            tip = reason
+            if k == "georef" and inputs:
+                tip = (inputs + ("\n" + reason if reason and reason != inputs else "")).strip()
+            items.append((k, t, state, tip + "\nClick to %s." % {"georef": "georeference (or update)",
+                                                                 "clean": "open the automatic filters",
+                                                                 "publish": "finalize for the job"}[k]))
+        self.header.set_steps(items, nxt or "publish")
+
+    def _step_clicked(self, key):
+        if self.project is None:
+            return
+        if key == "georef":
+            self.georeference()
+        elif key == "clean":
+            self._visited_clean = True
+            self.show_dock("filters")
+        elif key == "publish":
+            self._publish_or_export()
+        self.refresh_workflow()
 
     def _publish_or_export(self):
         if self.project is not None and self.project.dcs is None:
@@ -1201,6 +1233,7 @@ class MainWindow(QtWidgets.QMainWindow):
         a1 = m.addAction("Show only this line")
         a2 = m.addAction("Show all lines")
         a3 = m.addAction("Edit only this line")
+        a5 = m.addAction("Edit all lines") if self.edit_line >= 0 else None
         a4 = m.addAction("Inspection Area follows this line")
         theme.dark_menu(m)
         a = exec_(m, self.lines_w.mapToGlobal(pos))
@@ -1214,6 +1247,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.lines_w.item(i).setCheckState(Qt.CheckState.Checked)
         elif a is a3:
             self.cmb_eline.setCurrentIndex(self.cmb_eline.findData(lid))
+            self.status("Edits change only L%d (Lines list: right click > Edit all lines)" % (lid + 1), 8000)
+        elif a5 is not None and a is a5:
+            self.cmb_eline.setCurrentIndex(0)
+            self.status("Edits change every line", 5000)
         elif a is a4:
             self._follow(lid)
 
@@ -1341,10 +1378,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def publish_dialog(self):
         p = self.project
-        if p is None or self._guard("publishing"):
+        if p is None or self._guard("finalizing"):
             return
         if p.dcs is None:
-            theme.msg_info(self, "CloudPro", "Publishing is for job projects of the DCS chain; use Export for "
+            theme.msg_info(self, "CloudPro", "Finalizing is for job projects of the DCS chain; use Export for "
                            "this older stand-alone project.")
             return
         if not p.lines:
@@ -1370,7 +1407,7 @@ class MainWindow(QtWidgets.QMainWindow):
             p.run_log("publish", ["cloud.json %s" % doc["id"], "calibration: %s" % doc["calibration"]] +
                       ["%s: %s" % (k, v) for k, v in doc["files"].items()] + doc.get("warnings", []))
             return doc, add
-        self._run("publish", job, "Publishing")
+        self._run("publish", job, "Finalizing")
 
     def import_lines(self):
         if self._guard("adding files"):
@@ -1420,11 +1457,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self._run("import", job, "Importing %d line(s)" % len(recs))
 
     # ================================================================== Inspection Area
+    @staticmethod
+    def whole_metres(box):
+        """The Inspection Area is sized in whole metres (2.0.0): length and width rounded, at least 1 m."""
+        b = dict(box)
+        for k in ("length", "width"):
+            if k in b:
+                b[k] = float(max(1, int(round(float(b[k])))))
+        return b
+
     def set_box(self, box, load=True, fit=False):
+        box = self.whole_metres(box)
         self.box = dict(box)
         self.plan.box = dict(box)
         self.v3d.box_bearing = box["bearing"]
         self.v3d.set_area(box)                       # 3D turns around the area's centre
+        if hasattr(self, "slice_pane"):
+            self.slice_pane.set_extent(self._slice_half() * 2)
         if self._area is not None:
             self._area.set_box(box, self._origin())
         self.plan.update()
@@ -1434,6 +1483,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _box_from_plan(self, box, final):
         if not box:
             return
+        box = self.whole_metres(box)
         self.box = dict(box)
         if self._area is not None:
             self._area.set_box(box, self._origin())
@@ -1535,7 +1585,9 @@ class MainWindow(QtWidgets.QMainWindow):
         """(along, centre, thickness, full) of the slice in the box frame."""
         sp = self.slice_pane
         half = self._slice_half()
-        return sp.along, sp.position(half), sp.thick.value(), sp.along and sp.full.isChecked()
+        if abs(sp.extent - 2 * half) > 1e-6:
+            sp.set_extent(2 * half)              # whole slices inside the area (2.0.0)
+        return sp.along, sp.position(), sp.thickness(), False
 
     def _slice_changed(self):
         self.plan.update()
@@ -1569,26 +1621,14 @@ class MainWindow(QtWidgets.QMainWindow):
             b["bearing"] = (b["bearing"] + (r if k == "rotr" else -r)) % 360
             self.set_box(b)
         elif k.startswith("sec_"):
+            # 2.0.0: one whole slice at a time (big: 5), never past the Inspection Area's edges
             sp = self.slice_pane
-            s = sp.step.value() * (5 if k.endswith("big") else 1)
-            s = s if k.startswith("sec_next") else -s
-            half = self._slice_half()
-            along, pos, th, full = self._slice()
-            npos = pos + s
-            if abs(npos) > half - th / 2 and not along:
-                # walking a corridor: the slice leaves the area, so the area moves on by half its length
-                shift = b["length"] * 0.5 * (1 if s > 0 else -1)
-                if self.follow_line >= 0 and self.follow_line in self.tracks:
-                    b = self._along_track(b, shift)
-                else:
-                    b["cx"] += u[0] * shift
-                    b["cy"] += u[1] * shift
-                self.set_box(b)
-                sp.set_position(npos - shift, half)
-                self._slice_changed()
+            self._slice()
+            if k in ("sec_first", "sec_last"):
+                sp.go(0 if k == "sec_first" else sp.count() - 1)
                 return
-            sp.set_position(float(np.clip(npos, -half, half)), half)
-            self._slice_changed()
+            d = (5 if k.endswith("big") else 1) * (1 if k.startswith("sec_next") else -1)
+            sp.go(sp.index + d)
 
     def _along_track(self, b, d):
         tr = self.tracks[self.follow_line]
@@ -1727,6 +1767,62 @@ class MainWindow(QtWidgets.QMainWindow):
 
     VIEW_NAMES = {"plan": "Plan", "slice": "Slice", "3d": "3D"}
 
+    BRUSH_SIZES = (6, 12, 18, 24, 36, 48, 72, 100, 150, 200)
+
+    def _legend_menu(self, key, gpos):
+        """Right-click on a view's legend (2.0.0): its colours (scheme, scale, ramp, link), and the sizes - point
+        size in every view, the background grid, cell size and brush size in the Plan view."""
+        pane = self.panes[key]
+        m = theme.dark_menu(QtWidgets.QMenu(self))
+        linked = self.links.get(key)
+
+        def radio(menu, choices, current, setter):
+            grp = QtGui.QActionGroup(menu) if hasattr(QtGui, "QActionGroup") else QtWidgets.QActionGroup(menu)
+            for label, val in choices:
+                a = menu.addAction(label)
+                a.setCheckable(True)
+                a.setChecked(val == current)
+                grp.addAction(a)
+                a.triggered.connect(lambda _=False, v=val: setter(v))
+            theme.dark_menu(menu)
+            return menu
+
+        mode = self._mode(key)
+        cm = m.addMenu("Colour  ·  %s" % mode)
+        radio(cm, [(t, t) for t in COLOUR_MODES], pane.colour.currentText(), pane.colour.setCurrentText)
+        if linked:
+            cm.setTitle("Colour  ·  %s (linked to the %s view)" % (mode, self.VIEW_NAMES[self._root(key)]))
+            cm.setEnabled(False)
+        if not linked and mode in SCALAR_MODES:
+            sm = m.addMenu("Colour scale")
+            cur = self.scales[key].get(mode, ("area",))[0]
+            radio(sm, [("Automatic: Inspection Area", "area"), ("Automatic: whole project", "project"),
+                       ("Fixed minimum / maximum…", "manual")], cur,
+                  lambda kind: self._scale_dialog(key, mode) if kind == "manual" else
+                  self.set_scale(key, mode, (kind,)))
+        rm = m.addMenu("Colour ramp  ·  %s" % self.cmb_lut.currentText())
+        radio(rm, [(t, t) for t in render.LUTS], self.cmb_lut.currentText(), self.cmb_lut.setCurrentText)
+        lm = m.addMenu("Link colours  ·  %s" % (pane.link.currentText().replace("= ", "to ")
+                                                if linked else "own"))
+        radio(lm, [("Own colours and scale" if not pane.link.itemData(i) else
+                    "Same as the %s view" % self.VIEW_NAMES[pane.link.itemData(i)], i) for i in range(pane.link.count())],
+              pane.link.currentIndex(), pane.link.setCurrentIndex)
+        m.addSeparator()
+        if key == "plan":
+            gm = m.addMenu("Grid  ·  %s" % self.plan_pane.grid.currentText())
+            radio(gm, [(t, t) for t in ATTRS], self.plan_pane.grid.currentText(), self.plan_pane.grid.setCurrentText)
+            cs = m.addMenu("Cell size  ·  %s" % self.cb_cell.currentText())
+            radio(cs, [(self.cb_cell.itemText(i), i) for i in range(self.cb_cell.count())], self.cb_cell.currentIndex(),
+                  self.cb_cell.setCurrentIndex)
+        ps_ = m.addMenu("Point size  ·  %d px" % self.sp_size.value())
+        radio(ps_, [("%d px" % v, v) for v in range(self.sp_size.minimum(), self.sp_size.maximum() + 1)],
+              self.sp_size.value(), self.sp_size.setValue)
+        if key == "plan":
+            bs = m.addMenu("Brush size  ·  %d px" % self.sp_brush.value())
+            sizes = sorted(set(self.BRUSH_SIZES) | {self.sp_brush.value()})
+            radio(bs, [("%d px" % v, v) for v in sizes], self.sp_brush.value(), self.sp_brush.setValue)
+        exec_(m, gpos)
+
     def _scale_menu(self, key, gpos):
         """Right-click on a view's colour scale bar: automatic over the Inspection Area or the whole project,
         or a fixed minimum and maximum. A linked view follows the scale of the view it is linked to."""
@@ -1837,9 +1933,9 @@ class MainWindow(QtWidgets.QMainWindow):
             info.update(kind="ramp", lo=1, hi=32, lut="Rainbow", fmt=lambda v: "laser %d" % round(v))
         elif mode == "Classification":
             cls = self.preview.cls if self.preview is not None else self.ps.cls
-            u, c = np.unique(cls, return_counts=True)
-            info.update(kind="swatches", items=[(tuple(render.CLASS_COLOURS[int(k)]), "%d %s  %s" % (
-                k, F.ASPRS.get(int(k), ""), "{:,}".format(int(n)))) for k, n in zip(u, c)])
+            u = np.unique(cls)
+            info.update(kind="swatches", items=[(tuple(render.CLASS_COLOURS[int(k)]), "%d %s" % (
+                k, F.ASPRS.get(int(k), ""))) for k in u])
         elif mode == "Line":
             ids = set(np.unique(self.ps.line).tolist())
             info.update(kind="swatches", items=[(render.hex_rgb(l.get("colour", "#00e5aa")), "L%d %s" % (
@@ -2025,12 +2121,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.slice.kind = "profile"
                 self.slice.a_offset = b["length"] / 2
                 self.slice.set_points(u, z[idx], v, col, idx, fit=fit or len(self.slice.a) == 0)
-                self.slice_pane.lbl.setText("offset %+.2f m" % pos if not full else "full width")
             else:
                 self.slice.kind = "section"
                 self.slice.a_offset = 0.0
                 self.slice.set_points(v, z[idx], -u, col, idx, fit=fit or len(self.slice.a) == 0)
-                self.slice_pane.lbl.setText("chainage %.2f m" % (pos + b["length"] / 2))
             self.slice_pane.title.setText("SLICE")
         if "3d" in which:
             idx = shown("3d")
@@ -2673,7 +2767,7 @@ class MainWindow(QtWidgets.QMainWindow):
         off (looking at the points, navigating, the guide and Cancel stay on)."""
         if busy:
             self._locked = []
-            ws = [self.btn_menu, self.btn_project, self.workflow, self.filters, self.b_undo,
+            ws = [self.btn_project, self.header.steps, self.filters, self.b_undo,
                   self.b_redo, self.b_action, self.b_where, self.cmb_class, self.cmb_eline, self.infop]
             if self._props is not None:
                 ws.append(self._props)
@@ -2884,7 +2978,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     kind = "las" if f.endswith(".las") else "grid" if f.endswith((".tif", ".asc")) else None
                     if kind:
                         qgis_layers.add_file(self.iface, path, kind)
-            theme.msg_info(self, "CloudPro", "Published cloud.json for the job (%s).\n\n%s\n\nFolder: %s%s" % (
+            theme.msg_info(self, "CloudPro", "Finalized cloud.json for the job (%s).\n\n%s\n\nFolder: %s%s" % (
                 doc["calibration"], "\n".join("%s: %s" % kv for kv in doc["files"].items()), self.project.out_dir,
                 ("\n\n" + "\n".join("! " + w for w in doc.get("warnings", []))) if doc.get("warnings") else ""))
         elif tag == "filter_area":

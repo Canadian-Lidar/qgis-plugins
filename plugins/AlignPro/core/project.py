@@ -330,7 +330,7 @@ class Project:
             if ho is not None:
                 t = ho.get("time") or {}
                 if t.get("leap_seconds") is None:
-                    self.warnings.append("PosPro's trajectory.json gives no leap seconds; %d assumed. Re-publish the "
+                    self.warnings.append("PosPro's trajectory.json gives no leap seconds; %d assumed. Re-finalize the "
                                          "trajectory from PosPro." % trajectory.LEAP_SECONDS)
                 self.traj = trajectory.read_sbet(ho["paths"]["sbet"],
                                                  leap=int(t.get("leap_seconds", trajectory.LEAP_SECONDS)),
@@ -349,7 +349,7 @@ class Project:
                                          % "; ".join(why))
             else:
                 typ = "realtime"
-                self.warnings.append("PosPro has not published a trajectory for this project yet: using the Certus "
+                self.warnings.append("PosPro has not finalized a trajectory for this project yet: using the Certus "
                                      "real-time trajectory for a quick look. Run PosPro before the final "
                                      "calibration.")
         if typ == "pospro":
@@ -703,7 +703,7 @@ class Project:
         files (ASCII report and combinations table) in 02_AlignPro/out. The caller holds the stage
         run (DcsProject.run). Returns the handover dict."""
         if self.dcs is None:
-            raise ValueError("Publishing needs a DCS project (this is an older stand-alone AlignPro project)")
+            raise ValueError("Finalizing needs a DCS project (this is an older stand-alone AlignPro project)")
         from dcs_core import handover
         from . import report
         c = self.cfg
@@ -763,7 +763,7 @@ class Project:
                                "point-to-plane boresight", used=used_ho, inputs=inputs)
         c["published"] = {"time": doc["created"], "id": doc["id"], "mount": mount, "lever": lever,
                           "latency_ms": float(c["latency_ms"])}
-        self.log("Published alignment.json: %.4f %.4f %.4f (%s)" % (mount[0], mount[1], mount[2], doc["id"][:19]))
+        self.log("Finalized alignment.json: %.4f %.4f %.4f (%s)" % (mount[0], mount[1], mount[2], doc["id"][:19]))
         self.save()
         return doc
 

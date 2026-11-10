@@ -1,8 +1,13 @@
 <!--#vars {
 "EXTRAS_ROW": "",
-"WINDOW_EXTRA": "",
-"PROJECT_MENU_TABLE": "<table><tr><th>Item</th><th>What it does</th></tr><tr><td><span class=\"ui\">New project…</span></td><td>Opens the New DCS project dialog (below). PosPro then offers the captures it finds in the job folder as rover files.</td></tr><tr><td><span class=\"ui\">Open project…</span></td><td>Opens a processing project (<code>.dcsproj</code>), or an older stand-alone PosPro project (<code>.pospro.json</code>). The last project you had open reopens by itself when PosPro starts.</td></tr><tr><td><span class=\"ui\">Open the project folder</span></td><td>Shows the project folder (<code>Processing/&lt;Name&gt;</code>) in the file manager.</td></tr><tr><td><span class=\"ui\">Raw data moved? Relocate the job folder…</span></td><td>Asks for the job folder's new location and finds the captures there again; PosPro's rover file list follows. Not available for older stand-alone projects.</td></tr><tr><td><span class=\"ui\">Save the QGIS project in the project folder</span></td><td>Saves the open QGIS project as <code>&lt;Name&gt;.qgz</code> in the project folder (asks first when the QGIS project already has another file name).</td></tr><tr><td><span class=\"ui\">Show the log</span></td><td>The PosPro log of this session: every message, warning and error with its time.</td></tr><tr><td><span class=\"ui\">Engine version</span></td><td>The version of the processing engine and of RTKLIB inside it, and where the engine is installed.</td></tr><tr><td><span class=\"ui\">User guide (this version)</span></td><td>Opens this guide.</td></tr></table>",
-"AFTER_CREATE": "PosPro then looks through the job folder (five folder levels deep, skipping the Processing folder and the mapper's processed folders) for mapper captures: the survey lines' <code>.clraw</code> files and the mapper 2.10 navigation recordings, or the Certus logs (<code>.anpp</code>) when there is no <code>.clraw</code>, and asks whether to use them as the rover files. When a mapper 2.10 project holds both navigation recordings and survey lines, it asks which (Figure {N}.3)."
+"PROJECT_MENU_TABLE": "<table><tr><th>Item</th><th>What it does</th></tr><tr><td><span class=\"ui\">New project…</span></td><td>Opens the New DCS project dialog (below). PosPro then offers the captures it finds in the job folder as rover files.</td></tr><tr><td><span class=\"ui\">Open project…</span></td><td>Opens a processing project (<code>.dcsproj</code>), or an older stand-alone PosPro project (<code>.pospro.json</code>). The last project you had open reopens by itself when PosPro starts.</td></tr><tr><td><span class=\"ui\">Open the project folder</span></td><td>Shows the project folder (<code>Processing/&lt;Name&gt;</code>) in the file manager.</td></tr><tr><td><span class=\"ui\">Raw data moved? Relocate the job folder…</span></td><td>Asks for the job folder's new location and finds the captures there again; PosPro's rover file list follows. Not available for older stand-alone projects.</td></tr><tr><td><span class=\"ui\">Save the QGIS project in the project folder</span></td><td>Saves the open QGIS project as <code>&lt;Name&gt;.qgz</code> in the project folder (asks first when the QGIS project already has another file name).</td></tr><tr><td><span class=\"ui\">Show the log</span></td><td>The PosPro log of this session: every message, warning and error with its time.</td></tr><tr><td><span class=\"ui\">Engine version</span></td><td>The version of the processing engine and of RTKLIB inside it, and where the engine is installed.</td></tr><tr><td><span class=\"ui\">User guide (this version)</span></td><td>Opens this guide.</td></tr><tr><td><span class='ui'>Reset window</span></td><td>The window back to its default size, centred.</td></tr></table>",
+"AFTER_CREATE": "PosPro then looks through the job folder (five folder levels deep, skipping the Processing folder and the mapper's processed folders) for mapper captures: the survey lines' <code>.clraw</code> files and the mapper 2.10 navigation recordings, or the Certus logs (<code>.anpp</code>) when there is no <code>.clraw</code>, and asks whether to use them as the rover files. When a mapper 2.10 project holds both navigation recordings and survey lines, it asks which (Figure {N}.3).",
+"STEPS_EXAMPLE": "PREPARE › PROCESS › FINALIZE",
+"STEPS_ROW": "The three phases of the step list on the left: Prepare (Data, Installation, Base), Process (Processing, Quality, Calibration) and Finalize (Review, Export).",
+"TOOLS_CAPTION": "",
+"MENU_NOTE": "",
+"TOOLS_ROW": "",
+"NAV_TEXT": "Under the step pages, <span class='ui'>‹ Back</span> goes to the previous step and <span class='ui'>Next: &lt;step&gt; ›</span> to the next one; Next is greyed out until a required step is done and reads <span class='ui'>Skip to &lt;step&gt; ›</span> on optional steps. Hover either button for what is done and what to do (the sentence that used to sit between them). On the last step Next becomes <span class='ui'>Continue in AlignPro ›</span>, which opens AlignPro on the same project once the trajectory is finalized. The step list on the left and the steps in the header still open any step at any time."
 }-->
 <style>
 /* figure sizes for this guide (the screenshots are 2x) */
@@ -28,9 +33,9 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 
 <h1><span class="num">{N}</span>Introduction</h1>
 <p>PosPro computes the trajectory of a Canadian Lidar mobile mapper: where the Certus GNSS/INS was, and how it was oriented, at every moment of a drive. It reads the mapper's captures (<code>.clraw</code>) or the Certus logs (<code>.anpp</code>) directly, combines the raw IMU and the raw satellite observations of both Certus antennas with base station data, and runs the inertial filter forward and backward over the drive. The two passes are combined into one smoothed trajectory, which you check on the map and in plots, clean up in Trajectory Review and export as SBET/SMRMSG, text, GeoPackage or GPX.</p>
-<p>PosPro is <b>stage 01</b> of the DCS chain. Every time you process, PosPro also publishes the trajectory for the next stages: <b>AlignPro</b> uses it to solve the Lidar mounting (boresight), and <b>CloudPro</b> uses it to georeference the point cloud. You do not export anything by hand for them.</p>
+<p>PosPro is <b>stage 01</b> of the DCS chain. Every time you process, PosPro also finalizes the trajectory for the next stages: <b>AlignPro</b> uses it to solve the Lidar mounting (boresight), and <b>CloudPro</b> uses it to georeference the point cloud. You do not export anything by hand for them.</p>
 
-<figure><img src="fig/window.png"><figcaption><b>Figure {N}.1</b> The PosPro window: the header with the workflow boxes and the project box, the eight steps in three phases (Prepare, Process, Finish) on the left, the open step on the right, the Back / Next bar under it and the status line at the bottom.</figcaption></figure>
+<figure><img src="fig/window.png"><figcaption><b>Figure {N}.1</b> The PosPro window: the header with the chain, the phases and the project box, the eight steps in three phases (Prepare, Process, Finalize) on the left, the open step on the right, Back and Next under it and the status line at the bottom.</figcaption></figure>
 
 <h2>What PosPro reads and makes</h2>
 <table>
@@ -39,7 +44,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <tr><td>Base stations</td><td>RINEX observation files (also Hatanaka-compressed and gzipped), or downloads from the base-station finder. Base positions from the RINEX header, typed in, built-in PPP or NRCan CSRS-PPP.</td></tr>
 <tr><td>Processing</td><td>Tightly coupled GNSS/INS (both antennas), loosely coupled, GNSS only, or the Certus real-time solution. Differential (PPK) or precise point positioning (PPP). Forward and backward passes, combined.</td></tr>
 <tr><td>Checks</td><td>Quality summary and findings, map layers coloured by solution type, accuracy or separation, quality plots, Trajectory Review, antenna lever-arm solver.</td></tr>
-<tr><td>Output</td><td>SBET + SMRMSG, text files with the columns you choose, GeoPackage layer, GPX track, export note; the published trajectory for AlignPro and CloudPro.</td></tr>
+<tr><td>Output</td><td>SBET + SMRMSG, text files with the columns you choose, GeoPackage layer, GPX track, export note; the finalized trajectory for AlignPro and CloudPro.</td></tr>
 </table>
 <p>Processing runs in a separate engine program (with RTKLIB inside), so a fault in processing never closes QGIS. The forward and backward passes run at the same time.</p>
 
@@ -101,7 +106,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <path d="M540 110 H573 V70"/><path d="M540 140 H557 V178 H573"/>
 <path d="M622 206 V243"/>
 </g>
-</svg><figcaption><b>Figure {N}.1</b> What goes into a trajectory and where it goes. The three inputs on the left are the three <i>Prepare</i> steps; the filter, the combination and the checks are <i>Process</i>; the trajectory and what uses it are <i>Finish</i>.</figcaption></figure>
+</svg><figcaption><b>Figure {N}.1</b> What goes into a trajectory and where it goes. The three inputs on the left are the three <i>Prepare</i> steps; the filter, the combination and the checks are <i>Process</i>; the trajectory and what uses it are <i>Finalize</i>.</figcaption></figure>
 
 <h2>Forward, backward and combined</h2>
 <p>A filter only knows the past. Driving forward, it enters a GNSS gap well known and leaves it with its largest error; running the same data backward, the opposite. Combining the two passes (weighting each by its own accuracy) gives the smallest error everywhere, and halfway through a gap it is much better than either. The <b>separation</b> between the passes is also the most honest quality check there is: two independent solutions that agree to 2&nbsp;cm are right to about 2&nbsp;cm; where they disagree, one of them has a wrong fix.</p>
@@ -137,7 +142,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <figure><svg viewBox="0 0 680 250" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="Outfit, sans-serif">
 <defs><marker id="ah2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M2 1L8 5L2 9" fill="none" stroke="#5a636b" stroke-width="1.5"/></marker></defs>
 <g font-family="Rajdhani, sans-serif" font-size="13" font-weight="700" fill="#007a5c" letter-spacing="1.5">
-<text x="110" y="22" text-anchor="middle">PREPARE</text><text x="340" y="22" text-anchor="middle">PROCESS</text><text x="570" y="22" text-anchor="middle">FINISH</text></g>
+<text x="110" y="22" text-anchor="middle">PREPARE</text><text x="340" y="22" text-anchor="middle">PROCESS</text><text x="570" y="22" text-anchor="middle">FINALIZE</text></g>
 <g font-size="11" fill="#1d2024">
 <rect x="10" y="30" width="200" height="180" rx="8" fill="#f3f5f6" stroke="#d5d9dd"/>
 <rect x="240" y="30" width="200" height="180" rx="8" fill="#f3f5f6" stroke="#d5d9dd"/>
@@ -154,7 +159,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <text x="265" y="172" font-weight="600">6 Calibration</text><text x="265" y="188" fill="#5a636b">lever arms → process again</text>
 <text x="495" y="60" font-weight="600">7 Review</text><text x="495" y="76" fill="#5a636b">fix what is left</text>
 <text x="495" y="116" font-weight="600">8 Export</text><text x="495" y="132" fill="#5a636b">files for other software</text>
-<text x="570" y="180" text-anchor="middle" fill="#5a636b">AlignPro and CloudPro read</text><text x="570" y="195" text-anchor="middle" fill="#5a636b">the published trajectory</text>
+<text x="570" y="180" text-anchor="middle" fill="#5a636b">AlignPro and CloudPro read</text><text x="570" y="195" text-anchor="middle" fill="#5a636b">the finalized trajectory</text>
 <text x="340" y="232" text-anchor="middle" fill="#5a636b">dashed: optional steps; curved arrows: back to processing</text>
 </g>
 <g stroke="#5a636b" stroke-width="1" fill="none" marker-end="url(#ah2)">
@@ -182,7 +187,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <tr><td><b>5 Quality</b></td><td>Judges the result before anything is built on it: the share of fixed ambiguities, the forward/backward separation and the gaps say whether to go on, change a setting, or check the inputs.</td></tr>
 <tr><td><b>6 Calibration</b></td><td>Solving the lever arms needs a processed drive and means processing again. Done after a first good processing and before any review, it leaves no hand edits to lose.</td></tr>
 <tr><td><b>7 Review</b></td><td>Hand edits belong to one processed trajectory, so they come last; processing again takes hand selections off the list.</td></tr>
-<tr><td><b>8 Export</b></td><td>Only for other software: AlignPro and CloudPro already read the trajectory PosPro publishes every time it processes or applies a review edit.</td></tr>
+<tr><td><b>8 Export</b></td><td>Only for other software: AlignPro and CloudPro already read the trajectory PosPro finalizes every time it processes or applies a review edit.</td></tr>
 </table>
 <div class="tip"><b>Most jobs</b> With good data the path is short: Data (read), Installation (check), Base (add, PPP), Processing (process), Quality (look), and on to AlignPro. Calibration is for a new installation; Review only where Quality points to a problem.</div>
 
@@ -214,7 +219,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <!--#include install-->
 <!--#include window-->
 <p>Below the steps, the bottom of the window holds the <b>status line</b> (the last message, or the stage of the job that is running), a progress bar and a red <span class="ui">STOP</span> button while a job runs, and short <b>messages</b> (green, amber or red edge) that disappear after a few seconds. Warnings and errors also go to the QGIS message bar and to <span class="ui">Show the log</span>. Only one job runs at a time; starting another while one runs gives <i>Wait for the current job to finish (or cancel it).</i></p>
-<p>The default window is 1400 × 950 pixels; docked left or right it is 720 pixels wide.</p>
+<p>The default window is 1400 × 950 pixels.</p>
 
 <!--#include projects-->
 <figure class="half"><img src="fig/choose_rover.png"><figcaption><b>Figure {N}.3</b> A mapper 2.10 project with a navigation recording and survey lines: choose <span class="ui">Navigation</span> (recommended), <span class="ui">Survey lines</span> or <span class="ui">Neither</span>.</figcaption></figure>
@@ -289,7 +294,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <p>When the antennas look swapped, <span class="ui">Swap the GPS1 / GPS2 offsets for this project</span> processes the data as it was recorded: GPS1 gets GPS2's offset and the other way round, and when the Certus heading was turned 180° the INS is aligned from the direction of travel instead (Processing › Alignment <i>From motion</i>). Process again afterwards, and fix the cables on the unit for the next captures. In the Trajectory editor the measured GPS2 positions are drawn along the track as well (see <i>The Trajectory editor</i>).</p>
 
 <h2>Survey sensor / output point</h2>
-<p>A <span class="ui">Name</span> (for example <i>Lidar</i>) and the <span class="ui">Sensor offsets</span> of the point you may want the trajectory exported at. It appears as a choice under <span class="ui">Position of</span> on the Export page. Leave it at 0 to export at the Certus. The published trajectory for AlignPro and CloudPro is always at the IMU centre, whatever you enter here.</p>
+<p>A <span class="ui">Name</span> (for example <i>Lidar</i>) and the <span class="ui">Sensor offsets</span> of the point you may want the trajectory exported at. It appears as a choice under <span class="ui">Position of</span> on the Export page. Leave it at 0 to export at the Certus. The finalized trajectory for AlignPro and CloudPro is always at the IMU centre, whatever you enter here.</p>
 
 <h2>Vehicle</h2>
 <ul>
@@ -337,7 +342,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <p>The bases also appear on the QGIS map, in the group <i>PosPro: &lt;project&gt;</i>: the base used as a large red triangle, the others grey, with distance rings at 20, 40 and 60&nbsp;km.</p>
 
 <h2>Position of the selected base (marker)</h2>
-<p>The coordinates are those of the marker. Choose the <span class="ui">Source</span> (RINEX header (approximate), Entered / published, Built-in PPP, NRCan CSRS-PPP), enter <span class="ui">Latitude</span> and <span class="ui">Longitude</span> in decimal degrees and the ellipsoidal <span class="ui">Height</span>, the <span class="ui">Frame</span> (NAD83(CSRS), ITRF2020 / IGS20, WGS 84, NAD83(2011)) and its <span class="ui">Epoch</span>, the <span class="ui">Antenna type</span> (from the RINEX header; used with the IGS antenna calibrations) and the <span class="ui">ARP height</span>, then press <span class="ui">Save position</span>. The frame and epoch of the base become those of the project: the trajectory and every export are in that frame.</p>
+<p>The coordinates are those of the marker. Choose the <span class="ui">Source</span> (RINEX header (approximate), Entered / finalized, Built-in PPP, NRCan CSRS-PPP), enter <span class="ui">Latitude</span> and <span class="ui">Longitude</span> in decimal degrees and the ellipsoidal <span class="ui">Height</span>, the <span class="ui">Frame</span> (NAD83(CSRS), ITRF2020 / IGS20, WGS 84, NAD83(2011)) and its <span class="ui">Epoch</span>, the <span class="ui">Antenna type</span> (from the RINEX header; used with the IGS antenna calibrations) and the <span class="ui">ARP height</span>, then press <span class="ui">Save position</span>. The frame and epoch of the base become those of the project: the trajectory and every export are in that frame.</p>
 
 <h2>Compute the base position</h2>
 <table>
@@ -417,9 +422,9 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <li>for loose coupling, GNSS only and PPP: the GNSS solutions, forward and backward;</li>
 <li>the inertial passes, forward and backward at the same time (for the real-time mode: the Certus solution as one pass);</li>
 <li>the passes are combined; your Trajectory Review decisions (poor, interpolate) are applied again;</li>
-<li>the trajectory is published for AlignPro and CloudPro.</li>
+<li>the trajectory is finalized for AlignPro and CloudPro.</li>
 </ol>
-<p>The status line shows the stage and the progress bar the progress; <span class="ui">STOP</span> ends the run. The project box turns red and the PosPro workflow box reads <i>running</i>; another computer cannot process the same stage at the same time (<i>… is being processed by … on … since …</i>). When the run finishes, the Quality page opens. A run that fails or is stopped keeps the earlier results, and the PosPro box shows <i>failed</i>.</p>
+<p>The status line shows the stage and the progress bar the progress; <span class="ui">STOP</span> ends the run. The project box turns red and PosPro in the chain turns blue (<i>running</i>); another computer cannot process the same stage at the same time (<i>… is being processed by … on … since …</i>). When the run finishes, the Quality page opens. A run that fails or is stopped keeps the earlier results, and PosPro in the chain turns red (<i>failed</i>).</p>
 
 <h1><span class="num">{N}</span>Step 5 – Quality</h1>
 <div class="tip"><b>Why here</b> Judge the result before building on it. The share of fixed ambiguities, the forward/backward separation and the longest IMU-only gap say whether to go on, change a setting, or fix an input and process again.</div>
@@ -444,7 +449,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <p>PosPro puts its layers in the group <i>PosPro: &lt;project&gt;</i> of the QGIS layer panel: <b>Real-time track</b> (what the Certus computed in the field, shown as soon as the files are read), <b>Base stations</b> and <b>Base distance rings</b>, <b>Trajectory</b> (one point per second, with the time, solution, satellites, height, attitude, speed, σ, separation and gap as attributes), <b>Trajectory line</b> and, after Trajectory Review, <b>Review windows</b>. <span class="ui">Colour the map by</span> colours the trajectory points by <i>Solution type</i>, <i>Estimated accuracy (3D σ)</i> or <i>Forward/backward separation</i> (classes &lt; 2&nbsp;cm, 2–5, 5–10, 10–30, 30–60, &gt; 60&nbsp;cm).</p>
 
 <h2>The quality plots</h2>
-<p><span class="ui">Open the quality plots</span> opens <i>PosPro – quality plots</i> in a window of its own (the same standard window as PosPro: floating by default, docked from its title-bar menu).</p>
+<p><span class="ui">Open the quality plots</span> opens <i>PosPro – quality plots</i> in a window of its own (the same standard window as PosPro: a window of its own).</p>
 <figure><img src="fig/plots_height.png"><figcaption><b>Figure {N}.2</b> The quality plots, Ellipsoidal height tab: the two passes of the drive with the gap between them. The strip under the plot shows the solution type.</figcaption></figure>
 <p>The tabs: <b>Position accuracy</b> (σ north, east, down), <b>Forward − backward separation</b> (north, east, down, where both passes have a solution), <b>Attitude accuracy</b> (σ roll, pitch, heading), <b>Satellites and solution</b> (satellites and the ambiguity ratio ÷ 10), <b>Speed</b>, <b>Ellipsoidal height</b>, <b>Roll and pitch</b> and <b>IMU bias estimates</b> (accelerometers in mg, gyros in deg/h).</p>
 <p>Wheel to zoom, drag to pan, double-click (or <span class="ui">Whole drive</span>) for the whole drive. Hover for the values at a time. A click marks the time with an orange line and shows that place on the map with an orange circle. With <span class="ui">Link zoom</span> on, all tabs follow the same time range. Under every plot a strip shows the solution type in the map colours, and GNSS gaps (INS only) are shaded violet.</p>
@@ -528,19 +533,19 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <table>
 <tr><th>Decision</th><th>Effect</th><th>Applies</th></tr>
 <tr><td><span class="ui">Bridge with IMU</span></td><td>GNSS is not used in these windows; the IMU carries the trajectory, as through a tunnel. Use it where multipath or a wrong fix pulled the trajectory away. Tightly and loosely coupled only.</td><td>After <span class="ui">Process again</span>; a note in amber says the exclusions are waiting, and the Review step reads <i>process again</i></td></tr>
-<tr><td><span class="ui">Mark poor</span></td><td>The trajectory is kept, but its position σ is raised to at least <span class="ui">σ given to poor parts</span>, in the SMRMSG file, on the Quality page and in the published trajectory, so later stages know not to trust it.</td><td>At once</td></tr>
+<tr><td><span class="ui">Mark poor</span></td><td>The trajectory is kept, but its position σ is raised to at least <span class="ui">σ given to poor parts</span>, in the SMRMSG file, on the Quality page and in the finalized trajectory, so later stages know not to trust it.</td><td>At once</td></tr>
 <tr><td><span class="ui">Interpolate</span></td><td>Replaces the positions between the good samples on both sides, as a <i>Smooth curve</i> or a <i>Straight line</i>, <span class="ui">Horizontal</span> and/or <span class="ui">Vertical</span>, in any processing mode (see <i>The Trajectory editor</i>). For longer stretches of a coupled trajectory, <span class="ui">Bridge with IMU</span> usually follows the road better.</td><td>At once</td></tr>
 <tr><td><span class="ui">Accept</span></td><td>Looked at and fine as it is.</td><td>At once</td></tr>
 <tr><td><span class="ui">Clear decision</span></td><td>The window is open again.</td><td>At once</td></tr>
 </table>
-<p>Decisions never change the processed result itself: PosPro keeps an untouched copy and applies your decisions to it, so <span class="ui">Undo</span> (the last change), <span class="ui">Reset to original</span> (every decision removed, after a question) and processing again lose nothing. After a decision that changes the trajectory, the Quality page, the map and the plots are updated and the trajectory is published again. <span class="ui">Edit log</span> lists every detection and decision with its time.</p>
+<p>Decisions never change the processed result itself: PosPro keeps an untouched copy and applies your decisions to it, so <span class="ui">Undo</span> (the last change), <span class="ui">Reset to original</span> (every decision removed, after a question) and processing again lose nothing. After a decision that changes the trajectory, the Quality page, the map and the plots are updated and the trajectory is finalized again. <span class="ui">Edit log</span> lists every detection and decision with its time.</p>
 <figure class="half"><img src="fig/review_log.png"><figcaption><b>Figure {N}.7</b> The Trajectory Review log.</figcaption></figure>
 <div class="note"><b>Windows inside windows</b> Deciding on a window that lies inside a larger window that already has a decision adds a decision for the smaller window; the larger window keeps its own. To change a decision, select that window itself and decide again, or use <span class="ui">Clear decision</span>.</div>
 <p>The Review step shows <i>find anomalies</i> before the first search, <i>N open</i> in amber while windows are undecided, <i>process again</i> while GNSS exclusions wait, and <i>N reviewed</i> in green when all are decided.</p>
 <div class="tip"><b>No base station?</b> Choose <span class="ui">Real-time solution (no base station)</span> on the Processing page. PosPro then uses the trajectory the Certus computed in the field (RTK when it had corrections), and Trajectory Review cleans it the same way, with the Trajectory editor for the parts it got wrong.</div>
 
 <h1><span class="num">{N}</span>Step 8 – Export</h1>
-<div class="tip"><b>Why here</b> Only for other software. AlignPro and CloudPro already read the trajectory PosPro publishes every time it processes or applies a review edit.</div>
+<div class="tip"><b>Why here</b> Only for other software. AlignPro and CloudPro already read the trajectory PosPro finalizes every time it processes or applies a review edit.</div>
 <figure><img src="fig/export.png"><figcaption><b>Figure {N}.1</b> The Export page with SBET + SMRMSG, a text file with seven columns and a GPX track chosen.</figcaption></figure>
 <table>
 <tr><th>Setting</th><th>What it does</th></tr>
@@ -565,7 +570,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <p>Heights are ellipsoidal, in the frame of the base station's position (for PPP: ITRF2020 at the observation date; for the real-time mode: the frame of the Certus real-time solution, that is of the RTK corrections used in the field). Apply the geoid in the point-cloud processing. SBET velocities are north, east, down with wander angle 0; angles are in radians. Use the same reference point in the point-cloud processing as in the export.</p>
 
 <h2>What PosPro hands to AlignPro and CloudPro</h2>
-<p>At the end of every processing run, and after every review decision that changes the trajectory, PosPro publishes the trajectory in <code>01_PosPro/out/</code>. You do not need the Export page for AlignPro and CloudPro: they read these files.</p>
+<p>At the end of every processing run, and after every review decision that changes the trajectory, PosPro finalizes the trajectory in <code>01_PosPro/out/</code>. You do not need the Export page for AlignPro and CloudPro: they read these files.</p>
 <table>
 <tr><th>File</th><th>Content</th></tr>
 <tr><td><code>trajectory_sbet.out</code></td><td>SBET at the Certus reference point (IMU centre), every sample</td></tr>
@@ -583,7 +588,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <tr><td><code>frame</code></td><td>Frame name and epoch (that of the base position); for a real-time trajectory, the frame of the Certus's RTK corrections; heights ellipsoidal</td></tr>
 <tr><td><code>reference_point</code>, <code>body_frame</code></td><td>Certus reference point (IMU centre), offset 0, 0, 0; Certus aligned vehicle frame: X forward, Y starboard, Z down; roll + starboard down, pitch + bow up, heading + clockwise</td></tr>
 <tr><td><code>levers_m</code></td><td>GNSS 1 and GNSS 2 offsets (with their source, and whether GNSS 2 was used), the Lidar offset from the capture's <code>hardware.json</code></td></tr>
-<tr><td><code>rate_hz</code></td><td>The rate of the published SBET, measured from its time stamps</td></tr>
+<tr><td><code>rate_hz</code></td><td>The rate of the finalized SBET, measured from its time stamps</td></tr>
 <tr><td><code>quality</code></td><td>Method, positioning, % fixed, % IMU only, separation (95&nbsp;%), largest horizontal and vertical σ</td></tr>
 <tr><td><code>base_station</code></td><td>The base used</td></tr>
 <tr><td><code>review</code></td><td>The Trajectory Review decisions (bridged with the IMU, reduced quality with its σ, interpolated, accepted windows) and the limits used</td></tr>
@@ -655,7 +660,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <tr><td><code>work/base/</code></td><td>Downloaded and prepared base files, base PPP</td></tr>
 <tr><td><code>work/gnss/</code>, <code>work/ins/</code></td><td>GNSS solutions, inertial passes and their settings</td></tr>
 <tr><td><code>work/results/</code></td><td>The combined trajectory, its quality table and their untouched copies for Trajectory Review</td></tr>
-<tr><td><code>out/</code></td><td>The published trajectory for AlignPro and CloudPro</td></tr>
+<tr><td><code>out/</code></td><td>The finalized trajectory for AlignPro and CloudPro</td></tr>
 <tr><td><code>export/</code></td><td>Exports (default folder)</td></tr>
 </table>
 
@@ -681,6 +686,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <h1 id="history"><span class="num">{N}</span>Version history</h1>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>2.1.0</b></td><td>The new DCS header: the chain and PosPro's phases (Prepare › Process › Finalize, formerly Finish) as breadcrumbs, with the guidance in their tooltips instead of a sentence between Back and Next. The window is always a window of its own (no docking); <span class="ui">Reset window</span> is in the project menu. Messages say <i>finalize</i> instead of <i>publish</i>. Needs DCS Core 1.11.0.</td></tr>
 <tr><td><b>2.0.5</b></td><td>The GNSS processing starts afresh after a break of more than 30&nbsp;s in the rover data, for example between two survey lines. Before, the forward pass could stay float for the whole of the next line. Quality adds a finding with the forward/backward agreement where both passes are fixed, and the share of the drive where only one pass is fixed (the combined result follows the fixed pass there, so the overall separation overstates the error).</td></tr>
 <tr><td><b>2.0.4</b></td><td>Inertial processing starts again from the Certus attitude and position after an IMU gap longer than 5&nbsp;s, for example between two survey lines where the van turns round. Before, the heading could come out about 180&deg; wrong on one line, so GPS1 and GPS2 appeared to cross and the AlignPro patch test could not be solved: process jobs with more than one line again. The Data step warns when the recording lost IMU data.</td></tr>
 <tr><td><b>2.0.3</b></td><td>A job processed before 2.0.1 with an output point set is flagged when you open it: the Processing step reads <i>made before 2.0.1 with an output point: process again</i> and a message explains why (its published trajectory makes AlignPro and CloudPro apply the Lidar offset twice). Press <span class="ui">Process</span> to publish it again. New projects are named after the date of the first capture, for example <i>2026-11-03_1</i> (the next number when that name is taken).</td></tr>

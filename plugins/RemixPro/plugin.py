@@ -13,7 +13,7 @@ except ImportError:          # QGIS 3 / Qt5
     from qgis.PyQt.QtWidgets import QAction
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CORE_API = 6
+CORE_API = 12
 ICON = os.path.join(HERE, "icons", "remixpro.svg")
 
 

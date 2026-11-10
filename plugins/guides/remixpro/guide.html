@@ -9,7 +9,7 @@
 <tr><td><b>Qinertia</b></td><td>Generic IMU file (<code>_imu.qimu</code>), the same RINEX files, and a setup note.</td><td>Survey lines, navigation recordings, Certus logs</td></tr>
 </table>
 <p>Up to version 2.9.1 the mapper made these files itself. From 2.10 it records only, so the unit spends no time on conversions, and RemixPro makes them. RemixPro uses the mapper's own writers, so its files are the same <b>byte for byte</b> as the ones the mapper made. The only difference is the program name in the IMR header and in the RINEX header, which now says RemixPro.</p>
-<p>RemixPro is a <b>side tool</b> of the Data Collection Systems plugins, not a stage of the PosPro → AlignPro → CloudPro chain. It reads the raw recordings only, publishes nothing to the other plugins, and changes nothing in a DCS project apart from its own output folder. The order in which you use it with the other plugins does not matter.</p>
+<p>RemixPro is a <b>side tool</b> of the Data Collection Systems plugins, not a stage of the PosPro → AlignPro → CloudPro chain. It reads the raw recordings only, finalizes nothing to the other plugins, and changes nothing in a DCS project apart from its own output folder. The order in which you use it with the other plugins does not matter.</p>
 <div class="note"><b>Note</b> RemixPro never modifies a recording. It only reads the files and writes its outputs in a separate folder.</div>
 
 <h1><span class="num">{N}</span>Installing and opening RemixPro</h1>
@@ -32,9 +32,9 @@
 
 <h1><span class="num">{N}</span>The RemixPro window</h1>
 <figure><img src="fig/empty.png" style="max-height:95mm"><figcaption><b>Figure {N}.1</b> RemixPro before anything is open. The list says what can be opened.</figcaption></figure>
-<p>The window has the same header and the same kind of window as the other DCS plugins: logo and name on the left, then the project box, the <span class="ui">⤢</span> Window button and the <span class="ui">?</span> guide button on the right. Because RemixPro is not a stage of the chain, its header has no 01 → 02 → 03 workflow boxes.</p>
+<p>The window has the same header and the same kind of window as the other DCS plugins: logo and name on the left, then the project box, and the <span class="ui">?</span> guide button on the right. Because RemixPro is not a stage of the chain, its header has no PosPro › AlignPro › CloudPro breadcrumbs.</p>
 <figure><img src="fig/header.png"><figcaption><b>Figure {N}.2</b> The header.</figcaption></figure>
-<p>RemixPro opens as a floating window. The Window menu (the <span class="ui">⤢</span> button, or a right-click on the title bar) docks it to a side of the QGIS window, maximises it, or resets it. RemixPro remembers how you left it, also after QGIS restarts.</p>
+<p>RemixPro opens as a window of its own; use the system's title bar to move, maximise or close it (it does not dock into QGIS). RemixPro remembers its place and size, also after QGIS restarts.</p>
 <p>The window has three parts:</p>
 <ul>
 <li><b>Recordings</b> (left): everything found in what you opened, one row per recording, with the state of each output.</li>
