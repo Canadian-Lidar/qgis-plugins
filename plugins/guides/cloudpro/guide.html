@@ -36,6 +36,7 @@
 <div style="break-inside:avoid"><h2>What is new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>2.0.1</b></td><td>Class 7 (low point, noise) is dark red instead of magenta, so it is not mistaken for rejected points when a view is coloured by Classification.</td></tr>
 <tr><td><b>2.0.0</b></td><td><b>New layout:</b> the header holds the chain and CloudPro's steps (Georeference › Clean &amp; classify › Finalize) as breadcrumbs, with the guidance in their tooltips; the project box holds CloudPro's menu and the edit tools sit right of it (no MENU button, no tool bar). Views and panels stay inside the window (✕ hides them). One legend per view, without title or counts: right-click it for the colours, link, grid and sizes. The Slice has a <span class="ui">Width</span> list (0.5 to 16 m) and whole slices centred inside the Inspection Area, with first / last buttons and <i>n / N</i>. The Inspection Area is sized in whole metres. <i>Publish</i> is now <i>Finalize</i>. Needs DCS Core 1.11.0.</td></tr>
 <tr><td><b>1.9.9</b></td><td><b>Project-wide filters on every core:</b> runs on the entire project or selected lines split dense tiles into smaller parts and run the parts at the same time, as many as fit in memory; the progress line shows parts and points done, parts running and the time left; <span class="ui">Cancel</span> writes nothing. The performance log records each run's parts, threads and memory. Number and name boxes follow the dark theme.</td></tr>
 <tr><td><b>1.9.8</b></td><td><b>Performance report:</b> CloudPro records how long each step takes (loading an Inspection Area, filters and previews, georeferencing, publishing, exporting, 3D frames and whether the graphics card draws them) in <code>03_CloudPro/log/performance.log</code>. <span class="ui">Performance report...</span> on the project menu saves it with a description of the computer as one text file to send for review (<a href="#large">Large areas</a>).</td></tr>
@@ -641,7 +642,7 @@ python -m cloudpro.cli info    D:/Job/Processing/Street/Street.dcsproj</pre>
 </table>
 
 <h2 id="classes">Classes</h2>
-<p>Classes follow ASPRS LAS 1.4, with CloudPro's classes 64–71.</p>
+<p>Classes follow ASPRS LAS 1.4, with CloudPro's classes 64–71. Class 7 (low point, noise) is drawn dark red; magenta is kept for rejected points only.</p>
 <table>
 <tr><th>Class</th><th>Name</th><th>Class</th><th>Name</th><th>Class</th><th>Name</th></tr>
 <tr><td>0</td><td>Created, never classified</td><td>9</td><td>Water</td><td>64</td><td>Vehicle (dynamic)</td></tr>
