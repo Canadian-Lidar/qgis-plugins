@@ -20,7 +20,7 @@
 #define CP_API __attribute__((visibility("default")))
 #endif
 
-#define CP_ENGINE_VERSION 1
+#define CP_ENGINE_VERSION 2
 #define PKT 1080
 #define NCH 32
 #define NBLK 8
@@ -656,4 +656,148 @@ CP_API void cp_line_counts(const float *P2, int64_t m, const float *ax, const fl
         }
         out[c] = k;
     }
+}
+
+/* ------------------------------------------------------------------ view rasterisers */
+
+/* Plan / Slice, in pieces so several threads can share the work:
+   cp_key_range: min and max key over the points on screen (pixel coordinates truncated toward zero, as numpy).
+   cp_raster_top: for each pixel the point with the largest 16-bit key (quantised over [kmin, kmax] exactly as
+     render.rasterise does; ties: the later point), drawn as a size x size square; buf and best (h*w) must be
+     initialised by the caller (bg, -1). Optional dval / depth_out: dval of the drawn point. Pieces are merged in
+     order with cp_merge_top, so the result is the same as one pass: identical to render.rasterise at size 1;
+     at larger sizes every pixel shows the highest point that covers it. */
+CP_API void cp_key_range(const float *sx, const float *sy, const float *key, int64_t n, int w, int h, double *out)
+{
+    double kmin = INFINITY, kmax = -INFINITY;
+    for (int64_t i = 0; i < n; i++) {
+        int ix = (int)sx[i], iy = (int)sy[i];
+        if (ix < 0 || iy < 0 || ix >= w || iy >= h) continue;
+        double k = key[i];
+        if (k < kmin) kmin = k;
+        if (k > kmax) kmax = k;
+    }
+    out[0] = kmin; out[1] = kmax;
+}
+
+CP_API void cp_raster_top(const float *sx, const float *sy, const float *key, const uint32_t *col, int64_t n,
+                          int w, int h, int size, double kmin, double kmax, uint32_t *buf, int32_t *best,
+                          const float *dval, float *depth_out)
+{
+    double sc = 65535.0 / (kmax - kmin > 1e-12 ? kmax - kmin : 1e-12);
+    int r0 = -(size / 2), r1 = r0 + (size > 1 ? size : 1);
+    for (int64_t i = 0; i < n; i++) {
+        int ix = (int)sx[i], iy = (int)sy[i];
+        if (ix < 0 || iy < 0 || ix >= w || iy >= h) continue;
+        int32_t kq = (int32_t)(uint16_t)((key[i] - kmin) * sc);
+        for (int dy = r0; dy < r1; dy++) {
+            int jy = iy + dy;
+            if (jy < 0 || jy >= h) continue;
+            for (int dx = r0; dx < r1; dx++) {
+                int jx = ix + dx;
+                if (jx < 0 || jx >= w) continue;
+                int64_t p = (int64_t)jy * w + jx;
+                if (kq >= best[p]) {
+                    best[p] = kq; buf[p] = col[i];
+                    if (depth_out && dval) depth_out[p] = dval[i];
+                }
+            }
+        }
+    }
+}
+
+/* Merge a later piece (b2, best2, d2) into (buf, best, depth): its pixel wins when its key is >= (ties: later). */
+CP_API void cp_merge_top(uint32_t *buf, int32_t *best, float *depth, const uint32_t *b2, const int32_t *best2,
+                         const float *d2, int64_t npix)
+{
+    for (int64_t p = 0; p < npix; p++)
+        if (best2[p] >= 0 && best2[p] >= best[p]) {
+            best[p] = best2[p]; buf[p] = b2[p];
+            if (depth && d2) depth[p] = d2[p];
+        }
+}
+
+/* 3D, in pieces: cp_near_winners finds for each pixel the nearest point (z = camera depth, > 0.05 in front) of
+   points [0, n) offset by `offset` into depth / win (h*w; initialised by the caller to inf / -1); cp_merge_near
+   merges a piece (nearer wins; equal depth: the earlier point); cp_splat_near draws the winners as size x size
+   squares with a depth test into buf and returns the depth of what was drawn in depth. */
+CP_API void cp_near_winners(const float *sx, const float *sy, const float *z, int64_t n, int64_t offset, int w, int h,
+                            float *depth, int64_t *win)
+{
+    for (int64_t i = 0; i < n; i++) {
+        int ix = (int)sx[i], iy = (int)sy[i];
+        float zi = z[i];
+        if (ix < 0 || iy < 0 || ix >= w || iy >= h || !(zi > 0.05f)) continue;
+        int64_t p = (int64_t)iy * w + ix;
+        if (zi < depth[p]) { depth[p] = zi; win[p] = i + offset; }
+    }
+}
+
+CP_API void cp_merge_near(float *depth, int64_t *win, const float *d2, const int64_t *w2, int64_t npix)
+{
+    for (int64_t p = 0; p < npix; p++)
+        if (w2[p] >= 0 && d2[p] < depth[p]) { depth[p] = d2[p]; win[p] = w2[p]; }
+}
+
+CP_API int64_t cp_splat_near(const int64_t *win, float *depth, const uint32_t *col, int w, int h, int size,
+                             uint32_t bg, uint32_t *buf)
+{
+    int64_t npix = (int64_t)w * h, nvis = 0;
+    for (int64_t p = 0; p < npix; p++) buf[p] = bg;
+    if (size <= 1) {
+        for (int64_t p = 0; p < npix; p++) if (win[p] >= 0) { buf[p] = col[win[p]]; nvis++; }
+        return nvis;
+    }
+    float *d2 = (float *)malloc(sizeof(float) * (size_t)npix);
+    if (!d2) return -1;
+    for (int64_t p = 0; p < npix; p++) d2[p] = INFINITY;
+    int r0 = -(size / 2), r1 = r0 + size;
+    for (int64_t p = 0; p < npix; p++) {
+        int64_t i = win[p];
+        if (i < 0) continue;
+        nvis++;
+        int ix = (int)(p % w), iy = (int)(p / w);
+        float zi = depth[p];
+        for (int dy = r0; dy < r1; dy++) {
+            int jy = iy + dy;
+            if (jy < 0 || jy >= h) continue;
+            for (int dx = r0; dx < r1; dx++) {
+                int jx = ix + dx;
+                if (jx < 0 || jx >= w) continue;
+                int64_t q = (int64_t)jy * w + jx;
+                if (zi < d2[q]) { d2[q] = zi; buf[q] = col[i]; }
+            }
+        }
+    }
+    memcpy(depth, d2, sizeof(float) * (size_t)npix);
+    free(d2);
+    return nvis;
+}
+
+/* ------------------------------------------------------------------ Inspection Area */
+
+/* Indices of the records (33 bytes) inside a rotated box, as PointSet.from_store tests it: x, y in metres from the
+   tile records, u = dx*su + dy*cu, v = dx*cu - dy*su about (cx, cy); |u| <= hl and |v| <= hw; optional z range
+   (zmin > zmax: none). Returns the count written to idx. */
+CP_API int64_t cp_in_box(const uint8_t *recs, int64_t n, double cx, double cy, double su, double cu, double hl,
+                         double hw, double zmin, double zmax, int64_t *idx)
+{
+    int64_t k = 0;
+    int usez = zmin <= zmax;
+    for (int64_t i = 0; i < n; i++) {
+        const uint8_t *w = recs + (size_t)i * REC_SIZE;
+        int32_t xi, yi;
+        memcpy(&xi, w, 4); memcpy(&yi, w + 4, 4);
+        double dx = xi * 1e-3 - cx, dy = yi * 1e-3 - cy;
+        double u = dx * su + dy * cu, v = dx * cu - dy * su;
+        if (!(fabs(u) <= hl && fabs(v) <= hw)) continue;
+        if (usez) {
+            int32_t zi;
+            memcpy(&zi, w + 8, 4);
+            double z = zi * 1e-3;
+            if (!(z >= zmin && z <= zmax)) continue;
+        }
+        idx[k++] = i;
+    }
+    return k;
 }

@@ -27,6 +27,19 @@ def to_box_frame(x, y, cx, cy, bearing_deg):
     return dx * su + dy * cu, dx * cu - dy * su
 
 
+def _separated(sq, cor):
+    """True when the tile square sq and the rotated box cor (4 x 2 corners each) do not overlap (separating axis
+    along the box's or the square's sides)."""
+    for poly in (cor, sq):
+        for e in range(2):
+            d = poly[(e + 1) % 4] - poly[e]
+            ax = np.array([-d[1], d[0]])
+            a, b = sq @ ax, cor @ ax
+            if a.max() < b.min() or b.max() < a.min():
+                return True
+    return False
+
+
 class PointSet:
     def __init__(self, n=0):
         self.x = np.zeros(n, np.float32)
@@ -50,34 +63,62 @@ class PointSet:
 
     @classmethod
     def from_store(cls, store, box, zrange=None, max_points=None):
-        """Load the points inside a rotated box dict(cx, cy, length, width, bearing)."""
+        """Load the points inside a rotated box dict(cx, cy, length, width, bearing).
+
+        Tiles entirely outside the box are skipped and tiles entirely inside are taken whole (no test per point);
+        the others are tested point by point (in the compiled engine when it is loaded). Tiles are read in
+        parallel threads."""
         cx, cy, L, W, b = box["cx"], box["cy"], box["length"], box["width"], box["bearing"]
         cor = rect_corners(cx, cy, L, W, b)
         keys = store.tiles_in_bbox(cor[:, 0].min(), cor[:, 1].min(), cor[:, 0].max(), cor[:, 1].max())
-        parts = []
-        codes = []
-        for k in keys:
+        from . import engine
+        eng = engine.available()
+        t = store.tile
+
+        def one(k):
+            i, j = (int(v) for v in k.split("_"))
+            sq = np.array([[i * t, j * t], [(i + 1) * t, j * t], [(i + 1) * t, (j + 1) * t], [i * t, (j + 1) * t]])
+            uu, vv = to_box_frame(sq[:, 0], sq[:, 1], cx, cy, b)
+            if zrange is None and (np.abs(uu) <= L / 2).all() and (np.abs(vv) <= W / 2).all():
+                inside = "all"                                # the whole tile is in the box
+            elif _separated(sq, cor):
+                return None                                   # the tile is outside the box
+            else:
+                inside = "test"
             a = store.tile_array(k)
             if len(a) == 0:
-                continue
-            x = a["x"] * 1e-3
-            y = a["y"] * 1e-3
-            u, v = to_box_frame(x, y, cx, cy, b)
-            m = (np.abs(u) <= L / 2) & (np.abs(v) <= W / 2)
-            if zrange is not None:
-                z = a["z"] * 1e-3
-                m &= (z >= zrange[0]) & (z <= zrange[1])
-            idx = np.flatnonzero(m)
+                return None
+            if inside == "all":
+                idx = np.arange(len(a))
+            elif eng:
+                idx = engine.in_box(a, cx, cy, b, L, W, zrange)
+            else:
+                x = a["x"] * 1e-3
+                y = a["y"] * 1e-3
+                u, v = to_box_frame(x, y, cx, cy, b)
+                m = (np.abs(u) <= L / 2) & (np.abs(v) <= W / 2)
+                if zrange is not None:
+                    z = a["z"] * 1e-3
+                    m &= (z >= zrange[0]) & (z <= zrange[1])
+                idx = np.flatnonzero(m)
             if len(idx) == 0:
-                continue
-            parts.append(np.asarray(a[idx]))
-            codes.append((np.int64(store.key_id(k)) << 40) | idx.astype(np.int64))
+                return None
+            r = np.asarray(a) if len(idx) == len(a) else np.asarray(a[idx])
+            return r, (np.int64(store.key_id(k)) << 40) | idx.astype(np.int64)
+
+        if len(keys) > 1:
+            import concurrent.futures as cf
+            with cf.ThreadPoolExecutor(max_workers=min(len(keys), engine.threads() if eng else 4)) as ex:
+                got = list(ex.map(one, keys))
+        else:
+            got = [one(k) for k in keys]
+        got = [g for g in got if g is not None]
         ps = cls(0)
         ps.box = dict(box)
-        if not parts:
+        if not got:
             return ps
-        r = np.concatenate(parts)
-        code = np.concatenate(codes)
+        r = np.concatenate([g[0] for g in got])
+        code = np.concatenate([g[1] for g in got])
         if max_points and len(r) > max_points:
             sel = np.sort(np.random.default_rng(0).choice(len(r), max_points, replace=False))
             r, code = r[sel], code[sel]
@@ -94,10 +135,15 @@ class PointSet:
 
     def subset(self, idx):
         s = PointSet(0)
-        s.x, s.y, s.z = self.x[idx], self.y[idx], self.z[idx]
-        for f in FIELDS:
-            setattr(s, f, getattr(self, f)[idx])
-        s.code = self.code[idx]
+        names = ("x", "y", "z") + FIELDS + ("code",)
+        if len(idx) > 2_000_000:                      # large: the arrays are gathered in parallel threads
+            import concurrent.futures as cf
+            with cf.ThreadPoolExecutor(max_workers=min(len(names), 8)) as ex:
+                got = list(ex.map(lambda f: np.take(getattr(self, f), idx), names))
+        else:
+            got = [getattr(self, f)[idx] for f in names]
+        for f, v in zip(names, got):
+            setattr(s, f, v)
         s.box = self.box
         return s
 
