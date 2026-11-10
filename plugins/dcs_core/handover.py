@@ -46,6 +46,8 @@ def publish(project, stage, data_files, fields, plugin, version="", engine="", u
     files.atomic_write_json(path, doc)
     project.update_stage(stage, by=plugin, status="done", last_run="done", handover=files.portable(path, project.folder),
                          handover_id=hid, built_from=built, finished=now(), version=version, error="")
+    from . import registry
+    registry.notify_publish(project.path, stage)      # e.g. CloudPro georeferences in the background (API 11)
     return doc
 
 
