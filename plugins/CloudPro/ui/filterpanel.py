@@ -273,7 +273,7 @@ class FilterPanel(QtWidgets.QWidget):
     def _rename(self):
         if not self.group:
             return
-        t, ok = QtWidgets.QInputDialog.getText(self, "Rename group", "Name", text=self.group.name)
+        t, ok = theme.get_text(self, "Rename group", "Name", text=self.group.name)
         if ok and t.strip():
             self.group.name = t.strip()
             self.cmb.setItemText(self.cmb.currentIndex(), self.group.name)

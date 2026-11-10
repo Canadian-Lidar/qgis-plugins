@@ -158,7 +158,7 @@ class ImportDialog(QtWidgets.QDialog):
             try:
                 rec = clraw.Recording(ps)
             except Exception as ex:
-                QtWidgets.QMessageBox.warning(self, "CloudPro", "%s:\n%s" % (ps[0], ex))
+                theme.msg_warn(self, "CloudPro", "%s:\n%s" % (ps[0], ex))
                 continue
             self.recs.append(rec)
             if not self.sbet.text():
@@ -199,7 +199,7 @@ class ImportDialog(QtWidgets.QDialog):
             self.start_dir = d
             ps = glob.glob(os.path.join(d, "**", "*.clraw"), recursive=True)
             if not ps:
-                QtWidgets.QMessageBox.information(self, "CloudPro", "No .clraw files under %s" % d)
+                theme.msg_info(self, "CloudPro", "No .clraw files under %s" % d)
             self._add_paths(ps)
 
     def remove(self):
@@ -229,7 +229,7 @@ class ImportDialog(QtWidgets.QDialog):
             with open(p) as f:
                 d = json.load(f)
         except Exception as ex:
-            QtWidgets.QMessageBox.warning(self, "CloudPro", str(ex))
+            theme.msg_warn(self, "CloudPro", str(ex))
             return
         m = d.get("lidar_mount_navaq_deg") or d.get("mount") or d.get("mounting_deg")
         if isinstance(m, dict):
@@ -251,10 +251,10 @@ class ImportDialog(QtWidgets.QDialog):
 
     def _ok(self):
         if not self.recs:
-            QtWidgets.QMessageBox.information(self, "CloudPro", "Add one or more .clraw recordings first.")
+            theme.msg_info(self, "CloudPro", "Add one or more .clraw recordings first.")
             return
         if self.r_sbet.isChecked() and not os.path.exists(self.sbet.text()):
-            QtWidgets.QMessageBox.information(self, "CloudPro", "Choose the SBET file from PosPro, or use the "
+            theme.msg_info(self, "CloudPro", "Choose the SBET file from PosPro, or use the "
                                                                 "Certus real-time trajectory.")
             return
         self.accept()

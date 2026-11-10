@@ -361,13 +361,16 @@ def _pieces(n, minimum=2_000_000):
 
 
 _POOL = None
+_POOL_LOCK = __import__("threading").Lock()
 
 
 def _pool():
     global _POOL
     if _POOL is None:
-        import concurrent.futures as cf
-        _POOL = cf.ThreadPoolExecutor(max_workers=threads(), thread_name_prefix="CloudPro engine")
+        with _POOL_LOCK:                         # the tiled filter runs call the engine from several threads
+            if _POOL is None:
+                import concurrent.futures as cf
+                _POOL = cf.ThreadPoolExecutor(max_workers=threads(), thread_name_prefix="CloudPro engine")
     return _POOL
 
 

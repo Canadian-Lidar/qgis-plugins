@@ -53,6 +53,53 @@ def tiled_order():
     print("tiled run: %d points changed, the same in either tile order, one undo step, grids rebuilt" % n1)
 
 
+def tiled_parallel():
+    """1.9.9: parts in parallel threads give the same edits as one thread; dense tiles are split into parts that
+    cover every point once; cancelling writes nothing."""
+    from CloudPro.core import chain, filters as F, importer as IM, runner
+    from CloudPro.core.edits import EditManager
+    from CloudPro.core.project import Project
+    dcs, p = _job.fresh_job("par")
+    IM.import_chain(p, chain.resolve(dcs), IM.ImportOptions(decimate=2))
+    work2 = p.work + "_copy"
+    shutil.copytree(p.work, work2)
+    g = F.FilterGroup("sor", [F.make("sor"), F.make("ror")])
+    flags = []
+    for nw in (1, 3):
+        shutil.rmtree(p.work)
+        shutil.copytree(work2, p.work)
+        q = Project.from_dcs(dcs)
+        st = {}
+        n = runner.run_group_tiled(q, g, EditManager(q), buffer=5.0, workers=nw, stats=st)
+        assert st["workers"] == min(nw, st["units"]) and n > 0, st
+        flags.append((n, {k: np.asarray(q.store.tile_array(k)["flag"]).copy() for k in q.store.keys()}))
+        q.store.close()
+    assert flags[0][0] == flags[1][0] and all((flags[0][1][k] == flags[1][1][k]).all() for k in flags[0][1])
+    # dense tiles split: every point in exactly one part
+    shutil.rmtree(p.work)
+    shutil.copytree(work2, p.work)
+    q = Project.from_dcs(dcs)
+    big = max(q.store.counts.values())
+    units = runner.plan_units(q.store, q.store.keys(), 5.0, unit_points=max(1000, big // 5))
+    assert len(units) > len(q.store.keys()) and sum(u.n for u in units) == q.store.total
+    # cancel: nothing written, Cancelled raised
+    f0 = {k: np.asarray(q.store.tile_array(k)["flag"]).copy() for k in q.store.keys()}
+    calls = [0]
+
+    def cancel():
+        calls[0] += 1
+        return calls[0] > 3
+    try:
+        runner.run_group_tiled(q, g, EditManager(q), buffer=5.0, cancel=cancel)
+        raise AssertionError("not cancelled")
+    except IM.Cancelled:
+        pass
+    assert all((np.asarray(q.store.tile_array(k)["flag"]) == f0[k]).all() for k in f0)
+    q.store.close()
+    print("tiled run in parallel: same edits with 1 and 3 threads (%d), dense tiles split (%d parts), cancel writes "
+          "nothing" % (flags[0][0], len(units)))
+
+
 def shift_clip():
     from CloudPro.core.edits import EditManager
     from CloudPro.core.pointset import PointSet
@@ -103,6 +150,7 @@ def main():
     shift_clip()
     poles()
     tiled_order()
+    tiled_parallel()
     print("test_core_misc: OK")
 
 

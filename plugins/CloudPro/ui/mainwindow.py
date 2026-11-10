@@ -1448,8 +1448,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return 15e6
 
     def set_max_load(self):
-        v, ok = QtWidgets.QInputDialog.getDouble(self, "Memory", "Ask before loading an Inspection Area with more "
-                                                 "than (million points):", self.max_load() / 1e6, 1, 500, 1)
+        v, ok = theme.get_number(self, "Memory", "Ask before loading an Inspection Area with more "
+                                 "than (million points):", self.max_load() / 1e6, 1, 500, 1)
         if ok:
             from qgis.PyQt.QtCore import QSettings
             QSettings().setValue("CloudPro/max_load_m", v)
@@ -2577,13 +2577,28 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def job(progress, cancel):
             def inner():
-                n = run_group_tiled(project, g, edits, lines=lines, progress=progress, cancel=cancel)
+                st = {}
+                try:
+                    n = run_group_tiled(project, g, edits, lines=lines, progress=progress, cancel=cancel, stats=st)
+                except IM.Cancelled as e:
+                    return e                    # not a failed run of the stage: nothing was written
                 project.record_filter(g.to_dict(), scope, n)
+                perflog.log(project, "filter", "'%s' on %s: %s changed in %.1f s; %d parts, %d threads (%d at "
+                            "once), %.0f GB memory allowed, %s of %s points loaded with buffers, %d parts with a "
+                            "smaller buffer" % (g.name, "the selected lines" if lines else "the entire project",
+                                                "{:,}".format(n), st.get("total_s", 0), st.get("units", 0),
+                                                st.get("workers", 0), st.get("peak_running", 0),
+                                                st.get("memory_gb", 0), "{:,}".format(st.get("loaded", 0)),
+                                                "{:,}".format(st.get("points", 0)), st.get("reduced_buffer", 0)))
                 return n
             if project.dcs is not None:
                 with project.dcs.run("cloudpro", PLUGIN, VERSION):
-                    return inner()
-            return inner()
+                    res = inner()
+            else:
+                res = inner()
+            if isinstance(res, Exception):
+                raise res
+            return res
         self._run("filter_tiled", job, "Filter '%s'" % g.name)
 
     # ================================================================== export
