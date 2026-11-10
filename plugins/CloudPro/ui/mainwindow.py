@@ -269,6 +269,15 @@ class MainWindow(QtWidgets.QMainWindow):
         d.setWidget(widget)
         cl = chrome.IconButton("close", "Hide this view (project menu > Windows brings it back)", size=26)
         cl.clicked.connect(d.close)
+        if key in ("plan", "slice", "3d"):
+            # 2.0.3: the view's controls right after its title; only the close button on the right
+            for i in reversed(range(head_layout.count())):
+                it = head_layout.itemAt(i)
+                if it.spacerItem() is not None:
+                    head_layout.takeAt(i)
+            head_layout.insertSpacing(1, 10)
+            if key != "slice":                  # the Slice's slider takes the free space
+                head_layout.addStretch(1)
         head_layout.addSpacing(4)
         head_layout.addWidget(cl)
         d.setTitleBarWidget(head)
