@@ -164,6 +164,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.v3d = self.v3d_pane.view
         for v in (self.plan, self.slice, self.v3d):
             v.edit_mode = self.action                     # the selection shape's colour (set_mode keeps it)
+        # linked cursor (2.1.0): the point under the mouse in one view is marked in the other two
+        self._hover = None
+        self._hover_timer = QtCore.QTimer(self)
+        self._hover_timer.setSingleShot(True)
+        self._hover_timer.setInterval(30)
+        self._hover_timer.timeout.connect(self._update_linked)
+        self.plan.cursorMoved.connect(lambda a, b: self._hover_at("plan", a, b))
+        self.slice.cursorMoved.connect(lambda a, b: self._hover_at("slice", a, b))
+        self.v3d.hovered.connect(lambda x, y: self._hover_at("3d", x, y))
+        for v in (self.plan, self.slice, self.v3d):
+            v.cursorLeft.connect(self._hover_off)
         for v in (self.plan, self.slice):
             v.selectionMade.connect(lambda m, t, vv=v: self.edit_selection(vv, m))
             v.pointPicked.connect(lambda j, vv=v: self.show_point(vv.idx[j] if j >= 0 else -1))
@@ -2270,6 +2281,93 @@ class MainWindow(QtWidgets.QMainWindow):
                 p.setBrush(col)
                 p.drawEllipse(QtCore.QPointF(sx, sy), 4, 4)
                 p.drawText(QtCore.QPointF(sx + 6, sy - 6), "L%d" % (l + 1))
+
+    # ------------------------------------------------------------------ linked cursor (2.1.0)
+    LINK_RADIUS = 10                             # px: the point under the mouse, else the cursor position
+
+    def _hover_at(self, key, a, b):
+        self._hover = (key, a, b)
+        if not self._hover_timer.isActive():
+            self._hover_timer.start()
+
+    def _hover_off(self):
+        self._hover = None
+        self._hover_timer.stop()
+        self._set_linked(None, None)
+
+    def linked_point(self, key, a, b):
+        """(x, y, z or None) in local project coordinates of what is under the mouse in a view: the nearest shown
+        point within LINK_RADIUS pixels, else the cursor's place (the Plan has no height there)."""
+        ps = self.ps
+        if ps is None or len(ps) == 0:
+            return None
+        z = ps.z if self.preview is None else self.preview.z
+        if key == "3d":
+            j = self.v3d.pick(a, b, self.LINK_RADIUS)
+            if j < 0:
+                return None
+            i = int(self.v3d.idx[j])
+            return float(ps.x[i]), float(ps.y[i]), float(z[i])
+        v = self.plan if key == "plan" else self.slice
+        sx, sy = v.to_screen(a, b)
+        j = -1
+        if v._sx is not None and len(v._sx):
+            r = self.LINK_RADIUS
+            d2 = (v._sx - float(sx)) ** 2 + (v._sy - float(sy)) ** 2
+            cand = np.flatnonzero(d2 <= r * r)
+            if len(cand):
+                # the point that is drawn there: the top one in the Plan (highest key), else the nearest
+                j = int(cand[np.argmax(v.key[cand])]) if key == "plan" and v.key is not None else \
+                    int(cand[np.argmin(d2[cand])])
+        if j >= 0 and v.idx is not None and j < len(v.idx):
+            i = int(v.idx[j])
+            return float(ps.x[i]), float(ps.y[i]), float(z[i])
+        if key == "plan":
+            return float(a), float(b), None
+        if not self.box:
+            return None
+        along, pos, _th, _full = self._slice()
+        u, w = (a, pos) if along else (pos, a)
+        br = math.radians(self.box["bearing"])
+        return (self.box["cx"] + u * math.sin(br) + w * math.cos(br),
+                self.box["cy"] + u * math.cos(br) - w * math.sin(br), float(b))
+
+    def _update_linked(self):
+        if self._hover is None:
+            return
+        key, a, b = self._hover
+        try:
+            pt = self.linked_point(key, a, b)
+        except Exception:                       # noqa: BLE001 - a view mid-update: next move
+            pt = None
+        self._set_linked(key, pt)
+
+    def _set_linked(self, source, pt):
+        """Mark pt (x, y, z or None) in every view but the source: a cross on the point, or a dashed vertical line
+        where the view does not hold it (outside the slice, or no height)."""
+        marks = {"plan": None, "slice": None, "3d": None}
+        if pt is not None and self.box:
+            x, y, z = pt
+            marks["plan"] = ("plus", x, y)
+            b = self.box
+            u, w = to_box_frame(np.array([x]), np.array([y]), b["cx"], b["cy"], b["bearing"])
+            u, w = float(u[0]), float(w[0])
+            along, pos, th, _full = self._slice()
+            a_ = u if along else w
+            inside = abs(u) <= b["length"] / 2 + 1e-6 and abs(w) <= b["width"] / 2 + 1e-6
+            in_slab = abs((w if along else u) - pos) <= th / 2 + 1e-6
+            if inside:
+                marks["slice"] = ("plus", a_, z) if (z is not None and in_slab) else ("line", a_)
+            if z is not None:
+                marks["3d"] = ("plus", (x, y, z))
+            elif inside and len(self.ps):
+                z0 = getattr(self, "_z0", float(np.percentile(self.ps.z[::max(1, len(self.ps) // 200000)], 2)))
+                marks["3d"] = ("line", x, y, z0, z0 + 25.0)
+        for k, v in (("plan", self.plan), ("slice", self.slice), ("3d", self.v3d)):
+            m = None if k == source else marks[k]
+            if getattr(v, "linked", None) != m:
+                v.linked = m
+                v.update()
 
     def _cursor(self, view, a, b):
         o = self._origin()

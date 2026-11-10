@@ -35,6 +35,7 @@ class CloudView2D(QtWidgets.QWidget):
     selectionMade = Signal(object, str)          # mask over shown points, tool name
     pointPicked = Signal(int)                    # index into the model point set (-1 none)
     cursorMoved = Signal(float, float)           # view coordinates (a, b)
+    cursorLeft = Signal()                        # the mouse left the view (linked cursor off, 2.1.0)
     viewChanged = Signal()
     measured = Signal(str)
     keyNav = Signal(str)                         # navigation requests handled by the main window
@@ -66,6 +67,8 @@ class CloudView2D(QtWidgets.QWidget):
         self.b_label = "N"
         self.brush_px = 18
         self.overlays = []                          # callables(painter, view)
+        self.linked = None                          # the linked cursor from another view (ui/linked.py)
+        self.linked_on_top = False                  # a subclass draws it itself, after its own overlays
         self.title = ""
         self._img = None
         self._img_key = None
@@ -185,6 +188,9 @@ class CloudView2D(QtWidgets.QWidget):
             except Exception:
                 pass
         self._draw_tool(p)
+        if not self.linked_on_top:
+            from .linked import paint_2d
+            paint_2d(p, self)
         self._draw_title(p)
         if getattr(self, "legend", None):
             from . import legend
@@ -438,6 +444,7 @@ class CloudView2D(QtWidgets.QWidget):
     def leaveEvent(self, e):
         self._cursor = None
         self._hover = -1
+        self.cursorLeft.emit()
         self.update()
 
     def keyPressEvent(self, e):

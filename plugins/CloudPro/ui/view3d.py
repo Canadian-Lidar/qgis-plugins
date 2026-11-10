@@ -51,6 +51,8 @@ class CloudView3D(QtWidgets.QWidget):
     pointPicked = Signal(int)
     viewChanged = Signal()
     legendMenu = Signal(object)                  # right-click on the colour scale bar (global pos)
+    hovered = Signal(float, float)               # mouse over the view, not dragging (linked cursor, 2.1.0)
+    cursorLeft = Signal()
     _stillReady = Signal(object)
     gpuStatus = Signal(str)                      # once: drawn by the graphics card, or why not
 
@@ -560,6 +562,7 @@ class CloudView3D(QtWidgets.QWidget):
             for i in range(len(line) - 1):
                 if zc[i] > 0.05 and zc[i + 1] > 0.05:
                     p.drawLine(QtCore.QPointF(sx[i], sy[i]), QtCore.QPointF(sx[i + 1], sy[i + 1]))
+        self._draw_linked(p)
         self._draw_axes(p)
         self._draw_nav(p)
         if self._poly:
@@ -652,6 +655,7 @@ class CloudView3D(QtWidgets.QWidget):
     def mouseMoveEvent(self, e):
         pos = evpos(e)
         if not self._drag:
+            self.hovered.emit(float(pos.x()), float(pos.y()))
             hot = self._nav_hit(pos)
             if hot != self._nav_hot and not self._nav_timer.isActive():
                 self._nav_hot = hot
@@ -769,10 +773,46 @@ class CloudView3D(QtWidgets.QWidget):
         else:
             super().keyPressEvent(e)
 
+    def _draw_linked(self, p):
+        """The linked cursor: ("plus", world xyz) or ("line", world x, y, z0, z1) - a vertical line there."""
+        m = getattr(self, "linked", None)
+        if not m:
+            return
+        from .linked import draw_plus
+        if m[0] == "plus":
+            sx, sy, zc = self.project(np.array([m[1]], float))
+            if zc[0] > 0.05:
+                draw_plus(p, float(sx[0]), float(sy[0]))
+        else:
+            x, y, z0, z1 = m[1:]
+            sx, sy, zc = self.project(np.array([[x, y, z0], [x, y, z1]], float))
+            if (zc > 0.05).all():
+                from .linked import COLOUR, HALO
+                p.save()
+                p.setPen(QtGui.QPen(HALO, 3))
+                p.drawLine(QtCore.QPointF(sx[0], sy[0]), QtCore.QPointF(sx[1], sy[1]))
+                p.setPen(QtGui.QPen(COLOUR, 1.2, Qt.PenStyle.DashLine))
+                p.drawLine(QtCore.QPointF(sx[0], sy[0]), QtCore.QPointF(sx[1], sy[1]))
+                p.restore()
+
+    def leaveEvent(self, e):                     # noqa: N802
+        self.cursorLeft.emit()
+        super().leaveEvent(e)
+
+    def _screen_cache(self):
+        """Every point's screen position, kept while the camera and the points stay the same (hover picking)."""
+        cam = self._cam()
+        key = (id(self._L), len(self._L), self.width(), self.height(), cam["ortho"], float(cam["s"]),
+               float(cam["f"]), tuple(np.round(cam["t"], 6)), tuple(np.round(cam["M"].ravel(), 7)))
+        if getattr(self, "_scr_key", None) != key:
+            self._scr = _project_local(self._L, cam)
+            self._scr_key = key
+        return self._scr
+
     def pick(self, x, y, radius=6):
         if len(self.P) == 0:
             return -1
-        sx, sy, zc = _project_local(self._L, self._cam())
+        sx, sy, zc = self._screen_cache()
         d2 = (sx - x) ** 2 + (sy - y) ** 2
         cand = np.flatnonzero((d2 < radius * radius) & (zc > 0.05))
         if len(cand) == 0:
