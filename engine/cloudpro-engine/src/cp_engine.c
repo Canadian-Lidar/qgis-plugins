@@ -801,3 +801,184 @@ CP_API int64_t cp_in_box(const uint8_t *recs, int64_t n, double cx, double cy, d
     }
     return k;
 }
+
+/* ------------------------------------------------------------------ k nearest neighbours on a cell grid */
+
+/* Points sorted into cubes of side `cell`: cp_grid_build -> handle (NULL when out of memory); cp_knn_mean for
+   queries (thread-safe, read only); cp_grid_free. Used by SOR (filters.StatisticalOutlier). */
+typedef struct {
+    double *xyz;            /* points in cell order */
+    int64_t n;
+    double lo[3], cell;
+    int64_t dims[3];
+    CpTable cells;          /* cell key -> index into start[] (cnt field holds the index) */
+    int64_t *start;         /* ncells + 1 */
+    int64_t ncells;
+} CpGrid;
+
+static inline int64_t grid_key(const CpGrid *g, int64_t cx, int64_t cy, int64_t cz)
+{
+    return (cx * g->dims[1] + cy) * g->dims[2] + cz;
+}
+
+static inline int64_t grid_find(const CpGrid *g, int64_t key)
+{
+    uint64_t mask = (uint64_t)g->cells.cap - 1, h = mix64((uint64_t)key) & mask;
+    for (;;) {
+        int64_t k = g->cells.keys[h];
+        if (k == key) return g->cells.cnt[h];
+        if (k < 0) return -1;
+        h = (h + 1) & mask;
+    }
+}
+
+CP_API void *cp_grid_build(const double *xyz, int64_t n, double cell)
+{
+    CpGrid *g = (CpGrid *)calloc(1, sizeof(CpGrid));
+    if (!g) return NULL;
+    g->n = n; g->cell = cell;
+    double hi[3] = {-INFINITY, -INFINITY, -INFINITY};
+    g->lo[0] = g->lo[1] = g->lo[2] = INFINITY;
+    for (int64_t i = 0; i < n; i++)
+        for (int a = 0; a < 3; a++) {
+            double v = xyz[3 * i + a];
+            if (v < g->lo[a]) g->lo[a] = v;
+            if (v > hi[a]) hi[a] = v;
+        }
+    for (int a = 0; a < 3; a++) {
+        if (n == 0) { g->lo[a] = 0; hi[a] = 0; }
+        g->dims[a] = (int64_t)floor((hi[a] - g->lo[a]) / cell) + 1;
+    }
+    int64_t *key = (int64_t *)malloc(sizeof(int64_t) * (size_t)(n ? n : 1));
+    int64_t *slot = (int64_t *)malloc(sizeof(int64_t) * (size_t)(n ? n : 1));
+    if (!key || !slot || table_init(&g->cells, 1 << 16)) { free(key); free(slot); free(g); return NULL; }
+    int64_t nc = 0;
+    int64_t *count = (int64_t *)malloc(sizeof(int64_t) * 1024), capc = 1024;
+    for (int64_t i = 0; i < n; i++) {
+        int64_t cx = (int64_t)floor((xyz[3 * i] - g->lo[0]) / cell);
+        int64_t cy = (int64_t)floor((xyz[3 * i + 1] - g->lo[1]) / cell);
+        int64_t cz = (int64_t)floor((xyz[3 * i + 2] - g->lo[2]) / cell);
+        int64_t k = grid_key(g, cx, cy, cz);
+        key[i] = k;
+        int64_t c = grid_find(g, k);
+        if (c < 0) {
+            if (table_add(&g->cells, k)) goto fail;              /* adds with cnt 1 */
+            /* set the cell index into cnt */
+            uint64_t mask = (uint64_t)g->cells.cap - 1, h = mix64((uint64_t)k) & mask;
+            while (g->cells.keys[h] != k) h = (h + 1) & mask;
+            g->cells.cnt[h] = nc;
+            if (nc >= capc) {
+                capc *= 2;
+                int64_t *nc2 = (int64_t *)realloc(count, sizeof(int64_t) * (size_t)capc);
+                if (!nc2) goto fail;
+                count = nc2;
+            }
+            count[nc] = 0;
+            c = nc++;
+        }
+        slot[i] = c;
+        count[c]++;
+    }
+    g->ncells = nc;
+    g->start = (int64_t *)malloc(sizeof(int64_t) * (size_t)(nc + 1));
+    g->xyz = (double *)malloc(sizeof(double) * 3 * (size_t)(n ? n : 1));
+    if (!g->start || !g->xyz) goto fail;
+    g->start[0] = 0;
+    for (int64_t c = 0; c < nc; c++) g->start[c + 1] = g->start[c] + count[c];
+    for (int64_t c = 0; c < nc; c++) count[c] = g->start[c];
+    for (int64_t i = 0; i < n; i++) {
+        int64_t p = count[slot[i]]++;
+        memcpy(g->xyz + 3 * p, xyz + 3 * i, 3 * sizeof(double));
+    }
+    free(key); free(slot); free(count);
+    return g;
+fail:
+    free(key); free(slot); free(count);
+    free(g->cells.keys); free(g->cells.cnt); free(g->start); free(g->xyz); free(g);
+    return NULL;
+}
+
+CP_API void cp_grid_free(void *h)
+{
+    CpGrid *g = (CpGrid *)h;
+    if (!g) return;
+    free(g->cells.keys); free(g->cells.cnt); free(g->start); free(g->xyz); free(g);
+}
+
+/* numpy's sum of a short contiguous row (pairwise_sum for n <= 128): 8 partial sums, combined in pairs. */
+static double np_sum(const double *a, int n)
+{
+    if (n < 8) {
+        double r = 0.0;
+        for (int i = 0; i < n; i++) r += a[i];
+        return r;
+    }
+    double r[8];
+    for (int j = 0; j < 8; j++) r[j] = a[j];
+    int i;
+    for (i = 8; i < n - (n % 8); i += 8)
+        for (int j = 0; j < 8; j++) r[j] += a[i + j];
+    double res = ((r[0] + r[1]) + (r[2] + r[3])) + ((r[4] + r[5]) + (r[6] + r[7]));
+    for (; i < n; i++) res += a[i];
+    return res;
+}
+
+/* For each query point: the mean distance to its k nearest grid points after the first (the point itself when it
+   is one of them): the same as scipy's cKDTree.query(q, k + 1)[0][:, 1:].mean(1). inf when there are fewer than
+   k + 1 points. k <= 63. */
+CP_API void cp_knn_mean(void *h, const double *q, int64_t nq, int k, double *out)
+{
+    const CpGrid *g = (const CpGrid *)h;
+    int kk = k + 1;
+    double bd[64];
+    for (int64_t iq = 0; iq < nq; iq++) {
+        const double qx = q[3 * iq], qy = q[3 * iq + 1], qz = q[3 * iq + 2];
+        int64_t cx = (int64_t)floor((qx - g->lo[0]) / g->cell);
+        int64_t cy = (int64_t)floor((qy - g->lo[1]) / g->cell);
+        int64_t cz = (int64_t)floor((qz - g->lo[2]) / g->cell);
+        int nb = 0;
+        int64_t rmax = g->dims[0] > g->dims[1] ? g->dims[0] : g->dims[1];
+        if (g->dims[2] > rmax) rmax = g->dims[2];
+        rmax += 2;
+        for (int64_t r = 0; r <= rmax; r++) {
+            for (int64_t dx = -r; dx <= r; dx++) {
+                int64_t x = cx + dx;
+                if (x < 0 || x >= g->dims[0]) continue;
+                for (int64_t dy = -r; dy <= r; dy++) {
+                    int64_t y = cy + dy;
+                    if (y < 0 || y >= g->dims[1]) continue;
+                    int edge = (dx == -r || dx == r || dy == -r || dy == r);
+                    int64_t step = edge ? 1 : 2 * r;                 /* inside the shell: only z = +-r */
+                    for (int64_t dz = -r; dz <= r; dz += (step ? step : 1)) {
+                        int64_t z = cz + dz;
+                        if (z >= 0 && z < g->dims[2]) {
+                            int64_t c = grid_find(g, grid_key(g, x, y, z));
+                            if (c >= 0)
+                                for (int64_t p = g->start[c]; p < g->start[c + 1]; p++) {
+                                    const double *v = g->xyz + 3 * p;
+                                    double ex = qx - v[0], ey = qy - v[1], ez = qz - v[2];
+                                    double d2 = ex * ex + ey * ey + ez * ez;
+                                    if (nb < kk) {
+                                        int j = nb++;
+                                        while (j > 0 && bd[j - 1] > d2) { bd[j] = bd[j - 1]; j--; }
+                                        bd[j] = d2;
+                                    } else if (d2 < bd[kk - 1]) {
+                                        int j = kk - 1;
+                                        while (j > 0 && bd[j - 1] > d2) { bd[j] = bd[j - 1]; j--; }
+                                        bd[j] = d2;
+                                    }
+                                }
+                        }
+                        if (r == 0) break;
+                    }
+                }
+            }
+            double lim = (double)r * g->cell;
+            if (nb == kk && bd[kk - 1] <= lim * lim) break;
+        }
+        if (nb < kk) { out[iq] = INFINITY; continue; }
+        double d[64];
+        for (int j = 1; j < kk; j++) d[j - 1] = sqrt(bd[j]);
+        out[iq] = np_sum(d, k) / k;
+    }
+}

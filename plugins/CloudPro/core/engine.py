@@ -140,6 +140,12 @@ def _load():
         lib.cp_splat_near.argtypes = [V, V, V, I, I, I, U32, V]
         lib.cp_in_box.restype = C.c_int64
         lib.cp_in_box.argtypes = [C.c_void_p, C.c_int64] + [C.c_double] * 8 + [C.c_void_p]
+        lib.cp_grid_build.restype = C.c_void_p
+        lib.cp_grid_build.argtypes = [C.c_void_p, C.c_int64, C.c_double]
+        lib.cp_grid_free.restype = None
+        lib.cp_grid_free.argtypes = [C.c_void_p]
+        lib.cp_knn_mean.restype = None
+        lib.cp_knn_mean.argtypes = [C.c_void_p, C.c_void_p, C.c_int64, C.c_int, C.c_void_p]
         lib.cp_grid_stats.restype = None
         lib.cp_grid_stats.argtypes = [C.c_void_p, C.c_int64, C.c_int64, C.c_int64, C.c_int64, C.c_int64] + \
             [C.c_void_p] * 6
@@ -430,3 +436,32 @@ def in_box(a, cx, cy, bearing, length, width, zrange=None):
     k = lib.cp_in_box(_ptr(a), len(a), float(cx), float(cy), float(np.sin(b)), float(np.cos(b)), length / 2.0,
                       width / 2.0, float(z0), float(z1), _ptr(idx))
     return idx[:k]
+
+
+def knn_mean(data, q, k, cell=None):
+    """Mean distance from each query point to its k nearest data points after the first (the point itself when it
+    is a data point): scipy's cKDTree(data).query(q, k + 1)[0][:, 1:].mean(1), on a cell grid on every core."""
+    lib = _load()
+    data = np.ascontiguousarray(data, np.float64)
+    q = np.ascontiguousarray(q, np.float64)
+    n = len(data)
+    out = np.full(len(q), np.inf)
+    if n == 0 or len(q) == 0:
+        return out
+    if cell is None:                          # about k + 1 points per occupied cell on surfaces (lidar)
+        span = data.max(0) - data.min(0)
+        area = max(span[0] * span[1], span[0] * span[2], span[1] * span[2], 1e-6)
+        cell = max(1e-3, float(np.sqrt(area / n * (k + 1))))
+    h = lib.cp_grid_build(_ptr(data), n, float(cell))
+    if not h:
+        raise MemoryError("CloudPro engine: not enough memory for the neighbour grid")
+    try:
+        cuts = _pieces(len(q), 200_000)
+
+        def piece(j):
+            a, b = cuts[j], cuts[j + 1]
+            lib.cp_knn_mean(h, _ptr(q[a:]), b - a, int(k), _ptr(out[a:]))
+        list(_pool().map(piece, range(len(cuts) - 1)))
+    finally:
+        lib.cp_grid_free(h)
+    return out
