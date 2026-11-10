@@ -36,6 +36,7 @@
 <div style="break-inside:avoid"><h2>What is new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>2.0.3</b></td><td>Each view keeps its own colour ramp and point size (they changed every view); a linked view follows the ramp of the view it is linked to. The small window showing <i>PosPro trajectory · AlignPro calibration</i> no longer pops up (that text is the Georeference step's tooltip).</td></tr>
 <tr><td><b>2.0.2</b></td><td>Class colours without clashes: every class colour is clearly different from every other one and from the rejected (magenta), preview (orange, green) and selected (white) colours. Class 15 (transmission tower) is blue, road markings (68) pale cyan instead of white, and 0, 3, 5, 10, 11, 13, 19, 20, 65, 66, 69, 70, 71 and the unlisted classes changed slightly or more (table in Classes).</td></tr>
 <tr><td><b>2.0.1</b></td><td>Class 7 (low point, noise) is dark red instead of magenta, so it is not mistaken for rejected points when a view is coloured by Classification.</td></tr>
 <tr><td><b>2.0.0</b></td><td><b>New layout:</b> the header holds the chain and CloudPro's steps (Georeference › Clean &amp; classify › Finalize) as breadcrumbs, with the guidance in their tooltips; the project box holds CloudPro's menu and the edit tools sit right of it (no MENU button, no tool bar). Views and panels stay inside the window (✕ hides them). One legend per view, without title or counts: right-click it for the colours, link, grid and sizes. The Slice has a <span class="ui">Width</span> list (0.5 to 16 m) and whole slices centred inside the Inspection Area, with first / last buttons and <i>n / N</i>. The Inspection Area is sized in whole metres. <i>Publish</i> is now <i>Finalize</i>. Needs DCS Core 1.11.0.</td></tr>
@@ -268,11 +269,11 @@
 <tr><th>Item</th><th>Sets</th></tr>
 <tr><td><span class="ui">Colour</span></td><td>What colours the points in this view (below). Greyed out while the view is linked.</td></tr>
 <tr><td><span class="ui">Colour scale</span></td><td>For Height, Intensity, Range and Time: automatic over the Inspection Area, automatic over the whole project, or a fixed minimum and maximum (below).</td></tr>
-<tr><td><span class="ui">Colour ramp</span></td><td>Rainbow, Viridis, Terrain, Mint or Grey, for height, intensity and range in every view.</td></tr>
+<tr><td><span class="ui">Colour ramp</span></td><td>Rainbow, Viridis, Terrain, Mint or Grey, for height, intensity and range in this view (the Plan's also colours its grid). A linked view uses the ramp of the view it follows.</td></tr>
 <tr><td><span class="ui">Link colours</span></td><td>Own colours and scale, or the same as another view (below).</td></tr>
 <tr><td><span class="ui">Grid</span> (Plan)</td><td>The background grid of the whole project.</td></tr>
 <tr><td><span class="ui">Cell size</span> (Plan)</td><td>The grid's cell: 0.5, 1, 2, 2.5, 5, 10, 12.5 or 25 m (the stored 0.5 m grid summed into larger cells).</td></tr>
-<tr><td><span class="ui">Point size</span></td><td>1 to 6 pixels, in every view.</td></tr>
+<tr><td><span class="ui">Point size</span></td><td>1 to 6 pixels, in this view.</td></tr>
 <tr><td><span class="ui">Brush size</span> (Plan)</td><td>The brush radius in pixels, for the Plan and the Slice.</td></tr>
 </table>
 <table>

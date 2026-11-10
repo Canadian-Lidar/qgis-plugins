@@ -72,6 +72,23 @@ assert menus["plan"] == ["Colour", "Colour scale", "Colour ramp", "Link colours"
 assert menus["slice"] == ["Colour", "Colour scale", "Colour ramp", "Link colours", "Point size"], menus["slice"]
 print("legend menus:", menus["plan"])
 
+# 2.0.3: each view's ramp and point size are its own; the inputs line never pops up as a window
+win.set_lut("slice", "Viridis")
+win.set_point_size("3d", 5)
+harness.settle(2)
+assert win.luts == {"plan": "Rainbow", "slice": "Viridis", "3d": "Rainbow"}, win.luts
+assert (win.plan.point_size, win.slice.point_size, win.v3d.point_size) == (2, 2, 5)
+assert win.plan.legend["lut"] == "Rainbow" and win.slice.legend["lut"] == "Viridis"
+win.panes["3d"].link.setCurrentIndex(win.panes["3d"].link.findData("slice"))
+harness.settle(2)
+assert win._lut_of("3d") == "Viridis" and win.v3d.legend["lut"] == "Viridis"
+win.panes["3d"].link.setCurrentIndex(0)
+win.refresh_chain()
+harness.settle(2)
+assert win.lbl_inputs.parent() is win and not win.lbl_inputs.isVisible()
+assert not [w for w in QtWidgets.QApplication.topLevelWidgets() if isinstance(w, QtWidgets.QLabel) and w.isVisible()]
+print("per-view colour ramp and point size; linked view follows; no stray inputs window")
+
 # whole-metre Inspection Area; slices follow the width, stay inside, keep their place
 b = dict(win.box)
 b.update(length=37.4, width=20.6)
