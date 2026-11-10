@@ -626,6 +626,14 @@ class MainWindow(QtWidgets.QMainWindow):
             path = dialogs.pick_project_file(self, ";;Older CloudPro project (*.cloudpro.json)")
         if not path:
             return
+        bb = getattr(self, "background_busy", None)
+        if bb is not None and bb(path):
+            # the job's points are being rebuilt in the background: it opens here when that has finished
+            if getattr(self, "open_after_background", None) is not None:
+                self.open_after_background(path)
+            self.status("This job is being georeferenced in the background (progress in the QGIS message bar); "
+                        "it opens here when that has finished", 15000)
+            return
         if self.project is not None and os.path.abspath(path) in (os.path.abspath(self.project.path),
                                                                   os.path.abspath(getattr(self.project.dcs, "path", ""))):
             self.window().raise_()
@@ -1256,6 +1264,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         opts = d.options()
         keep = d.keep_edits.isChecked()
+        p.data["auto_update"] = d.auto.isChecked()
         gtxt = d.geoid.text().strip()
         if gtxt:
             try:
@@ -1287,6 +1296,40 @@ class MainWindow(QtWidgets.QMainWindow):
                             ["edits carried over: %d" % rest])
             return out, rest, inp
         self._run("georef", job, "Georeferencing %d .clraw file(s)" % len(inp.files))
+
+    def auto_update(self, why=""):
+        """Georeference again with the last settings, edits carried over, because PosPro or AlignPro published
+        (DCS Core told CloudPro; core/autoupdate.decide said the upstream is current). No dialog; the result is
+        reported in the status bar and History, not in a message box."""
+        if self._busy:
+            self._auto_pending = why or "the chain changed"
+            return
+        from ..core import autoupdate
+        p = self.project
+        try:
+            inp = chain.resolve(p.dcs, override=p.data.get("override"))
+            opts = autoupdate.options(p)
+        except Exception as ex:                 # noqa: BLE001
+            self.status("Automatic georeferencing not started: %s" % ex, 10000)
+            return
+        if not inp.files:
+            return
+        self._auto_georef = True
+        self._pending_geo = None
+        self.clear_preview(refresh=False)
+        self.edits.ps = None
+        self.ps = PointSet(0)
+        project = p
+
+        def job(progress, cancel):
+            with project.dcs.run("cloudpro", PLUGIN, VERSION):
+                out, rest = IM.import_chain(project, inp, opts, None, progress, cancel, keep_edits=True, settings={})
+            project.run_log("georeference (automatic)", inp.summary() + ["warning: " + w for w in inp.warnings] +
+                            ["L%d: %s points %s" % (l + 1, st["points"], st) for l, st in out] +
+                            ["edits carried over: %d" % rest])
+            return out, rest, inp
+        self.status("Georeferencing again because %s" % (why or "the chain changed"), 10000)
+        self._run("georef", job, "Georeferencing again (%s)" % (why or "the chain changed"))
 
     def publish_dialog(self):
         p = self.project
@@ -2697,6 +2740,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.edits.on_change = self._edited             # given back after a tiled filter run
         pend, self._pending_geo = self._pending_geo, None
         from ..core.export import Cancelled as ExportCancelled
+        if isinstance(res, (IM.Cancelled, ExportCancelled)) and tag == "georef":
+            self._auto_georef = False
         if isinstance(res, (IM.Cancelled, ExportCancelled)):
             self.status("%s cancelled: %s" % (tag.replace("_", " ").title(),
                                                "the previous points and edits are kept" if tag == "georef"
@@ -2707,7 +2752,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.load_box()
             return
         if isinstance(res, Exception):
-            self._error("%s failed" % tag.replace("_", " ").title(), res)
+            if tag == "georef" and getattr(self, "_auto_georef", False):     # automatic: no box to dismiss
+                self._auto_georef = False
+                self.project.log("Automatic georeferencing failed: %s (the previous points and edits are kept)" % res)
+            else:
+                self._error("%s failed" % tag.replace("_", " ").title(), res)
             if tag == "filter_tiled":
                 self._after_points_changed()
             elif tag == "georef":
@@ -2727,7 +2776,20 @@ class MainWindow(QtWidgets.QMainWindow):
                 msg += "\n\n%s edited points carried over from the previous georeferencing." % "{:,}".format(rest)
             if inp.warnings:
                 msg += "\n\n" + "\n".join("! " + w for w in inp.warnings)
-            theme.msg_info(self, "CloudPro", msg)
+            if getattr(self, "_auto_georef", False):     # automatic: no message box to dismiss
+                self._auto_georef = False
+                short = "Georeferenced again automatically: %d line(s), %s points%s" % (
+                    len(out), "{:,}".format(n), ", %s edits carried over" % "{:,}".format(rest) if rest else "")
+                self.project.log(short)
+                self.status(short, 15000)
+            else:
+                theme.msg_info(self, "CloudPro", msg)
+        if tag == "georef" and getattr(self, "_auto_pending", None) and not isinstance(res, Exception):
+            self._auto_pending = None
+            from ..core import autoupdate
+            ok, why2 = autoupdate.decide(self.project.dcs.path, self.project) if self.project.dcs else (False, "")
+            if ok:
+                QtCore.QTimer.singleShot(0, lambda: self.auto_update(why2))
         elif tag == "import":
             self._after_points_changed()
             theme.msg_info(self, "CloudPro", "Imported %d line(s), %s points" % (

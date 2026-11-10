@@ -497,6 +497,12 @@ class GeorefDialog(QtWidgets.QDialog):
         self.keep_edits.setToolTip("Edits are matched by firing time, laser and return, so they follow the points "
                                    "to their new positions")
         lay.addWidget(self.keep_edits)
+        self.auto = QtWidgets.QCheckBox("Update automatically when PosPro or AlignPro publish (in the background, "
+                                        "with these settings and the edits carried over)")
+        self.auto.setChecked(bool(project.data.get("auto_update", True)))
+        self.auto.setToolTip("Once PosPro and AlignPro are current again, CloudPro georeferences the job in the "
+                             "background, so it opens ready to clean. Publishing stays your step.")
+        lay.addWidget(self.auto)
         if project.lines:
             prev = project.lines[0]
             self.returns.setCurrentText(prev.get("returns", "both"))
