@@ -245,6 +245,8 @@ class PlanView(CloudView2D):
                 p.setPen(QtGui.QPen(QtGui.QColor(col), 1.5, Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine))
                 p.drawLine(QtCore.QPointF(*self.to_screen(*a0)), QtCore.QPointF(*self.to_screen(*a1)))
         self._draw_box(p)
+        from .linked import paint_2d
+        paint_2d(p, self)                        # the linked cursor on top of the drive lines and the area
         if self._range and self.has_underlay() and self.attr == "Coverage":
             self._legend(p)                      # 2.0.0: only the coverage key (one colour legend per view)
         p.end()

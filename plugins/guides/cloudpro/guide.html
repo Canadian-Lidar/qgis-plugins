@@ -36,6 +36,7 @@
 <div style="break-inside:avoid"><h2>What is new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>2.1.0</b></td><td><b>Linked cursor:</b> the point under the mouse in one view is marked in the other two: a cross on it in the Plan and the 3D view, a dashed vertical line at its place in the Slice (<a href="#views">Views and navigation</a>).</td></tr>
 <tr><td><b>2.0.3</b></td><td>Each view keeps its own colour ramp and point size (they changed every view); a linked view follows the ramp of the view it is linked to. The Plan, Slice and 3D titles are the same size as the panel titles, with each view's controls right after its title. The Classification legend shows the class names without their numbers. The small window showing <i>PosPro trajectory · AlignPro calibration</i> no longer pops up (that text is the Georeference step's tooltip).</td></tr>
 <tr><td><b>2.0.2</b></td><td>Class colours without clashes: every class colour is clearly different from every other one and from the rejected (magenta), preview (orange, green) and selected (white) colours. Class 15 (transmission tower) is blue, road markings (68) pale cyan instead of white, and 0, 3, 5, 10, 11, 13, 19, 20, 65, 66, 69, 70, 71 and the unlisted classes changed slightly or more (table in Classes).</td></tr>
 <tr><td><b>2.0.1</b></td><td>Class 7 (low point, noise) is dark red instead of magenta, so it is not mistaken for rejected points when a view is coloured by Classification.</td></tr>
@@ -209,8 +210,12 @@
 
 <h1 id="views"><span class="num">{N}</span>Views and navigation</h1>
 
+<h2 id="linked">Linked cursor</h2>
+<p>Move the mouse over a point in any view and the other two views show the same point: a white <b>cross</b> on it in the Plan and the 3D view, and a dashed <b>vertical line</b> at its place across the slice in the Slice view (whether the point is in the current slice or not). Over empty ground in the Plan, which has no height there, the 3D view shows a vertical line too. In the Plan the point is the one drawn under the mouse (the top one); in the Slice the nearest one; in the 3D view the nearest visible one, within 10 pixels. The marks go when the mouse leaves the view.</p>
+<figure class="h55"><img src="fig/linked_cursor.png"><figcaption><b>Figure {N}.1</b> The mouse on a point in the Plan: a cross marks it in the 3D view, a dashed vertical line in the Slice.</figcaption></figure>
+
 <h2>Plan</h2>
-<figure class="h66"><img src="fig/plan.png"><figcaption><b>Figure {N}.1</b> The Plan: the project grid (mean height, hill shaded), the two drive lines L1 and L2, the Inspection Area with its handles under the mouse, the two lines of the slice, and the legend of the points (left).</figcaption></figure>
+<figure class="h66"><img src="fig/plan.png"><figcaption><b>Figure {N}.2</b> The Plan: the project grid (mean height, hill shaded), the two drive lines L1 and L2, the Inspection Area with its handles under the mouse, the two lines of the slice, and the legend of the points (left).</figcaption></figure>
 <p>The Plan's title strip has <span class="ui">Zoom to the Inspection Area</span>, <span class="ui">Zoom to the extents</span> and the rejected points eye. Right-click its legend for <span class="ui">Grid</span> (the background of the whole project: <i>Mean height</i>, <i>Max height</i>, <i>Min height</i>, <i>Span</i>, <i>Hit count</i>, <i>Density</i> (pts/m²), <i>Coverage</i> against a target density (see <a href="#fieldcheck">Field check</a>), <i>Reject count</i>, <i>Intensity</i> or <i>None</i>), the cell size and the brush size, besides the colours every view has (<a href="#colours">Colours</a>). The grid has no colour scale of its own: its colours only show shape and change (one legend per view, for the points); <i>Coverage</i> shows its key. The grid is dimmed so the points of the Inspection Area stand out on top; heights are hill shaded. Edits update the grid within a few seconds.</p>
 <p>Each drive line is drawn in its line colour, labelled at its start (L1, L2…) with an arrow at its end. The slice is shown as two thin lines across or along the Inspection Area.</p>
 
@@ -221,7 +226,7 @@
 <li><kbd>Shift</kbd> + drag anywhere draws a new area along the drag, keeping the width.</li>
 <li>Drag elsewhere to pan the view; the wheel zooms at the cursor.</li>
 </ul>
-<div class="pair"><figure class="h70" style="width:44%"><img src="fig/plan_menu.png"><figcaption><b>Figure {N}.2</b> Right-click in the Plan.</figcaption></figure><figure class="h70" style="width:44%"><img src="fig/area_props.png"><figcaption><b>Figure {N}.3</b> The Inspection Area by numbers, here following line L1.</figcaption></figure></div>
+<div class="pair"><figure class="h70" style="width:44%"><img src="fig/plan_menu.png"><figcaption><b>Figure {N}.3</b> Right-click in the Plan.</figcaption></figure><figure class="h70" style="width:44%"><img src="fig/area_props.png"><figcaption><b>Figure {N}.4</b> The Inspection Area by numbers, here following line L1.</figcaption></figure></div>
 <p>Right-click in the Plan for <span class="ui">Place the Inspection Area here</span>, <span class="ui">Inspection Area properties…</span>, <span class="ui">Place the slice here</span>, <span class="ui">Align the Inspection Area with the nearest line</span> (centred on the nearest drive line and turned along it), <span class="ui">Zoom to the Inspection Area</span>, <span class="ui">Zoom to the whole project</span>, the <span class="ui">Tool</span> list and <span class="ui">Zoom to the points</span>. With a selection, a <span class="ui">Selection</span> submenu comes first (<a href="#editing">Manual editing</a>).</p>
 
 <h3>Inspection Area properties</h3>
@@ -236,7 +241,7 @@
 <p>In the Lines list, right-click a line and choose <span class="ui">Inspection Area follows this line</span> for the same.</p>
 
 <h2>Slice</h2>
-<figure class="h55"><img src="fig/slice.png"><figcaption><b>Figure {N}.4</b> A 1 m cross-section through a pole. The dot marked L1 / L2 is where the drive lines cross the slice, at sensor height.</figcaption></figure>
+<figure class="h55"><img src="fig/slice.png"><figcaption><b>Figure {N}.5</b> A 1 m cross-section through a pole. The dot marked L1 / L2 is where the drive lines cross the slice, at sensor height.</figcaption></figure>
 <p>The Slice view shows a slab of the Inspection Area from the side: a <b>cross-section</b> across the area, looking along it, or a <b>profile</b> along the area, seen from the side. The slices are <b>whole slices of the chosen width inside the Inspection Area</b>, centred in it: they never reach past its edges. The title strip of the view:</p>
 <table>
 <tr><th>Control</th><th>Does</th></tr>
@@ -248,12 +253,12 @@
 <tr><td><i>12 / 36</i></td><td>The slice shown and the number of slices in the area at this width.</td></tr>
 </table>
 <p>Step with <kbd>PgUp</kbd> / <kbd>PgDn</kbd>, <kbd>]</kbd> / <kbd>[</kbd> or <kbd>.</kbd> / <kbd>,</kbd>; <kbd>Ctrl+PgUp</kbd> / <kbd>Ctrl+PgDn</kbd> go to the last / first slice. Stepping stops at the area's first and last slice: move the Inspection Area on to see further. Right-click in the Slice for <span class="ui">Rotate the slice 90 degrees</span>, <span class="ui">Previous slice</span> and <span class="ui">Next slice</span>; <span class="ui">Place the slice here</span> in the Plan goes to the slice under the click.</p>
-<figure class="h50"><img src="fig/slice_profile.png"><figcaption><b>Figure {N}.5</b> A profile along the area through two poles. In a profile the drive lines are drawn at sensor height.</figcaption></figure>
+<figure class="h50"><img src="fig/slice_profile.png"><figcaption><b>Figure {N}.6</b> A profile along the area through two poles. In a profile the drive lines are drawn at sensor height.</figcaption></figure>
 
 <h2>3D</h2>
-<figure class="h58"><img src="fig/view3d.png"><figcaption><b>Figure {N}.6</b> The 3D view, oblique: the navigation arrows top left, the legend, the Inspection Area outline, the drive lines and the axes (E, N, U) bottom left.</figcaption></figure>
+<figure class="h58"><img src="fig/view3d.png"><figcaption><b>Figure {N}.7</b> The 3D view, oblique: the navigation arrows top left, the legend, the Inspection Area outline, the drive lines and the axes (E, N, U) bottom left.</figcaption></figure>
 <p>The header has what to show (<i>Inspection Area</i> or <i>Slice</i>), four view presets (top <kbd>1</kbd>, look across to see the side <kbd>2</kbd>, look along the area <kbd>3</kbd>, oblique <kbd>4</kbd>), eye-dome lighting (depth shading, on by default), zoom to the Inspection Area and the rejected points eye; the colours are in the right-click menu of its legend.</p>
-<figure class="small" style="float:right;width:28%;margin:0 0 2mm 4mm"><img src="fig/nav_arrows.png" style="max-width:100%"><figcaption><b>Figure {N}.7</b> The navigation arrows.</figcaption></figure>
+<figure class="small" style="float:right;width:28%;margin:0 0 2mm 4mm"><img src="fig/nav_arrows.png" style="max-width:100%"><figcaption><b>Figure {N}.8</b> The navigation arrows.</figcaption></figure>
 <p><b>Navigation arrows.</b> Click an arrow head to turn the cloud that way (its near side moves in the arrow's direction): <b>blue</b> tips it up or down (into the page), <b>red</b> turns it left or right, <b>green</b> turns the picture clockwise or anticlockwise on the screen. Each click turns 22.5° (16 clicks round); hold the button to keep turning smoothly. The presets undo any on-screen turn.</p>
 <p><b>Centre of rotation.</b> The 3D view turns around the centre of the Inspection Area, at the middle height of its points, and the centre follows the area when you move or step it. Panning or double-clicking a point moves the centre for a closer look; the <span class="ui">Zoom to the Inspection Area</span> button in the 3D header (corner brackets around a rectangle), <kbd>0</kbd> or <kbd>Home</kbd> bring it back and show the whole area.</p>
 <p><b>Mouse.</b> Left drag turns the cloud the way you move, as if holding it (drag right and its near side moves right); <kbd>Shift</kbd> + left drag or middle drag pans; the wheel zooms; <kbd>Ctrl</kbd> + wheel scales Z (shown as <i>Z x2.0</i>); double-click a point to make it the centre (its information appears in the Info tab); right drag draws a lasso, or a rectangle when the Rectangle tool is active, and applies the current action.</p>
@@ -264,7 +269,7 @@
 
 <h2 id="colours">Colours, legends and sizes</h2>
 <p>Each view has one legend (top left): the colour ramp with its values, or the classes, lines or files in the area. <b>Right-click the legend</b> for the view's display settings:</p>
-<figure class="h60"><img src="fig/colours_menu.png"><figcaption><b>Figure {N}.8</b> Right-click on the Plan's legend.</figcaption></figure>
+<figure class="h60"><img src="fig/colours_menu.png"><figcaption><b>Figure {N}.9</b> Right-click on the Plan's legend.</figcaption></figure>
 <table>
 <tr><th>Item</th><th>Sets</th></tr>
 <tr><td><span class="ui">Colour</span></td><td>What colours the points in this view (below). Greyed out while the view is linked.</td></tr>
@@ -287,13 +292,13 @@
 <tr><td>Time, Range</td><td>Firing time (UTC), distance from the Lidar.</td></tr>
 </table>
 <p>On top of any scheme: rejected points are magenta (where a view shows them); in a filter preview, orange points will be rejected and green ones re-accepted; selected points are white.</p>
-<figure class="h80"><img src="fig/colours.png"><figcaption><b>Figure {N}.9</b> Plan coloured by classification, with the Slice linked to it (<span class="ui">Link colours › Same as the Plan view</span>). Each legend lists the classes in the Inspection Area.</figcaption></figure>
+<figure class="h80"><img src="fig/colours.png"><figcaption><b>Figure {N}.10</b> Plan coloured by classification, with the Slice linked to it (<span class="ui">Link colours › Same as the Plan view</span>). Each legend lists the classes in the Inspection Area.</figcaption></figure>
 <ul>
 <li><b>Legend</b>: a ramp with values (absolute heights in metres, intensity, UTC time, range or laser), or the classes, lines or files present, followed by rows for preview and selected points (rejected points are always magenta, so they have no row).</li>
 <li><b>Colour scale</b>: right-click a view's legend (Height, Intensity, Range or Time colours) and choose <span class="ui">Automatic: Inspection Area</span> (the default: 2–98 % of the area's points, the same in every view), <span class="ui">Automatic: whole project</span> (an even sample of up to 2 million accepted points from every tile, so colours mean the same wherever the area is) or <span class="ui">Fixed minimum / maximum…</span> (heights as elevations, times in UTC; points outside get the end colours). The menu shows which is chosen; each view keeps its own choice per colour scheme, saved with the project.</li>
 <li><b>Link colours</b>: own colours, or the same as the Plan, Slice or 3D view: the view follows that view's scheme and colour range, whatever range it has itself. A view cannot follow one that follows it.</li>
 </ul>
-<figure class="h42"><img src="fig/view3d_intensity.png"><figcaption><b>Figure {N}.10</b> The 3D view coloured by intensity.</figcaption></figure>
+<figure class="h42"><img src="fig/view3d_intensity.png"><figcaption><b>Figure {N}.11</b> The 3D view coloured by intensity.</figcaption></figure>
 
 <h2>What is shown</h2>
 <ul>
