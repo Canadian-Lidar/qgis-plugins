@@ -74,35 +74,26 @@ def test_opens_floating_by_default_and_never_docks_by_drag(env):
 
 
 @pytest.mark.parametrize("side", ["left", "right", "top", "bottom"])
-def test_docks_only_when_chosen_and_stays_locked(env, side):
+def test_never_docks(env, side):
+    """1.11.0: no docking; dock_at (older plugin code) keeps the window a window."""
     iface, window = env
     w = make(window, iface)
     w.show_window()
     w.dock_at(side)
     settle()
-    assert w.window_mode() == side and not w.isFloating() and not w.property(window.WINDOWED)
-    assert iface.mw.dockWidgetArea(w) == window.AREAS[side]
-    assert w.allowedAreas() == window.NO_AREAS            # dragging cannot re-dock it elsewhere
-    w.float_window()
-    settle()
-    assert w.window_mode() == "float" and w.isVisible()
+    assert w.window_mode() == "float" and w.property(window.WINDOWED) and w.isVisible()
+    assert w.allowedAreas() == window.NO_AREAS
+    w.release_window()
 
 
-def test_remembers_dock_side_after_restart(env):
+def test_left_docked_by_an_older_version_opens_as_a_window(env):
     iface, window = env
+    QSettings().setValue("dcs/pospro/window/mode", "left")
     w = make(window, iface)
     w.show_window()
-    w.dock_at("left")
     settle()
-    w.save_state()
+    assert w.window_mode() == "float" and w.property(window.WINDOWED)
     w.release_window()
-    settle()
-    assert QSettings().value("dcs/pospro/window/mode") == "left"
-    w2 = make(window, iface)
-    w2.show_window()
-    settle()
-    assert w2.window_mode() == "left" and iface.mw.dockWidgetArea(w2) == window.AREAS["left"]
-    w2.release_window()
 
 
 def test_remembers_floating_place_and_size(env):
@@ -149,9 +140,9 @@ def test_three_plugins_together(env):
     for x in (a, b, c):
         x.show_window()
     b.dock_at("right")
-    c.dock_at("bottom")
+    c.maximise()
     settle()
-    assert (a.window_mode(), b.window_mode(), c.window_mode()) == ("float", "right", "bottom")
+    assert (a.window_mode(), b.window_mode(), c.window_mode()) == ("float", "float", "max")
     for x in (a, b, c):
         x.release_window()
     settle()
@@ -163,14 +154,13 @@ def test_menu_title_and_header_button(env):
     w = make(window, iface)
     w.show_window()
     names = [x.text() for x in w.window_menu().actions() if x.text()]
-    assert names[:2] == ["Floating window", "Maximise"]
-    assert {"Dock right", "Dock left", "Dock bottom", "Dock top", "Reset window", "Close"} <= set(names)
+    assert names == ["Maximise", "Reset window", "Close"]          # no docking (1.11.0)
     b = QToolButton()
     holder = w.attach_menu(b)
     holder.aboutToShow.emit()
     assert len([x for x in holder.actions() if x.text()]) == len(names)
     w.setWindowTitle("CloudPro - Job 7")
-    assert w.titleBarWidget().dock.windowTitle() == "CloudPro - Job 7"
+    assert w.titleBarWidget().height() == 0              # the system's title bar only
     closed = []
     w.closed.connect(lambda: closed.append(1))
     w.close()
@@ -180,11 +170,11 @@ def test_menu_title_and_header_button(env):
 
 def test_release_while_windowed_or_docked_is_safe(env):
     iface, window = env
-    for side in ("float", "right"):
+    for side in ("float", "max"):
         w = make(window, iface)
         w.show_window()
         if side != "float":
-            w.dock_at(side)
+            w.maximise()
         settle()
         w.release_window()
         settle()
@@ -193,8 +183,8 @@ def test_release_while_windowed_or_docked_is_safe(env):
 
 def test_mouse_on_a_window_never_reaches_the_dock_drag_code(env):
     """QGIS 4.2.3 / Qt 6 on Windows crashed (QDockWidgetLayout::minimumTitleWidth) when a mouse
-    event reached a windowed panel's QDockWidget::event. As a window the title bar moves the
-    window itself and the panel swallows the mouse; docked, Qt's own handling stays."""
+    event reached a windowed panel's QDockWidget::event: the window swallows the mouse events its content leaves
+    unhandled (the system's title bar moves it)."""
     from qgis.PyQt.QtCore import QEvent, QPoint, QPointF
     from qgis.PyQt.QtGui import QMouseEvent
     iface, window = env
@@ -206,24 +196,9 @@ def test_mouse_on_a_window_never_reaches_the_dock_drag_code(env):
     def ev(kind, local, glob, buttons):
         return QMouseEvent(kind, QPointF(local), QPointF(glob), Qt.MouseButton.LeftButton, buttons,
                            Qt.KeyboardModifier.NoModifier)
-    t = w.titleBarWidget()
-    start = w.frameGeometry().topLeft()
-    g0 = t.mapToGlobal(QPoint(60, 10))
-    APP.sendEvent(t, ev(QEvent.Type.MouseButtonPress, QPoint(60, 10), g0, Qt.MouseButton.LeftButton))
-    APP.sendEvent(t, ev(QEvent.Type.MouseMove, QPoint(100, 40), g0 + QPoint(40, 30), Qt.MouseButton.LeftButton))
-    APP.sendEvent(t, ev(QEvent.Type.MouseButtonRelease, QPoint(100, 40), g0 + QPoint(40, 30),
-                        Qt.MouseButton.NoButton))
-    settle()
-    moved = w.frameGeometry().topLeft() - start
-    assert (moved.x(), moved.y()) == (40, 30)
-    # clicks the content leaves unhandled, straight on the panel: taken by PluginWindow.event
     for kind in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseMove, QEvent.Type.MouseButtonRelease,
                  QEvent.Type.MouseButtonDblClick):
         e = ev(kind, QPoint(200, 200), w.mapToGlobal(QPoint(200, 200)), Qt.MouseButton.LeftButton)
         assert w.event(e) is True and e.isAccepted()
-    # docked: not windowed, so the events go to QDockWidget as before
-    w.dock_at("right")
-    settle()
-    assert not w.property(window.WINDOWED)
     w.release_window()
     settle()

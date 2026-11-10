@@ -74,7 +74,7 @@ print("Slice linked to the Plan uses the Plan's fixed scale; unlinked, its own (
 
 # right-click on the scale bar opens the menu for that view
 calls = []
-win._scale_menu = lambda k, g: calls.append(k)
+win._legend_menu = lambda k, g: calls.append(k)
 for k, v in views.items():
     v.repaint()
     harness.settle(2)

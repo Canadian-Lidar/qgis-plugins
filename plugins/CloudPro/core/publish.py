@@ -114,7 +114,7 @@ def publish(project, outputs, warnings=(), version=""):
     from dcs_core import handover
     dcs = project.dcs
     if dcs is None:
-        raise ValueError("publishing needs a DCS project")
+        raise ValueError("finalizing needs a DCS project")
     od = handover.out_dir(dcs, "cloudpro")
     stats = point_stats(project)
     inp = project.data.get("inputs") or {}
@@ -154,7 +154,7 @@ def publish(project, outputs, warnings=(), version=""):
                            inputs=sorted({f for l in project.lines for f in l.get("files", [])}))
     project.data.setdefault("published", []).append({"utc": doc["created"], "id": doc["id"],
                                                      "outputs": list(outs)})
-    project.log("Published cloud.json (%s) with %s" % (doc["id"][:19], ", ".join(outs)))
+    project.log("Finalized cloud.json (%s) with %s" % (doc["id"][:19], ", ".join(outs)))
     project.save()
     return doc
 
@@ -183,7 +183,7 @@ def deliver(project, las=True, per_line=False, dem_cell=0.0, include_rejected=Fa
             outputs["ground_grid"] = {"format": "GeoTIFF" if ext == ".tif" else "ESRI ASCII grid",
                                       "cell_m": dem_cell, "statistic": "mean of class 2"}
         if cancel and cancel():
-            raise EX.Cancelled("cancelled: nothing was published")
+            raise EX.Cancelled("cancelled: nothing was finalized")
         # the published cloud.json goes first: a publish that fails from here on reads as "not published",
         # never as a cloud.json describing other files
         try:

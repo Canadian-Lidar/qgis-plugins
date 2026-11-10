@@ -413,7 +413,7 @@ class GeorefDialog(QtWidgets.QDialog):
         t.setObjectName("ppTitle")
         lay.addWidget(t)
         h = QtWidgets.QLabel("Every Lidar return is placed at its own firing time with the trajectory PosPro "
-                             "published and the mounting AlignPro published. Without an AlignPro result the "
+                             "finalized and the mounting AlignPro finalized. Without an AlignPro result the "
                              "mounting recorded in the capture is used and the results say \"no calibration\".")
         h.setObjectName("ppHint")
         h.setWordWrap(True)
@@ -497,11 +497,11 @@ class GeorefDialog(QtWidgets.QDialog):
         self.keep_edits.setToolTip("Edits are matched by firing time, laser and return, so they follow the points "
                                    "to their new positions")
         lay.addWidget(self.keep_edits)
-        self.auto = QtWidgets.QCheckBox("Update automatically when PosPro or AlignPro publish (in the background, "
+        self.auto = QtWidgets.QCheckBox("Update automatically when PosPro or AlignPro finalize (in the background, "
                                         "with these settings and the edits carried over)")
         self.auto.setChecked(bool(project.data.get("auto_update", True)))
         self.auto.setToolTip("Once PosPro and AlignPro are current again, CloudPro georeferences the job in the "
-                             "background, so it opens ready to clean. Publishing stays your step.")
+                             "background, so it opens ready to clean. Finalizing stays your step.")
         lay.addWidget(self.auto)
         if project.lines:
             prev = project.lines[0]
@@ -549,10 +549,10 @@ class PublishDialog(QtWidgets.QDialog):
 
     def __init__(self, parent, project, why):
         super().__init__(parent)
-        self.setWindowTitle("CloudPro - publish for the job")
+        self.setWindowTitle("CloudPro - finalize for the job")
         self.resize(620, 420)
         lay = QtWidgets.QVBoxLayout(self)
-        t = QtWidgets.QLabel("Publish")
+        t = QtWidgets.QLabel("Finalize")
         t.setObjectName("ppTitle")
         lay.addWidget(t)
         inp = project.data.get("inputs") or {}
@@ -591,7 +591,7 @@ class PublishDialog(QtWidgets.QDialog):
         lay.addStretch(1)
         bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok |
                                         QtWidgets.QDialogButtonBox.StandardButton.Cancel)
-        bb.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).setText("Publish")
+        bb.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).setText("Finalize")
         bb.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).setObjectName("ppPrimary")
         bb.accepted.connect(self._ok)
         bb.rejected.connect(self.reject)

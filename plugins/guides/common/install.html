@@ -1,7 +1,7 @@
 <h1><span class="num">{N}</span>Installing and opening {NAME}</h1>
 <p>{NAME} is one of three QGIS plugins that process a Canadian Lidar mobile mapper job one after the other. All three need the <b>DCS Core</b> plugin, which holds what they share: the job's processing project, the files each stage hands to the next, the look, the header and the window.</p>
 <table>
-<tr><th>Stage</th><th>Plugin</th><th>Reads</th><th>Publishes</th></tr>
+<tr><th>Stage</th><th>Plugin</th><th>Reads</th><th>Finalizes</th></tr>
 <tr><td>01</td><td><b>PosPro</b></td><td>The mapper captures (<code>.clraw</code> or <code>.anpp</code>), base station data</td><td>The trajectory: <code>trajectory.json</code> with SBET and SMRMSG</td></tr>
 <tr><td>02</td><td><b>AlignPro</b></td><td>The captures and PosPro's trajectory</td><td>The Lidar mounting: <code>alignment.json</code></td></tr>
 <tr><td>03</td><td><b>CloudPro</b></td><td>The captures, the trajectory and the mounting</td><td>The point cloud: <code>cloud.json</code>, LAS 1.4, ground grid, report</td></tr>

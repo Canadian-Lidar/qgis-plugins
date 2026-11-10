@@ -1297,5 +1297,5 @@ def publish_handover(project, ctx):
         pass
     doc = handover.publish(project.dcs, "pospro", {"sbet": sbet, "smrmsg": smr, "qc": qcf}, fields, "PosPro",
                            plugin_version(), v_engine)
-    ctx.log("info", "trajectory published for AlignPro and CloudPro: %s" % os.path.join(od, "trajectory.json"))
+    ctx.log("info", "trajectory finalized for AlignPro and CloudPro: %s" % os.path.join(od, "trajectory.json"))
     return {"id": doc["id"], "path": os.path.join(od, "trajectory.json")}

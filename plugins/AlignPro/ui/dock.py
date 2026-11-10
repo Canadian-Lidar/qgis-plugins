@@ -76,8 +76,8 @@ class AlignProDock(PluginWindow):
         outer.setSpacing(0)
 
         # header (DCS Core, the same in every plugin): logo, name, workflow boxes, project box, window, guide
-        self.header = PluginHeader("alignpro", "AlignPro", window=self, guide=self.open_guide,
-                                   window_extras=[("Open the Data View", lambda: self.show_dataview("open"))])
+        self.header = PluginHeader("alignpro", "AlignPro", window=self, guide=self.open_guide)
+        self.header.stepClicked.connect(self._phase_clicked)
         mm = self.header.set_project_menu(DarkMenu(self.header.project_btn))
         mm.addAction("New project\u2026", self.new_project)
         mm.addAction("Open project\u2026", self.open_dialog)
@@ -90,8 +90,10 @@ class AlignProDock(PluginWindow):
         self.a_qgz = mm.addAction("Save the QGIS project in the project folder", self.save_qgis_project)
         self.a_reset = mm.addAction("Reset AlignPro to the recorded values\u2026", self.reset_project)
         mm.addAction("Show the log", self.show_log)
+        mm.addAction("Open the Data View", lambda: self.show_dataview("open"))
         mm.addSeparator()
         self.a_guide = mm.addAction("User guide (this version)", self.open_guide)
+        mm.addAction("Reset window", self.reset_window)
         self.pbox = self.header.project_btn
         self.wbtn = self.header.window_btn
         self.hbtn = self.header.help_btn
@@ -281,10 +283,36 @@ class AlignProDock(PluginWindow):
             sb.set_state(st, sub)
         self.update_nav()
 
+    # the header's steps (DCS Core 1.11.0): the seven pages in three phases
+    PHASES = [("prepare", "Prepare", [0, 1, 2]), ("calibrate", "Calibrate", [3, 4]), ("report", "Report", [5, 6])]
+
+    def _phase_clicked(self, key):
+        for k, _l, pages in self.PHASES:
+            if k == key and self.p is not None:
+                self.goto_page(pages[0])
+
+    def update_header_steps(self):
+        from dcs_core.stepnav import crumbs
+        if self.p is None:
+            self.header.set_steps([])
+            return
+        states = []
+        for pg in self.pages:
+            try:
+                states.append(pg.state())
+            except Exception:       # noqa: BLE001
+                states.append(("todo", ""))
+        k = self.stack.currentIndex()
+        if self.job is not None and k < len(states):
+            states[k] = ("running", states[k][1])
+        items, cur = crumbs(self.PHASES, STEPS, states, k, optional={"Analyze", "Report"})
+        self.header.set_steps(items, cur)
+
     def update_nav(self):
         """Back / Next under the pages: is the current step done, what is next."""
         if not hasattr(self, "nav"):
             return
+        self.update_header_steps()
         k = self.stack.currentIndex()
         if self.p is None or k >= len(self.pages):
             self.nav.setVisible(False)             # the welcome page: open or create a project first
@@ -303,13 +331,13 @@ class AlignProDock(PluginWindow):
         elif k == 3:
             todo = "the lines need more overlap: drive each line both ways (see the patch-test procedure)"
         elif k == 4:
-            todo = "press AUTO CALIBRATE, then APPLY ADVISED to publish the result for CloudPro"
+            todo = "press AUTO CALIBRATE, then APPLY ADVISED to finalize the result for CloudPro"
         elif k == 5:
             todo = "ANALYZE latency, lever arm and angles, or skip"
         elif k == 6:
             todo = "CREATE REPORT (PDF, ASCII), or skip"
         if k == 4 and st == "warn" and "apply" in sub.lower():
-            sub = "press APPLY ADVISED (or PUBLISH THE APPLIED VALUES) for CloudPro"
+            sub = "press APPLY ADVISED (or FINALIZE THE APPLIED VALUES) for CloudPro"
         self.nav.update(k, st, sub, todo=todo)
         dcs = self.p.dcs
         if dcs is None:
@@ -324,7 +352,7 @@ class AlignProDock(PluginWindow):
         elif pst == "stale":
             self.nav.set_continue("cloudpro", False, "Out of date (%s): calibrate again and Apply." % "; ".join(why))
         else:
-            self.nav.set_continue("cloudpro", False, "Apply the calibration (step 5: APPLY ADVISED) to publish it for CloudPro.")
+            self.nav.set_continue("cloudpro", False, "Apply the calibration (step 5: APPLY ADVISED) to finalize it for CloudPro.")
 
     def _set_pname(self, name):
         self.header.set_project_name(name)
@@ -641,7 +669,7 @@ class AlignProDock(PluginWindow):
         def work(prog, canc):
             out = fn(prog, canc)
             if p.dcs is not None and p.lines:
-                prog(0.95, "Publishing alignment.json")
+                prog(0.95, "Finalizing alignment.json")
                 p.publish()
             return out
         return work
@@ -786,7 +814,7 @@ class AlignProDock(PluginWindow):
             self.message("Auto calibration: advised %.4f / %.4f / %.4f (SDEV %.4f / %.4f / %.4f), error %.2f \u2192 %.2f cm" % (
                 a["roll"], a["pitch"], a["heading"], s["roll"], s["pitch"], s["heading"],
                 res["error_before_cm"], res["error_after_cm"]))
-            self.toast("Calibration done: %.4f  %.4f  %.4f   (error %.2f \u2192 %.2f cm). Apply to publish it." % (
+            self.toast("Calibration done: %.4f  %.4f  %.4f   (error %.2f \u2192 %.2f cm). Apply to finalize it." % (
                 a["roll"], a["pitch"], a["heading"], res["error_before_cm"], res["error_after_cm"]))
             for w in res.get("warnings", []):
                 self.message(w, "warning")
@@ -808,12 +836,12 @@ class AlignProDock(PluginWindow):
         def done(_):
             self.message("Applied mounting angles %.4f / %.4f / %.4f" % tuple(angles))
             self.toast("Applied %.4f  %.4f  %.4f%s \u2013 copy them to the mapper when you are happy" % (
-                tuple(angles) + (" and published for CloudPro" if p.dcs else "",)))
+                tuple(angles) + (" and finalized for CloudPro" if p.dcs else "",)))
             self.refresh_all()
 
         def go():
             if self.p is p:
-                self._run("Apply and publish", self._stage_run(self._publish_after(
+                self._run("Apply and finalize", self._stage_run(self._publish_after(
                     lambda prog, canc: p.apply_mount(angles)), "apply"), done)
         return self._when_free(go, "applying the angles")
 
@@ -835,8 +863,8 @@ class AlignProDock(PluginWindow):
             p.georeference()
             p.analyse()
             p.save()
-        return self._run("Apply and publish", self._stage_run(self._publish_after(fn), "apply"),
-                         lambda _: (self.refresh_all(), self.toast("Applied and published for CloudPro" if p.dcs
+        return self._run("Apply and finalize", self._stage_run(self._publish_after(fn), "apply"),
+                         lambda _: (self.refresh_all(), self.toast("Applied and finalized for CloudPro" if p.dcs
                                                                    else "Applied")))
 
     def analyze(self, key, center, rng, steps):
@@ -864,7 +892,7 @@ class AlignProDock(PluginWindow):
             if key == "latency_ms" or key.startswith("lever"):
                 p.analyse()                  # in the job (not on the GUI thread), before publishing
                 p.save()
-        self._run("Adjust and publish", self._stage_run(self._publish_after(fn), "adjust"), done)
+        self._run("Adjust and finalize", self._stage_run(self._publish_after(fn), "adjust"), done)
 
     def settings_dialog(self):
         d = dialogs.SettingsDialog(self.p.settings, self)
@@ -1165,8 +1193,8 @@ class AlignProDock(PluginWindow):
     def publish_now(self):
         if self.p is None or self.p.dcs is None:
             return
-        self._run("Publish", self._stage_run(lambda prog, canc: self.p.publish(), "publish"),
-                  lambda _: self.toast("alignment.json published for CloudPro"))
+        self._run("Finalize", self._stage_run(lambda prog, canc: self.p.publish(), "publish"),
+                  lambda _: self.toast("alignment.json finalized for CloudPro"))
 
     def reset_project(self):
         if not ask(self, "Reset the mounting angles and lever arm to the values recorded in the .clraw files and the "

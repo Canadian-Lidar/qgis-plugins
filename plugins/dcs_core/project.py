@@ -410,7 +410,7 @@ class DcsProject:
         reasons = []
         ho = s.get("handover")
         if not ho or not os.path.exists(files.resolve(ho, self.folder)):
-            return "failed", ["the published results are missing"]
+            return "failed", ["the finalized results are missing"]
         bf = s.get("built_from") or {}
         for u, hid in (bf.get("stages") or {}).items():
             if hid == "ignored":        # deliberately not used (CloudPro with the recorded/entered mounting)

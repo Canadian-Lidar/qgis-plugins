@@ -20,28 +20,29 @@ def parts():
 
 
 def test_layout_and_names(parts):
+    """1.11.0: logo and name, breadcrumbs (chain over steps), extras, project box, tools, then "?" at the right; no
+    Window button."""
     iface, header, window = parts
     w = window.PluginWindow(iface, "alignpro", "AlignPro", size=(1400, 900))
     opened = []
-    h = header.PluginHeader("alignpro", "AlignPro", window=w, guide=lambda: opened.append(1),
-                            window_extras=[("Open the Data View", lambda: None)])
-    extra = QPushButton("MENU")
+    h = header.PluginHeader("alignpro", "AlignPro", window=w, guide=lambda: opened.append(1))
+    extra = QLabel("note")
     h.add_extra(extra)
+    tool = QPushButton("T")
+    h.add_tool(tool)
     w.setWidget(h)
     w.show_window()
     w.resize(1400, 300)
     settle()
     assert h.name_label.text() == "AlignPro"                      # the name as written
     assert h.group_label.text() == h.group_label.text().upper()
-    xs = [x.geometry().x() for x in (h.chain, extra, h.project_btn, h.window_btn, h.help_btn)]
-    assert xs == sorted(xs), xs                                   # boxes, extras, project, window, guide
-    assert h.chain.geometry().x() < h.width() / 2                 # workflow boxes beside the name
-    assert h.chain.width() == header.CHAIN_WIDTH
+    xs = [x.geometry().x() for x in (h.chain, extra, h.project_btn, tool, h.help_btn)]
+    assert xs == sorted(xs), xs                                   # crumbs, extras, project, tools, guide
+    assert h.chain.geometry().x() < h.width() / 3
+    assert h.help_btn.geometry().right() > h.width() - 60         # "?" at the right edge
+    assert not h.window_btn.isVisible()
     h.help_btn.click()
     assert opened == [1]
-    h.window_btn.menu().aboutToShow.emit()
-    labels = [a.text() for a in h.window_btn.menu().actions() if a.text()]
-    assert "Reset window" in labels and labels[-1] == "Open the Data View"
     h.set_project_name("PatchTest_Oct20")
     assert h.project_btn.text().startswith("PATCHTEST_OCT20")
     h.set_project_name(None)
@@ -49,19 +50,31 @@ def test_layout_and_names(parts):
     w.release_window()
 
 
-def test_narrow_window_moves_boxes_to_a_second_row(parts):
-    iface, header, window = parts
-    w = window.PluginWindow(iface, "pospro", "PosPro", size=(1400, 900), min_size=(300, 200))
-    h = header.PluginHeader("pospro", "PosPro", window=w)
-    w.setWidget(h)
-    w.show_window()
-    w.resize(760, 300)
+def test_step_breadcrumbs(parts):
+    """The plugin's steps under the chain: coloured by state, the current one marked, reasons as tooltips, a click
+    emits stepClicked."""
+    _iface, header, _window = parts
+    h = header.PluginHeader("cloudpro", "CloudPro")
+    assert not h.steps.isVisibleTo(h)
+    got = []
+    h.stepClicked.connect(got.append)
+    h.set_steps([("georef", "Georeference", "done", "2 lines"), ("clean", "Clean & classify", "todo", "optional"),
+                 ("publish", "Finalize", "warn", "out of date")], "clean")
+    h.resize(1400, 80)
+    h.show()
     settle()
-    assert h._wrapped and h.chain.geometry().y() > h.project_btn.geometry().bottom()
-    w.resize(1400, 300)
-    settle()
-    assert not h._wrapped and abs(h.chain.geometry().center().y() - h.project_btn.geometry().center().y()) < 6
-    w.release_window()
+    assert h.steps.isVisible() and h.steps.current == "clean"
+    assert h.steps.geometry().top() > h.chain.geometry().top()     # the second row
+    assert "2 lines" in h.steps.tip_for(h.steps.items[0]) and "out of date" in h.steps.tip_for(h.steps.items[2])
+    h.steps._layout()
+    r = h.steps._boxes[2]
+    from qgis.PyQt.QtCore import QPointF
+    assert h.steps._hit(QPointF(r.center()))[0] == "publish"
+    h.steps.clicked.emit("publish")
+    assert got == ["publish"]
+    h.set_steps([])
+    assert not h.steps.isVisibleTo(h)
+    h.close()
 
 
 def test_without_a_window_the_window_button_is_hidden(parts):

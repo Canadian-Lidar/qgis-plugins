@@ -104,8 +104,8 @@ def resolve(dcs, use_alignpro=True, override=None):
             inp.warnings.append("PosPro results are out of date: " + "; ".join(why))
     else:
         inp.traj_info = {"source": "realtime", "handover_id": None,
-                         "description": "Certus real-time track (PosPro has not published a trajectory)"}
-        inp.warnings.append("PosPro has not published a trajectory for this project: the Certus real-time track "
+                         "description": "Certus real-time track (PosPro has not finalized a trajectory)"}
+        inp.warnings.append("PosPro has not finalized a trajectory for this project: the Certus real-time track "
                             "is used (metres of drift without RTK). Run PosPro, then update the georeferencing.")
     # mounting
     al = None
@@ -187,17 +187,17 @@ def georef_state(project, inp=None):
     ut = (used.get("trajectory") or {})
     if ut.get("handover_id") != inp.traj_info.get("handover_id"):
         if inp.traj_info.get("handover_id") and not ut.get("handover_id"):
-            why.append("PosPro has published a trajectory since the points were georeferenced (real-time track used)")
+            why.append("PosPro has finalized a trajectory since the points were georeferenced (real-time track used)")
         elif inp.traj_info.get("handover_id"):
             why.append("PosPro's trajectory changed since the points were georeferenced")
     ua = (used.get("alignment") or {})
     if ua.get("handover_id") != inp.align_info.get("handover_id"):
         if inp.align_info.get("handover_id") and not ua.get("handover_id"):
-            why.append("AlignPro has published a calibration since the points were georeferenced")
+            why.append("AlignPro has finalized a calibration since the points were georeferenced")
         elif inp.align_info.get("handover_id"):
             why.append("AlignPro's calibration changed since the points were georeferenced")
         else:
-            why.append("The AlignPro calibration the points used is no longer published")
+            why.append("The AlignPro calibration the points used is no longer finalized")
     if not ua.get("handover_id"):
         why += [w[0].upper() + w[1:] for w in _other_changes(project, used)]
     elif used.get("crs") and used["crs"] != project.crs:
@@ -226,16 +226,16 @@ def quick_state(project):
     tid = (used.get("trajectory") or {}).get("handover_id")
     cur = project.dcs.stage("pospro").get("handover_id") if project.dcs.stage("pospro").get("status") == "done" else None
     if cur and cur != tid:
-        why.append("PosPro has published a new trajectory since the points were georeferenced" if tid else
-                   "PosPro has published a trajectory (the points use the real-time track)")
+        why.append("PosPro has finalized a new trajectory since the points were georeferenced" if tid else
+                   "PosPro has finalized a trajectory (the points use the real-time track)")
     aid = (used.get("alignment") or {}).get("handover_id")
     s = project.dcs.stage("alignpro")
     cur = s.get("handover_id") if s.get("status") == "done" else None
     if ov.get("source") in ("recorded", "entered"):
         cur = None
     if cur and cur != aid:
-        why.append("AlignPro has published a new calibration since the points were georeferenced" if aid else
-                   "AlignPro has published a calibration (the points use the recorded mounting)")
+        why.append("AlignPro has finalized a new calibration since the points were georeferenced" if aid else
+                   "AlignPro has finalized a calibration (the points use the recorded mounting)")
     if not aid:
         why += _other_changes(project, used)
     elif used.get("crs") and used["crs"] != project.crs:

@@ -1,12 +1,18 @@
-"""The four screen quarters' view panes: each view with its own header strip
-(title, colour scheme for that view, and its view tools).
+"""The view panes: each view with one title strip (CloudPro 2.0.0).
 
-  PlanPane   plan view + colour, background grid attribute
-  SlicePane  one slice view for both cross-sections and profiles, with the
-             slice tool bar on top: direction, rotate 90 deg, whole area,
-             thickness, step, previous / next, position slider
-  View3DPane 3D view + colour, what to show, presets, eye-dome lighting
+The colour scheme, colour link, background grid, colour ramp and sizes are chosen from the right-click
+menu on the view's legend (MainWindow._legend_menu); the panes keep them as hidden combos (colour, link,
+grid) so the window reads them as before.
+
+  PlanPane   plan view: zoom to the Inspection Area, zoom to the project, rejected points eye
+  SlicePane  one slice view for both cross-sections and profiles: direction, zoom, eye, rotate 90 deg,
+             WIDTH (0.5 to 16 m), first / previous, position slider, next / last, "slice n / N".
+             The slices are whole slices of that width inside the Inspection Area, centred in it
+             (never past its edges).
+  View3DPane 3D view: what to show, presets, eye-dome lighting, zoom, eye
 """
+import math
+
 from ..qt import QtCore, QtWidgets, Qt, Signal
 from . import chrome, render, theme
 from .navpanel import dspin
@@ -58,7 +64,8 @@ class _Pane(QtWidgets.QWidget):
         self.hl.addWidget(self.title)
         self.hl.addStretch(1)
         self.colour = _combo(COLOUR_MODES, "Point colours in this view")
-        self.colour.setFixedWidth(170)
+        self.colour.setParent(self)
+        self.colour.hide()                       # chosen from the legend's right-click menu
         self.colour.currentTextChanged.connect(self.colourChanged.emit)
         lay.addWidget(self.head)
 
@@ -75,22 +82,19 @@ class _Pane(QtWidgets.QWidget):
                                                                       "(click to hide them)")], size=28)
         self.rej_btn.optionChanged.connect(lambda k: self.rejToggled.emit(k == "show"))
         self.hl.addWidget(self.rej_btn)
-        self.hl.addWidget(chrome.label("COLOUR"))
-        self.hl.addWidget(self.colour)
-        self.legend_btn = chrome.IconButton("legend", "Colour scale bar of this view on / off", checkable=True, size=28)
+        # the legend is always shown: right-clicking it is where the colours are chosen
+        self.legend_btn = chrome.IconButton("legend", "Colour scale bar", checkable=True, size=28)
         self.legend_btn.setChecked(True)
-        self.legend_btn.toggled.connect(self.legendToggled.emit)
-        self.hl.addWidget(self.legend_btn)
-        self.link = QtWidgets.QComboBox()
+        self.legend_btn.setParent(self)
+        self.legend_btn.hide()
+        self.link = QtWidgets.QComboBox(self)
+        self.link.hide()
         self.link.setToolTip("Link this view's colours (scheme and scale) to another view")
         self.link.addItem("Own", "")
         for k, n in (("plan", "= Plan"), ("slice", "= Slice"), ("3d", "= 3D")):
             if k != self.KEY:
                 self.link.addItem(n, k)
-        self.link.setFixedWidth(84)
         self.link.currentIndexChanged.connect(lambda _i: self.linkChanged.emit(self.link.currentData() or ""))
-        self.hl.addWidget(icons_label())
-        self.hl.addWidget(self.link)
 
     def set_show_rejected(self, on):
         """Set the eye without signalling (the tool bar's eye sets every view)."""
@@ -117,8 +121,8 @@ class PlanPane(_Pane):
         self.view = PlanView()
         self.view.title = ""
         self.grid = _combo(ATTRS, "Background grid of the whole project under the points", 130)
-        self.hl.addWidget(chrome.label("GRID"))
-        self.hl.addWidget(self.grid)
+        self.grid.setParent(self)
+        self.grid.hide()                         # chosen from the legend's right-click menu
         self.target = dspin(1, 100000, DEFAULT_TARGET, 10, 0, " pts/m²")
         self.target.setFixedWidth(118)
         self.target.setToolTip("Coverage: the density the survey needs. Cells at or above it are green, "
@@ -133,8 +137,23 @@ class PlanPane(_Pane):
         self.layout().addWidget(self.view, 1)
 
 
+WIDTHS = (0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
+
+
+def slice_plan(extent, width):
+    """(n, width used, first centre) of whole slices across an extent (m), centred in it: n = the number of whole
+    slices of that width that fit (at least 1; a slice wider than the extent is cut to it)."""
+    extent = max(1e-6, float(extent))
+    w = min(float(width), extent)
+    n = max(1, int(math.floor(extent / w + 1e-9)))
+    margin = (extent - n * w) / 2
+    return n, w, -extent / 2 + margin + w / 2
+
+
 class SlicePane(_Pane):
-    """Slice view: a thin slab of the Inspection Area seen from the side."""
+    """Slice view: a slab of the Inspection Area seen from the side. The slices have the width chosen in WIDTH and
+    are whole slices inside the area, centred in it; the slider, arrows and keys step one slice (« » the first /
+    last)."""
     KEY = "slice"
     sliceChanged = Signal()
     stepRequested = Signal(int)        # -1 previous, +1 next
@@ -144,83 +163,150 @@ class SlicePane(_Pane):
         self.view = CloudView2D("section")
         self.view.title = ""
         self.view.b_label = "Z"
-        self.add_zoom_area()
-        self.add_colour()
-        bar = chrome.Strip(self, theme.BG)
-        bar.setFixedHeight(36)
-        bl = QtWidgets.QHBoxLayout(bar)
-        bl.setContentsMargins(6, 2, 6, 2)
-        bl.setSpacing(4)
+        self.extent = 60.0
+        self.index = 0
+        hl = self.hl
+        hl.removeItem(hl.itemAt(hl.count() - 1))                # the stretch after the title
         self.dir = chrome.IconButton("", options=[
             ("across", "across", "Cross-section: across the Inspection Area, looking along it"),
-            ("along", "along", "Profile: along the Inspection Area, seen from the side")], size=30)
-        self.dir.optionChanged.connect(lambda _k: self._changed())
-        self.rot = chrome.IconButton("rotate", "Rotate the slice 90 degrees (cross-section <-> profile)")
+            ("along", "along", "Profile: along the Inspection Area, seen from the side")], size=28)
+        self.dir.optionChanged.connect(lambda _k: self._dir_changed())
+        hl.addWidget(self.dir)
+        self.add_zoom_area()
+        self.add_colour()
+        self.rot = chrome.IconButton("rotate", "Rotate the slice 90 degrees (cross-section <-> profile)", size=28)
         self.rot.clicked.connect(self._rotate)
-        self.full = chrome.IconButton("full", "Slice covers the whole Inspection Area (a profile of the full width)",
-                                      checkable=True)
-        self.full.toggled.connect(lambda _on: self._changed())
-        self.thick = dspin(0.01, 1000, 0.5, 0.1, 2, " m")
-        self.thick.setToolTip("Slice thickness")
-        self.thick.setFixedWidth(92)
-        self.step = dspin(0.001, 1000, 0.5, 0.1, 2, " m")
-        self.step.setToolTip("Step for previous / next (PgUp / PgDn, [ ]). 'Step = thickness' keeps them equal")
-        self.step.setFixedWidth(92)
-        self.step_eq = chrome.IconButton("copy", "Step = thickness", checkable=True)
-        self.step_eq.setChecked(True)
-        self.prev = chrome.IconButton("prev", "Previous slice (PgDn or [)")
-        self.next = chrome.IconButton("next", "Next slice (PgUp or ])")
+        hl.addWidget(self.rot)
+        hl.addStretch(1)
+        hl.addWidget(chrome.label("WIDTH"))
+        self.width_cb = QtWidgets.QComboBox()
+        for w in WIDTHS:
+            self.width_cb.addItem(("%g m" % w), w)
+        self.width_cb.setCurrentIndex(1)
+        self.width_cb.setToolTip("Slice width: the slices are whole slices of this width inside the Inspection Area")
+        self.width_cb.setFixedWidth(84)
+        self.width_cb.currentIndexChanged.connect(lambda _i: self._width_changed())
+        hl.addWidget(self.width_cb)
+        self.first = chrome.IconButton("first", "First slice of the Inspection Area (Ctrl+PgDn)", size=28)
+        self.prev = chrome.IconButton("prev", "Previous slice (PgDn or [)", size=28)
+        self.next = chrome.IconButton("next", "Next slice (PgUp or ])", size=28)
+        self.last = chrome.IconButton("last", "Last slice of the Inspection Area (Ctrl+PgUp)", size=28)
+        self.first.clicked.connect(lambda: self.go(0))
         self.prev.clicked.connect(lambda: self.stepRequested.emit(-1))
         self.next.clicked.connect(lambda: self.stepRequested.emit(1))
+        self.last.clicked.connect(lambda: self.go(self.count() - 1))
         self.pos = QtWidgets.QSlider(Qt.Orientation.Horizontal)
-        self.pos.setRange(0, 1000)
-        self.pos.setValue(500)
-        self.pos.setToolTip("Slice position in the Inspection Area")
-        self.pos.valueChanged.connect(lambda _v: self._changed())
-        self.lbl = QtWidgets.QLabel("")
+        self.pos.setRange(0, 0)
+        self.pos.setPageStep(1)
+        self.pos.setToolTip("Slice in the Inspection Area")
+        self.pos.valueChanged.connect(self._slider)
+        self.lbl = QtWidgets.QLabel("1 / 1")
         self.lbl.setObjectName("ppVal")
-        self.lbl.setMinimumWidth(120)
-        for w in (self.dir, self.rot, self.full):
-            bl.addWidget(w)
-        bl.addWidget(chrome.label("THICK"))
-        bl.addWidget(self.thick)
-        bl.addWidget(chrome.label("STEP"))
-        bl.addWidget(self.step)
-        bl.addWidget(self.step_eq)
-        bl.addWidget(self.prev)
-        bl.addWidget(self.pos, 1)
-        bl.addWidget(self.next)
-        bl.addWidget(self.lbl)
-        self.thick.valueChanged.connect(self._thick)
-        self.layout().addWidget(bar)
+        self.lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl.setMinimumWidth(78)
+        self.lbl.setToolTip("Slice number of the slices in the Inspection Area at this width")
+        hl.addWidget(self.first)
+        hl.addWidget(self.prev)
+        hl.addWidget(self.pos, 2)
+        hl.addWidget(self.next)
+        hl.addWidget(self.last)
+        hl.addWidget(self.lbl)
         self.layout().addWidget(self.view, 1)
         self._blk = False
+        self.index = self.count() // 2               # the middle slice until the window places it
+        self._sync()
 
     # state ------------------------------------------------------------------
     @property
     def along(self):
         return self.dir.key == "along"
 
+    def width(self):                                     # noqa: D401 - the chosen slice width (m)
+        return float(self.width_cb.currentData() or 1.0)
+
+    def set_width(self, w):
+        i = min(range(len(WIDTHS)), key=lambda k: abs(WIDTHS[k] - float(w)))
+        self.width_cb.setCurrentIndex(i)
+
+    def plan(self):
+        return slice_plan(self.extent, self.width())
+
+    def count(self):
+        return self.plan()[0]
+
+    def thickness(self):
+        """The slice width used (the chosen width, or the extent when the area is narrower)."""
+        return self.plan()[1]
+
+    def centre(self, i=None):
+        n, w, c0 = self.plan()
+        i = self.index if i is None else i
+        return c0 + max(0, min(n - 1, i)) * w
+
+    def _sync(self):
+        n = self.count()
+        self.index = max(0, min(n - 1, self.index))
+        self._blk, old = True, self._blk
+        self.pos.setRange(0, n - 1)
+        self.pos.setValue(self.index)
+        self._blk = old
+        self.lbl.setText("%d / %d" % (self.index + 1, n))
+        self._c = self.centre()                       # where the slice is, for a width change
+        for b, on in ((self.first, self.index > 0), (self.prev, self.index > 0), (self.next, self.index < n - 1),
+                      (self.last, self.index < n - 1)):
+            b.setEnabled(on)
+
+    def set_extent(self, extent):
+        """The Inspection Area's length (cross-sections) or width (profiles) changed: keep the slice nearest the
+        same place."""
+        c = self.centre()
+        self.extent = max(1e-6, float(extent))
+        self._nearest(c)
+
+    def _nearest(self, c):
+        n, w, c0 = self.plan()
+        self.index = int(max(0, min(n - 1, round((c - c0) / w))))
+        self._sync()
+
+    def go(self, i):
+        n = self.count()
+        i = max(0, min(n - 1, int(i)))
+        if i != self.index:
+            self.index = i
+            self._sync()
+            self._changed()
+        else:
+            self._sync()
+
+    def _slider(self, v):
+        if not self._blk:
+            self.go(v)
+
     def _rotate(self):
         self.dir.set_key("across" if self.along else "along")
+        self._dir_changed()
+
+    def _dir_changed(self):
         self._changed()
 
-    def _thick(self, v):
-        if self.step_eq.isChecked():
-            self.step.setValue(v)
+    def _width_changed(self):
+        self._nearest(getattr(self, "_c", 0.0))
         self._changed()
 
     def _changed(self):
         if not self._blk:
             self.sliceChanged.emit()
 
-    def position(self, half):
-        """Slice centre from the slider, in metres from the box centre (half = half extent)."""
-        return (self.pos.value() / 1000.0 * 2 - 1) * half
+    def position(self, half=None):
+        """Centre of the current slice, in metres from the box centre."""
+        return self.centre()
 
-    def set_position(self, val, half):
+    def set_position(self, val, half=None):
+        """Go to the slice nearest val (m from the box centre)."""
+        if half is not None:
+            self.extent = max(1e-6, 2 * float(half))
         self._blk = True
-        self.pos.setValue(int(round((val / max(half, 1e-9) + 1) / 2 * 1000)))
+        self._nearest(float(val))
         self._blk = False
 
 

@@ -2582,12 +2582,12 @@ class ExportPage(Page):
 STEPS = [("data", "Data", "Prepare"), ("install", "Installation", "Prepare"), ("base", "Base", "Prepare"),
          ("process", "Processing", "Process"), ("quality", "Quality", "Process"),
          ("calib", "Calibration", "Process"),
-         ("review", "Review", "Finish"), ("export", "Export", "Finish")]
+         ("review", "Review", "Finalize"), ("export", "Export", "Finalize")]
 PHASE_TIPS = {"Prepare": "What was recorded, where the antennas are, and the base station: everything processing "
                          "needs, checked before it runs",
               "Process": "The GNSS/INS solution and its quality; solve the lever arms here if needed (it means "
                          "processing again)",
-              "Finish": "Review and fix what is left, then export for other software"}
+              "Finalize": "Review and fix what is left, then export for other software"}
 
 
 class PosProDock(PluginWindow):
@@ -2625,6 +2625,8 @@ class PosProDock(PluginWindow):
         mm.addAction("Engine version", self.engine_info)
         mm.addSeparator()
         mm.addAction("User guide (this version)", self.open_guide)
+        mm.addAction("Reset window", self.reset_window)
+        self.header.stepClicked.connect(self._phase_clicked)
         self.pbox = self.header.project_btn
         self.wbtn = self.header.window_btn
         self.helpbtn = self.header.help_btn
@@ -2756,6 +2758,35 @@ class PosProDock(PluginWindow):
             self.pages[k].refresh()
         self.update_nav()
 
+    def _phases(self):
+        out = []
+        for i, (_k, _t, ph) in enumerate(STEPS):
+            if not out or out[-1][0] != ph:
+                out.append((ph, ph, []))
+            out[-1][2].append(i)
+        return out
+
+    def _phase_clicked(self, key):
+        for ph, _l, pages in self._phases():
+            if ph == key:
+                self.goto_page(pages[0])
+
+    def update_header_steps(self):
+        """Prepare › Process › Finalize in the header, by the pages' states (DCS Core 1.11.0)."""
+        from dcs_core.stepnav import crumbs
+        states = []
+        for pg in self.pages:
+            try:
+                states.append(pg.state() if self.project else ("todo", ""))
+            except Exception:       # noqa: BLE001
+                states.append(("todo", ""))
+        if getattr(self, "task", None) is not None:
+            k = self.stack.currentIndex()
+            states[k] = ("running", states[k][1])
+        items, cur = crumbs(self._phases(), [t for _k, t, _p in STEPS], states, self.stack.currentIndex(),
+                            optional={"Review", "Calibration"})
+        self.header.set_steps(items, cur)
+
     def update_steps(self):
         for pg, sb in zip(self.pages, self.step_buttons):
             try:
@@ -2798,6 +2829,7 @@ class PosProDock(PluginWindow):
         """Back / Next under the pages: is the current step done, what is next."""
         if not hasattr(self, "nav"):
             return
+        self.update_header_steps()
         k = self.stack.currentIndex()
         if not self.project:
             self.nav.update(k, "todo", "open or create a project (project box, top right)")
@@ -2843,7 +2875,7 @@ class PosProDock(PluginWindow):
         elif pst == "stale":
             self.nav.set_continue("alignpro", False, "Out of date (%s): process again." % "; ".join(why))
         else:
-            self.nav.set_continue("alignpro", False, "Process the trajectory to publish it for AlignPro and "
+            self.nav.set_continue("alignpro", False, "Process the trajectory to finalize it for AlignPro and "
                                   "CloudPro.")
 
     def save(self):
@@ -3060,9 +3092,9 @@ class PosProDock(PluginWindow):
         self.update_steps()
         self.refresh_map_bases()
         if pipeline.lever_bug_job(p):
-            msg = ("This job was processed before PosPro 2.0.1 with an output point (%s) set. Its published "
+            msg = ("This job was processed before PosPro 2.0.1 with an output point (%s) set. Its finalized "
                    "trajectory is at that point although it is labelled as the IMU centre, so AlignPro and CloudPro "
-                   "apply the Lidar offset a second time. Press PROCESS to publish it again at the IMU centre."
+                   "apply the Lidar offset a second time. Press PROCESS to finalize it again at the IMU centre."
                    % (p.cfg["installation"].get("output_name") or "output point"))
             self.log("warning", msg)
             QTimer.singleShot(0, lambda: theme.msg_warn(self, "PosPro", msg))

@@ -1,36 +1,21 @@
 <h1><span class="num">{N}</span>The {NAME} window</h1>
-<p>PosPro, AlignPro and CloudPro share the same header and the same kind of window, so what you learn here applies to all three.</p>
-<figure><img src="fig/header.png"><figcaption><b>Figure {N}.1</b> The header. Left: the logo and the plugin name, then the workflow boxes. Right: the project box, the Window button and the user guide button.</figcaption></figure>
+<p>PosPro, AlignPro, CloudPro and RemixPro share the same header and the same kind of window, so what you learn here applies to all of them.</p>
+<figure><img src="fig/header.png"><figcaption><b>Figure {N}.1</b> The header. Left: the logo, the plugin name and version, then two rows of breadcrumbs: the chain of stages and this plugin's own steps. Then the project box{TOOLS_CAPTION}, and the user guide button at the right.</figcaption></figure>
 
 <h2>The header</h2>
 <table>
 <tr><th>Part</th><th>What it does</th></tr>
-<tr><td>Plugin name and version<br><span class="mono">PosPro v1.6.0</span></td><td>The plugin and the version you are running. Quote it when you report a problem; the user guide (<span class="ui">?</span>) is the one for this version.</td></tr>
-<tr><td>Workflow boxes<br><span class="mono">01 POSPRO → 02 ALIGNPRO → 03 CLOUDPRO</span></td><td>The state of each stage on the open project: <b>✓</b> published and current, <b>⚠ stale</b> (out of date: an earlier stage was re-run, the raw data or a shared setting changed), <b>running</b>, <b>failed</b>, or <b>–</b> not run yet. Hover a box for the reasons. Click another stage's box to open that plugin on the same project. The boxes refresh every few seconds.</td></tr>
+<tr><td>Plugin name and version<br><span class="mono">PosPro v2.1.0</span></td><td>The plugin and the version you are running. Quote it when you report a problem; the user guide (<span class="ui">?</span>) is the one for this version.</td></tr>
+<tr><td>The chain<br><span class="mono">PosPro › AlignPro › CloudPro</span></td><td>The state of each stage on the open project, by colour: <b>green</b> finalized and current, <b>amber</b> out of date (an earlier stage was run again, the raw data or a shared setting changed), <b>blue</b> running, <b>red</b> failed, <b>grey</b> not run yet. The plugin you are in is underlined. Hover a name for the state and the reasons; click another stage to open that plugin on the same project. The chain refreshes every few seconds.</td></tr>
+<tr><td>{NAME}'s steps<br><span class="mono">{STEPS_EXAMPLE}</span></td><td>{STEPS_ROW} Each step is coloured the same way (green done, amber needs a check, red needs attention, blue running, grey not done yet); the current one is underlined. Hover a step for what is done and what to do next; click it to go there.</td></tr>
 {EXTRAS_ROW}
-<tr><td>Project box</td><td>The open project's name; click it for the project menu (<a href="#projects">Projects</a>). It turns red while {NAME} is working.</td></tr>
-<tr><td><span class="ui">⤢</span> Window</td><td>The Window menu: Floating window, Maximise, Dock right / left / bottom / top, Reset window, Close{WINDOW_EXTRA}.</td></tr>
+<tr><td>Project box</td><td>The open project's name; click it for the project menu (<a href="#projects">Projects</a>){MENU_NOTE}. It turns red while {NAME} is working.</td></tr>
+{TOOLS_ROW}
 <tr><td><span class="ui">?</span></td><td>Opens this guide.</td></tr>
 </table>
-<p>When the window is narrower than about 1,080 pixels (usually when it is docked) the workflow boxes move to a second row under the header.</p>
 
 <h2>Moving through the steps</h2>
-<p>Under the step pages a bar always says where you are and what comes next:</p>
-<ul>
-<li><span class="ui">‹ Back</span> goes to the previous step.</li>
-<li>The sentence in the middle says whether the step is <b>done</b> (✓, green), needs a <b>check</b> (⚠, amber: you can continue), is <b>not done yet</b> (○, with the button to press), or is <b>optional</b>.</li>
-<li><span class="ui">Next: &lt;step&gt; ›</span> goes to the next step. It is greyed out until a required step is done; on optional steps it reads <span class="ui">Skip to &lt;step&gt; ›</span>.</li>
-<li>On the last step it becomes <span class="ui">Continue in AlignPro ›</span> (from PosPro) or <span class="ui">Continue in CloudPro ›</span> (from AlignPro). It opens the next plugin on the same project once this one has published its results; until then it says what is missing.</li>
-</ul>
-<p>The step list on the left still opens any step at any time; the bar only guides. CloudPro, an editor rather than a list of pages, shows its three steps (Georeference, Clean &amp; classify, Publish) in a strip under the header with one <span class="ui">Next</span> button that does the next thing.</p>
+<p>{NAV_TEXT}</p>
 
-<h2>Floating or docked</h2>
-<p>{NAME} opens as a <b>floating window</b> the first time, centred on the QGIS screen, with its own minimise, maximise and close buttons. It docks into the QGIS window only when you choose to:</p>
-<figure class="small"><img src="fig/window_menu.png"><figcaption><b>Figure {N}.2</b> The Window menu, from the <span class="ui">⤢</span> button or a right-click on the title bar.</figcaption></figure>
-<ul>
-<li><b>Dock right, left, bottom or top</b> puts it on that side of the QGIS window. Dragging the window never docks it, so it cannot snap into a corner by accident.</li>
-<li><b>Floating window</b> takes a docked window out again; double-clicking the title bar of a docked window does the same.</li>
-<li><b>Maximise</b> fills the screen; choose it again (it reads <i>Restore window size</i>) to go back.</li>
-<li><b>Reset window</b> returns to the default floating window, centred, at its default size.</li>
-</ul>
-<p>{NAME} remembers how you left it (floating with its place and size, maximised, or docked with its width or height) and opens the same way next time, also after QGIS restarts.</p>
+<h2>The window</h2>
+<p>{NAME} opens as a <b>window of its own</b>, centred on the QGIS screen the first time. Use the system's title bar to move it, maximise, minimise or close it; it does not dock into the QGIS window. {NAME} remembers its place and size, or that it was maximised, and opens the same way next time, also after QGIS restarts. <span class="ui">Reset window</span> in the project menu brings it back to its default size, centred.</p>

@@ -351,11 +351,20 @@ idle()
 page(6, "report.png", 1180)
 pdfs = [f for f in os.listdir(d.p.report_dir) if f.startswith("Report_") and f.endswith(".pdf")]
 if pdfs:
-    import fitz
-    doc = fitz.open(os.path.join(d.p.report_dir, pdfs[0]))
-    pix = doc[0].get_pixmap(dpi=110)
-    pix.save(fig("report_pdf.png"))
-    crop("report_pdf.png", (0, 0, pix.width / 2, 360))
+    try:
+        import fitz
+        doc = fitz.open(os.path.join(d.p.report_dir, pdfs[0]))
+        pix = doc[0].get_pixmap(dpi=110)
+        pix.save(fig("report_pdf.png"))
+        pw = pix.width
+    except ImportError:                     # no PyMuPDF: poppler's pdftoppm
+        import subprocess
+        stem = fig("report_pdf")
+        subprocess.check_call(["pdftoppm", "-r", "110", "-f", "1", "-l", "1", "-png", "-singlefile",
+                               os.path.join(d.p.report_dir, pdfs[0]), stem])
+        from PIL import Image
+        pw = Image.open(stem + ".png").width
+    crop("report_pdf.png", (0, 0, pw / 2, 360))
 
 # ------------------------------------------------------------------ header, menus, chain
 d.goto_page(4)
@@ -364,7 +373,6 @@ harness.settle(10)
 d.chain.refresh()
 harness.grab(d.header, fig("header.png"))
 with_menu(d.pbox.menu(), d.pbox, "project_menu.png")
-with_menu(d.wbtn.menu(), d.wbtn, "window_menu.png")
 
 # the published handover (the guide quotes an excerpt of it)
 print("published:", os.path.join(d.p.folder, "out", "alignment.json"))

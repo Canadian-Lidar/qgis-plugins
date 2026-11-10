@@ -1,13 +1,12 @@
-"""One window for every DCS plugin: floating by default, docked only when the user chooses it.
+"""One window for every DCS plugin: a normal window, never docked (DCS Core 1.11.0).
 
 PluginWindow is a QDockWidget that
-  - opens as a floating window (minimise, maximise, close) centred on the QGIS window's screen,
-  - never docks because it was dragged: docking happens only from its Window menu
-    (the title bar's right-click menu, its float button, or a plugin's header button),
-  - remembers per plugin how it was left (floating with its size and place, maximised, or docked
-    left / right / top / bottom with its size) in QSettings dcs/<key>/window/..., and comes back
-    the same way, also after QGIS restarts,
-  - has "Reset window" to go back to the default floating window.
+  - opens as a window with the system's title bar (minimise, maximise, close) centred on the QGIS window's
+    screen, with no title strip of its own,
+  - never docks (1.11.0: docking was removed; a window left docked by an earlier version opens as a window),
+  - remembers per plugin its size and place, or that it was maximised, in QSettings dcs/<key>/window/...,
+    and comes back the same way, also after QGIS restarts,
+  - has "Reset window" (window_menu) to go back to the default size.
 
 Plugin code: win.show_window() to open it, win.window_menu() / win.attach_menu(button) for a header
 button, win.release_window() in unload, win.closed when the user closes it.
@@ -58,14 +57,16 @@ class PluginWindow(QDockWidget):
         self._restoring = False
         self.setObjectName(object_name or "Dcs%sWindow" % key.title().replace("_", ""))
         self.setMinimumSize(*min_size)
-        self.setTitleBarWidget(WindowTitle(self))
+        from qgis.PyQt.QtWidgets import QWidget
+        self._no_title = QWidget(self)           # the system's title bar is the only one (1.11.0)
+        self._no_title.setFixedHeight(0)
+        self.setTitleBarWidget(self._no_title)
         lock(self)
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(600)
         self._save_timer.timeout.connect(self.save_state)
         self.dockLocationChanged.connect(lambda *_: self._save_soon())
-        self.windowTitleChanged.connect(lambda *_: self.titleBarWidget().update())
 
     # ------------------------------------------------------------------ settings
     def _k(self, name):
@@ -73,7 +74,7 @@ class PluginWindow(QDockWidget):
 
     def saved_mode(self):
         m = QSettings().value(self._k("mode"), "float")
-        return m if m in MODES else "float"
+        return m if m in ("float", "max") else "float"           # docked (before 1.11.0): a window again
 
     def window_mode(self):
         """'left' / 'right' / 'top' / 'bottom' when docked, 'max' when maximised, else 'float'."""
@@ -121,12 +122,7 @@ class PluginWindow(QDockWidget):
         self._restoring = True
         try:
             m = self.saved_mode()
-            if m in AREAS:
-                self.dock_at(m, save=False)
-                ext = QSettings().value(self._k("dock_extent"))
-                if ext:
-                    self._resize_docked(int(ext))
-            else:
+            if True:
                 geo = QSettings().value(self._k("geometry"))
                 self.float_window(save=False)
                 if geo is not None and self.restoreGeometry(geo) and _on_a_screen(self.geometry()):
@@ -182,13 +178,8 @@ class PluginWindow(QDockWidget):
         self._save_soon()
 
     def dock_at(self, side, save=True):
-        """Dock left / right / top / bottom: the only way this window docks."""
-        dock_to(self.iface, self, AREAS[side])
-        self._placed = True
-        if not self._restoring and self.dock_size:
-            self._resize_docked(self.dock_size)
-        if save:
-            self._save_soon()
+        """Docking was removed in DCS Core 1.11.0: the window stays a window."""
+        self.float_window(save=save)
 
     def reset_window(self):
         """Back to the default: a floating window of the default size, centred."""
@@ -230,19 +221,10 @@ class PluginWindow(QDockWidget):
 
     # ------------------------------------------------------------------ menu
     def window_menu(self, parent=None):
-        """The Window menu: Floating, Maximise, Dock right / left / bottom / top, Reset window."""
+        """The Window menu: Maximise / Restore, Reset window, Close (no docking since 1.11.0)."""
         m = theme.dark_menu(QMenu(parent or self))
         cur = self.window_mode()
-        a = m.addAction("Floating window", self.float_window)
-        a.setCheckable(True)
-        a.setChecked(cur == "float")
         m.addAction("Restore window size" if cur == "max" else "Maximise", self.maximise)
-        m.addSeparator()
-        for label, area in DOCK_CHOICES:
-            side = _area_name(area)
-            a = m.addAction(label, lambda s=side: self.dock_at(s))
-            a.setCheckable(True)
-            a.setChecked(cur == side)
         m.addSeparator()
         m.addAction("Reset window", self.reset_window)
         m.addAction("Close", self.close)
@@ -265,7 +247,7 @@ class PluginWindow(QDockWidget):
                     holder.addAction(label, fn)
         holder.aboutToShow.connect(fill)
         button.setMenu(holder)
-        button.setToolTip("Window: floating, maximise, dock left / right / top / bottom, reset")
+        button.setToolTip("Window: maximise, reset, close")
         return holder
 
     # ------------------------------------------------------------------ events

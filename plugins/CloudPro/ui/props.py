@@ -144,7 +144,7 @@ class ProjectProperties(_ToolWindow):
                     rows.append((label, st + (("  (" + "; ".join(why) + ")") if why else "")))
             pubs = p.data.get("published") or []
             if pubs:
-                rows.append(("Last published", "%s  %s" % (pubs[-1]["utc"], ", ".join(pubs[-1].get("outputs", [])))))
+                rows.append(("Last finalized", "%s  %s" % (pubs[-1]["utc"], ", ".join(pubs[-1].get("outputs", [])))))
         self._info_table = _kv_table(rows)
         lay.addWidget(self._info_table)
 
@@ -257,7 +257,7 @@ class ProjectProperties(_ToolWindow):
         g = QtWidgets.QGroupBox("Values CloudPro georeferences with")
         gl = QtWidgets.QGridLayout(g)
         self.src = QtWidgets.QComboBox()
-        self.src.addItems(["Chain default (AlignPro if published, else as recorded)", "Recorded in the capture (no calibration)",
+        self.src.addItems(["Chain default (AlignPro if finalized, else as recorded)", "Recorded in the capture (no calibration)",
                            "Entered here"])
         self.src.currentIndexChanged.connect(self._src_changed)
         gl.addWidget(chrome.label("Source"), 0, 0)
@@ -325,14 +325,14 @@ class ProjectProperties(_ToolWindow):
                 tj = handover.read(p.dcs, "pospro", required=False)
             except Exception:       # noqa: BLE001
                 tj = None
-            rows.append(("POSPRO (trajectory.json)", "" if tj else "not published"))
+            rows.append(("POSPRO (trajectory.json)", "" if tj else "not finalized"))
             if tj:
                 fr = tj.get("frame") or {}
                 q = tj.get("quality") or {}
                 rows += [("Frame", "%s %s, heights %s" % (fr.get("name"), fr.get("epoch"), fr.get("heights"))),
                          ("Mode / fixed", "%s, %s %% fixed" % (q.get("mode"), q.get("fixed_pct"))),
                          ("Max sigma H / V", "%s / %s m" % (q.get("max_sd_h_m"), q.get("max_sd_v_m"))),
-                         ("Base station", tj.get("base_station")), ("Published", tj.get("created")),
+                         ("Base station", tj.get("base_station")), ("Finalized", tj.get("created")),
                          ("Id", tj.get("id", "")[:23])]
                 for k, v in (tj.get("levers_m") or {}).items():
                     if v:
@@ -341,7 +341,7 @@ class ProjectProperties(_ToolWindow):
                 al = handover.read(p.dcs, "alignpro", required=False)
             except Exception:       # noqa: BLE001
                 al = None
-            rows.append(("ALIGNPRO (alignment.json)", "" if al else "not published - no calibration"))
+            rows.append(("ALIGNPRO (alignment.json)", "" if al else "not finalized - no calibration"))
             if al:
                 m = al.get("mount_deg") or {}
                 lv = al.get("lidar_lever_m") or {}
@@ -352,7 +352,7 @@ class ProjectProperties(_ToolWindow):
                     ("Latency", "%.2f ms" % (1000 * float(al.get("latency_s") or 0))),
                     ("Boresight vs recorded", _fmt(al.get("boresight_deg"))),
                     ("Average error", "%s cm (recorded %s cm)" % (q.get("avg_error_cm"), q.get("avg_error_recorded_cm"))),
-                    ("Published", al.get("created")), ("Id", al.get("id", "")[:23])]
+                    ("Finalized", al.get("created")), ("Id", al.get("id", "")[:23])]
         host = self.cfg_host.layout()
         if self._cfg_table is not None:
             host.removeWidget(self._cfg_table)
@@ -472,8 +472,8 @@ class AreaProperties(_ToolWindow):
         f = QtWidgets.QGridLayout(g)
         self.e = dspin(-1e8, 1e8, 0, 1, 3, " E")
         self.n = dspin(-1e8, 1e8, 0, 1, 3, " N")
-        self.L = dspin(1, 5000, 60, 5, 2, " m")
-        self.W = dspin(0.5, 5000, 30, 5, 2, " m")
+        self.L = dspin(1, 5000, 60, 1, 0, " m")          # whole metres (2.0.0)
+        self.W = dspin(1, 5000, 30, 1, 0, " m")
         self.B = dspin(-360, 720, 0, 1, 2, " deg")
         for w in (self.e, self.n, self.L, self.W, self.B):
             w.valueChanged.connect(self._edited)

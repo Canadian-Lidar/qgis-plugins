@@ -25,7 +25,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 WORK = os.path.dirname(os.path.dirname(HERE))          # folder holding cloudpro/, dcs_core/, guides/
 FIG = os.path.join(HERE, "fig")
 JOB = "/jobs/cloudpro/Job_Oct20"
-NAME = "PatchTest_Oct20"
+NAME = "Job_Oct20"
 PROJ_DIR = os.path.join(JOB, "Processing", NAME)
 PROJ = os.path.join(PROJ_DIR, NAME + ".dcsproj")
 PRISTINE = "/jobs/cloudpro/_pristine/" + NAME
@@ -292,6 +292,7 @@ def mouse(w, kind, x, y, button=Qt.NoButton, mods=Qt.NoModifier):
 
 
 # ----------------------------------------------------------------------------- open CloudPro on the job
+QtCore.QSettings().setValue("CloudPro/max_load_m", 200.0)      # the simulated job is dense: no "load anyway?"
 cp = harness.load("cloudpro", iface)
 win = cp.show()
 panel = cp.panel
@@ -303,7 +304,6 @@ print("opened", win.project.name, len(win.ps))
 
 # ---- header, window and project menus (shared chapters)
 grab(win.header, "header.png")
-harness.grab_menu(win.btn_window.menu(), out("window_menu.png"))
 harness.grab_menu(win.btn_project.menu(), out("project_menu.png"))
 from dcs_core.dialogs import NewProjectDialog            # noqa: E402
 
@@ -314,9 +314,8 @@ d.show()
 grab(d, "new_project.png")
 d.close()
 
-# ---- MENU
-expect("menu", "main_menu.png")
-win._main_menu()
+# ---- CloudPro's menu: the project box's menu (2.0.0)
+harness.grab_menu(win.btn_project.menu(), out("main_menu.png"))
 
 # ---- out of date: Survey configuration changed to the recorded mounting (the Georeference dialog is cancelled)
 win.show_properties()
@@ -328,8 +327,8 @@ pp._apply_cfg()
 win.refresh_chain()
 harness.settle(6)
 grab(win.header, "_stale_header.png")
-r = win.btn_menu.geometry()
-crop("_stale_header.png", (win.lbl_inputs.geometry().left() - 12, 0, r.right() + 8, win.header.height()))
+crop("_stale_header.png", (win.header.chain.geometry().left() - 12, 0, win.btn_project.geometry().left() - 4,
+                           win.header.height()))
 os.replace(os.path.join(FIG, "_stale_header.png"), out("stale.png"))
 MADE.remove("_stale_header.png")
 pp.src.setCurrentIndex(0)
@@ -361,7 +360,7 @@ print("georeferenced in %.0f s" % (time.time() - t0), len(win.ps))
 
 # ---- the working Inspection Area
 b = dict(win.box)
-b.update(length=80.0, width=70.0)
+b.update(length=40.0, width=30.0)          # the simulated job is dense: 40 x 30 m holds ~6 M points
 win.set_box(b, load=True, fit=True)
 win.plan.zoom_box()
 win.v3d.preset("iso")
@@ -370,7 +369,8 @@ harness.settle(10)
 print("box points", len(win.ps))
 
 # ---- tool bar and its option lists
-grab_in(win.toolbar, "toolbar.png")
+grab(win.header, "toolbar.png")              # the edit tools in the header (2.0.0)
+crop("toolbar.png", (win.b_pan.geometry().left() - 6, 0, win.b_rej.geometry().right() + 6, win.header.height()))
 expect("menu", "_opt_shape.png")
 win.b_shape.show_options()
 expect("menu", "_opt_line.png")
@@ -428,7 +428,7 @@ def zoom_slice(width_m=36.0):
     harness.settle(4)
 
 
-win.slice_pane.thick.setValue(1.0)
+win.slice_pane.set_width(1.0)
 win._slice_at(PX, PY)
 zoom_slice()
 grab_in(win.docks["slice"], "slice.png")
@@ -465,7 +465,7 @@ expect("menu", "plan_menu.png")
 mouse(win.plan, "press", cx, cy, Qt.RightButton)
 mouse(win.plan, "release", cx, cy, Qt.RightButton)
 SAVED_BOX = dict(win.box)
-SAVED_POS = win.slice_pane.pos.value()
+SAVED_POS = win.slice_pane.index
 win.show_area_properties()
 a = win._area
 a.ge.setValue(PX + win._origin()[0])
@@ -477,7 +477,7 @@ grab(a, "area_props.png")
 a.follow.setCurrentIndex(0)
 a.close()
 win.set_box(SAVED_BOX, load=True)
-win.slice_pane.pos.setValue(SAVED_POS)
+win.slice_pane.go(SAVED_POS)
 win.plan.zoom_box()
 zoom_slice()
 assert len(win.ps) and int(best.max()) < len(win.ps)
@@ -512,6 +512,13 @@ harness.settle(10)
 grab_union([win.docks["plan"], win.docks["slice"]], "colours.png")
 grab_in(win.docks["3d"], "view3d_intensity.png")
 win.v3d_pane.colour.setCurrentText("Classification")
+# ---- right-click on the Plan's legend: colours, grid and sizes (2.0.0)
+win.plan_pane.colour.setCurrentText("Height")
+harness.settle(6)
+lr = win.plan.legend_rect
+expect("menu", "colours_menu.png")
+win._legend_menu("plan", win.plan.mapToGlobal(QtCore.QPoint(int(lr.center().x()), int(lr.center().y()))))
+win.plan_pane.colour.setCurrentText("Classification")
 
 # ---- a preview that rejects and re-accepts points
 fp.cmb.setCurrentIndex([g.name for g in fp.groups].index("Snow and rain"))

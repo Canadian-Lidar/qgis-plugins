@@ -245,8 +245,8 @@ class PlanView(CloudView2D):
                 p.setPen(QtGui.QPen(QtGui.QColor(col), 1.5, Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine))
                 p.drawLine(QtCore.QPointF(*self.to_screen(*a0)), QtCore.QPointF(*self.to_screen(*a1)))
         self._draw_box(p)
-        if self._range and self.has_underlay():
-            self._legend(p)
+        if self._range and self.has_underlay() and self.attr == "Coverage":
+            self._legend(p)                      # 2.0.0: only the coverage key (one colour legend per view)
         p.end()
 
     def _draw_tracks(self, p):
@@ -423,11 +423,14 @@ class PlanView(CloudView2D):
             cor = rect_corners(b0["cx"], b0["cy"], b0["length"], b0["width"], b0["bearing"])
             opp = cor[(i + 2) % 4]
             uo, vo = to_box_frame(np.array([opp[0]]), np.array([opp[1]]), b0["cx"], b0["cy"], b0["bearing"])
-            mu, mv = (u[0] + uo[0]) / 2, (v[0] + vo[0]) / 2
+            # whole metres (2.0.0): the opposite corner stays put, the size snaps to 1 m steps
+            L = float(max(1, int(round(abs(u[0] - uo[0])))))
+            W = float(max(1, int(round(abs(v[0] - vo[0])))))
+            mu = uo[0] + math.copysign(L / 2, u[0] - uo[0])
+            mv = vo[0] + math.copysign(W / 2, v[0] - vo[0])
             br = math.radians(b0["bearing"])
             self.box.update(cx=b0["cx"] + mu * math.sin(br) + mv * math.cos(br),
-                            cy=b0["cy"] + mu * math.cos(br) - mv * math.sin(br),
-                            length=max(1.0, abs(u[0] - uo[0])), width=max(0.5, abs(v[0] - vo[0])))
+                            cy=b0["cy"] + mu * math.cos(br) - mv * math.sin(br), length=L, width=W)
         elif k == "rotate":
             b0 = self._bdrag[1]
             self.box["bearing"] = (math.degrees(math.atan2(x - b0["cx"], y - b0["cy"])) + 360) % 360
@@ -436,6 +439,7 @@ class PlanView(CloudView2D):
             L = math.hypot(x - x0, y - y0)
             if L > 0.5:
                 w = self.box["width"] if self.box else 30.0
+                L = float(max(1, int(round(L))))
                 self.box = {"cx": (x + x0) / 2, "cy": (y + y0) / 2, "length": L, "width": w,
                             "bearing": (math.degrees(math.atan2(x - x0, y - y0)) + 360) % 360}
         self.boxChanged.emit(dict(self.box) if self.box else {}, False)
