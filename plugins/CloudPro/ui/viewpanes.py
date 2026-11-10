@@ -34,8 +34,10 @@ def _combo(items, tip, width=None):
 
 
 def _title(text):
+    """A view's or panel's title (PLAN, SLICE, 3D, AUTOMATIC FILTERS ...): all the same size and colour (2.0.3: the
+    views' titles had the small ppKey style)."""
     lab = QtWidgets.QLabel(text)
-    lab.setObjectName("ppKey")
+    lab.setObjectName("cpViewTitle")
     f = theme.ui_font(13)
     lab.setFont(f)
     lab.setStyleSheet("color: %s; letter-spacing: 1px;" % theme.ACCENT)

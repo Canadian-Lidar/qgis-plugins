@@ -235,10 +235,8 @@ class MainWindow(QtWidgets.QMainWindow):
             hl = QtWidgets.QHBoxLayout(head)
             hl.setContentsMargins(8, 2, 6, 2)
             hl.setSpacing(4)
-            lab = QtWidgets.QLabel(title)
-            lab.setFont(theme.ui_font(13))
-            lab.setStyleSheet("color: %s; letter-spacing: 1px;" % theme.ACCENT)
-            hl.addWidget(lab)
+            from .viewpanes import _title
+            hl.addWidget(_title(title))
             hl.addStretch(1)
             self._make_dock(key, title, w, head, hl)
         self._default_layout()
