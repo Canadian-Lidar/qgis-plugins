@@ -339,6 +339,7 @@ class PlanView(CloudView2D):
         if self._range and self.has_underlay() and self.attr == "Coverage":
             self._legend(p)                      # 2.0.0: only the coverage key (one colour legend per view)
         elif self.has_underlay() and self.attr == SEPARATION and self.separation is not None:
+            self._draw_problem_areas(p)
             self._separation_legend(p)
         p.end()
 
@@ -410,6 +411,40 @@ class PlanView(CloudView2D):
         p.drawText(QtCore.QRectF(x, y + 16, w, 16), int(Qt.AlignmentFlag.AlignLeft),
                    "%s covered · median %.0f" % (_area(c.get("area_m2", 0)), c.get("median", 0)))
 
+    def problem_areas(self):
+        """The result's problem areas at the current tolerance, those of the shown line or pair only."""
+        r, f = self.separation, self.separation_filter
+        if r is None:
+            return []
+        areas = r.problem_areas(self.tolerance)
+        if f is None:
+            return areas
+        if f[0] == "pair":
+            return [a for a in areas if (f[1], f[2]) in a["pairs"]]
+        return [a for a in areas if f[1] in a["lines"]]
+
+    def _draw_problem_areas(self, p):
+        p.setFont(theme.mono(10))
+        for a in self.problem_areas():
+            first = None
+            for (x0, y0, x1, y1) in a.get("boxes") or [a["bbox"]]:
+                sx0, sy0 = self.to_screen(x0 - 2, y1 + 2)
+                sx1, sy1 = self.to_screen(x1 + 2, y0 - 2)
+                r = QtCore.QRectF(min(sx0, sx1), min(sy0, sy1), max(8, abs(sx1 - sx0)), max(8, abs(sy1 - sy0)))
+                p.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 200), 3))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawRect(r)
+                p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 1.4, Qt.PenStyle.DashLine))
+                p.drawRect(r)
+                if first is None or r.width() * r.height() > first.width() * first.height():
+                    first = r
+            r = first
+            lab = str(a["id"])
+            t = QtCore.QRectF(r.left(), r.top() - 16, 10 + 8 * len(lab), 15)
+            p.fillRect(t, QtGui.QColor(0, 0, 0, 200))
+            p.setPen(QtGui.QColor(255, 255, 255))
+            p.drawText(t, int(Qt.AlignmentFlag.AlignCenter), lab)
+
     def _separation_legend(self, p):
         t = 100 * self.tolerance
         sh = self.separation_shares() or (0, 0, 0, None)
@@ -430,8 +465,10 @@ class PlanView(CloudView2D):
         p.setPen(QtGui.QColor(theme.BRIGHT if self.separation_current else theme.AMBER))
         p.drawText(QtCore.QRectF(x, y, w, 16), int(Qt.AlignmentFlag.AlignLeft), self.separation_title())
         p.setPen(QtGui.QColor(theme.DIM if self.separation_current else theme.AMBER))
+        n_ar = len(self.problem_areas())
         p.drawText(QtCore.QRectF(x, y + 16, w, 16), int(Qt.AlignmentFlag.AlignLeft),
-                   ("median %.1f cm · share of cells" % (100 * med) if med is not None else "")
+                   ("median %.1f cm · %s" % (100 * med, "%d problem area%s" % (n_ar, "" if n_ar == 1 else "s")
+                                             if n_ar else "share of cells") if med is not None else "")
                    if self.separation_current else "Out of date: check again")
 
     b_offset_z = 0.0

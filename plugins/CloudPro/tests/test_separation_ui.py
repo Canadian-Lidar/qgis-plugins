@@ -16,6 +16,7 @@ import harness                                                    # noqa: E402
 app, iface = harness.start(PLUGINS, tempfile.mkdtemp())
 from CloudPro.tests import test_separation as TS                  # noqa: E402
 from CloudPro.ui.planview import SEPARATION                       # noqa: E402
+from CloudPro.qt import QtCore                                     # noqa: E402
 
 p = TS.build(tempfile.mkdtemp())                                   # the simulated street, three lines
 p.store.close()
@@ -69,6 +70,24 @@ assert "against the others" in win.plan.separation_title()
 w.btn_all.click()
 assert win.plan.separation_filter is None
 print("pair and line chosen in the window: shown alone on the Plan")
+
+# problem areas: listed, outlined on the Plan, a click puts the Inspection Area there; the file for PosPro
+areas = r.problem_areas(win.plan.tolerance)
+assert areas and w.areas.rowCount() == len(areas) and "PROBLEM AREAS" in w.tabs.tabText(0)
+loc = [a for a in areas if a["line"] == 0][0]
+row = [i for i in range(w.areas.rowCount()) if w.areas.item(i, 0).data(QtCore.Qt.ItemDataRole.UserRole) == loc["id"]][0]
+w.areas.selectRow(row)
+harness.settle(4)
+bx = max(loc["boxes"], key=lambda b: (b[2] - b[0]) * (b[3] - b[1]))
+assert abs(win.box["cx"] - (bx[0] + bx[2]) / 2) < 1 and abs(win.box["cy"] - (bx[1] + bx[3]) / 2) < 1, (win.box, loc)
+assert win.box["length"] <= 60
+assert win.plan.separation_filter == ("line", 0)
+assert any(a["id"] == loc["id"] for a in win.plan.problem_areas())
+win.plan.repaint()
+assert os.path.exists(os.path.join(win.project.out_dir, "problem_areas.json"))
+print("problem areas: %d listed; #%d (Line 1) chosen: Inspection Area at E %.1f N %.1f" % (
+    len(areas), loc["id"], win.box["cx"], win.box["cy"]))
+w.btn_all.click()
 
 # tolerance from the legend menu changes the key and the table colours
 before = win.plan.separation_shares()

@@ -2047,6 +2047,8 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
         if self._sepwin is not None:
             self._sepwin.refresh()
+        if self.plan.separation is not None and self.plan.separation_current:
+            SEP.write_feedback(self.project, self.plan.separation, self.plan.tolerance)
 
     def check_separation(self):
         """Project menu > Check line separation: how far overlapping lines sit apart (nothing is changed)."""
@@ -2065,6 +2067,29 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.plan_pane.grid.currentText() != SEPARATION:
             self.plan_pane.grid.setCurrentText(SEPARATION)
         self.plan.set_separation_filter(f)
+
+    def goto_problem(self, area):
+        """A problem area chosen: the Plan shows the line at fault (or the pair), the Inspection Area goes onto the
+        area along the nearest drive line of that line, the views zoom to it."""
+        if self.box is None:
+            return
+        f = ("line", area["line"]) if area["line"] is not None else \
+            (("pair",) + tuple(area["pairs"][0]) if len(area["pairs"]) == 1 else None)
+        self.show_separation_of(f)
+        boxes = area.get("boxes") or [area["bbox"]]
+        x0, y0, x1, y1 = max(boxes, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]))       # the largest part
+        side = min(60.0, max(x1 - x0, y1 - y0) + 10.0)
+        brg = 0.0
+        lid = area["line"] if area["line"] is not None else area["lines"][0]
+        tr = self.tracks.get(lid)
+        if tr is not None and len(tr["E"]) > 2:
+            d = np.hypot(tr["E"] - area["x"], tr["N"] - area["y"])
+            j = int(np.argmin(d))
+            j0, j1 = max(0, j - 10), min(len(tr["E"]) - 1, j + 10)
+            brg = math.degrees(math.atan2(tr["E"][j1] - tr["E"][j0], tr["N"][j1] - tr["N"][j0])) % 360
+        b = dict(self.box, cx=float((x0 + x1) / 2), cy=float((y0 + y1) / 2), length=side, width=side, bearing=brg)
+        self.set_box(b, load=True, fit=True)
+        self.plan.zoom_box()
 
     def show_separation(self):
         if self.project is None:
@@ -3237,6 +3262,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plan.set_separation(res, True)
             self.project.log("Line separation checked: %s" % SEP.verdict(res, self.plan.tolerance))
             self.project.run_log("line separation", SEP.report_lines(res, self.plan.tolerance, self.project.name))
+            SEP.write_feedback(self.project, res, self.plan.tolerance)          # for PosPro's Review
             if self.plan_pane.grid.currentText() != SEPARATION:
                 self.plan_pane.grid.setCurrentText(SEPARATION)
             self.show_separation()

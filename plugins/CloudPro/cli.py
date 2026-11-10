@@ -128,6 +128,7 @@ def main(argv=None):
             with open(a.report, "w", encoding="utf-8") as f:
                 f.write(txt + "\n")
         prj.log("Line separation checked: %s" % separation.verdict(res, a.tolerance))
+        separation.write_feedback(prj, res, a.tolerance)
         prj.save()
         return 0
     if a.cmd == "import":

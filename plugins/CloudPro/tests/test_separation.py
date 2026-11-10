@@ -19,6 +19,8 @@ from CloudPro.core.project import Project          # noqa: E402
 from CloudPro.core.store import REC, REJECTED      # noqa: E402
 
 SHIFT1 = np.array([0.02, -0.03, 0.05])
+BUMP = 0.12                    # m: line 0 low in 20-30 m east, 20-35 m north
+T0 = 1_792_508_400.0
 
 
 def scene(rng, n=400_000):
@@ -57,14 +59,18 @@ def build(tmp):
         xyz = scene(rng)
         if lid == 1:
             xyz = xyz + SHIFT1
+        if lid == 0:                                         # a local trajectory error on line 0 only
+            m = (xyz[:, 0] > 20) & (xyz[:, 0] < 30) & (xyz[:, 1] > 20) & (xyz[:, 1] < 35)
+            xyz[m, 2] -= BUMP
         if lid == 2:
             xyz[:, 2] += 0.10 * xyz[:, 0] / 100.0          # 0 cm at x = 0 to 10 cm at x = 100 m
         xyz += rng.normal(0, 0.005, xyz.shape)
         r = np.zeros(len(xyz), REC)
         r["x"], r["y"], r["z"] = np.round(xyz * 1000).astype(np.int32).T
         r["line"] = lid
+        r["t"] = T0 + 100 * lid + xyz[:, 0] / 10.0               # driving east at 10 m/s
         r["cls"] = 1
-        p.add_line({"name": "Line %d" % (lid + 1), "points": len(r), "mount": [90, 45, 0]})
+        p.add_line({"name": "Line %d" % (lid + 1), "points": len(r), "mount": [90, 45, 0], "t0": T0 + 100 * lid})
         p.store.append(r)
     # rejected points far off must be left out
     bad = np.zeros(5000, REC)
@@ -128,14 +134,42 @@ def main():
     assert e > w + 0.01, (w, e)
     print("grid: median %.1f cm at the west end, %.1f cm at the east end" % (100 * w, 100 * e))
 
+    # the local error: one problem area, line 0 at fault, where and when it happened
+    areas = r.problem_areas(0.03)
+    hit = [a for a in areas if a["line"] == 0]
+    assert len(hit) == 1, [(a["line"], a["lines"], a["x"], a["y"], a["m2"]) for a in areas]
+    a = hit[0]
+    assert 20 <= a["x"] <= 30 and 20 <= a["y"] <= 35 and a["bbox"][0] >= 18 and a["bbox"][2] <= 32, a
+    assert set(a["pairs"]) == {(0, 1), (0, 2)} and 0.10 < a["max"] < 0.25, a
+    assert T0 + 1.8 <= a["t0"] < a["t1"] <= T0 + 3.2, (a["t0"] - T0, a["t1"] - T0)
+    assert "local problem area" in S.verdict(r, 0.03) and "Line 1" in S.verdict(r, 0.03)
+    print("local error: area #%d, %s at E %.1f N %.1f, %.0f m2, max %.1f cm, %s" % (
+        a["id"], S.area_lines_text(a, r.data["names"]), a["e"], a["n"], a["m2"], 100 * a["max"],
+        S.time_text(a["t0"], a["t1"])))
+    # the pair that is off everywhere (line 1, constant) is not a local area
+    assert not any(a["pairs"] == [(0, 1)] for a in areas)
+
     # saved and loaded; nothing in the points changed
     r2 = S.load(p)
     assert r2 is not None and r2.is_current(p) and set(r2.grids) == set(r.grids)
     for k, a in before.items():
         assert np.array_equal(a, p.store.tile_array(k)), k
     txt = "\n".join(S.report_lines(r2, 0.03, "sep"))
-    assert "Line 1 / Line 2" in txt and "Per line" in txt
+    assert "Line 1 / Line 2" in txt and "Per line" in txt and "Problem areas" in txt
+    assert r2.problem_areas(0.03)[0]["t0"] == r.problem_areas(0.03)[0]["t0"]
     print("saved, loaded, points unchanged; report %d lines" % len(txt.splitlines()))
+
+    # the file PosPro reads
+    import json
+    p.data["inputs"] = {"trajectory": {"source": "pospro", "handover_id": "sha256:abc", "description": "test"}}
+    fp = S.write_feedback(p, r2, 0.03)
+    fb = json.load(open(fp))
+    assert fb["schema"] == "dcs.problem_areas/1" and fb["trajectory"]["handover_id"] == "sha256:abc"
+    one = [x for x in fb["areas"] if x["line"] == "Line 1"][0]
+    w, s0 = S.gps_week_sow(T0 + 2.0)
+    assert one["gps_week"] == w and s0 - 0.05 <= one["gps_sow"][0] < one["gps_sow"][1] <= s0 + 1.1, one
+    print("problem_areas.json: %d areas; Line 1 at GPS week %d, %.1f-%.1f s" % (
+        len(fb["areas"]), one["gps_week"], one["gps_sow"][0], one["gps_sow"][1]))
 
     # out of date when the points are georeferenced again
     p.lines[1]["mount"] = [90, 45, 0.1]

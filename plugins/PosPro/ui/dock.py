@@ -1693,7 +1693,8 @@ class ReviewPage(Page):
         fr.addWidget(fl)
         self.show_filter = QComboBox()
         for label, key in (("All windows", "all"), ("Open (no decision yet)", "open"),
-                           ("Found by the limits (A)", "found"), ("Selected by hand (S)", "manual"),
+                           ("Found by the limits (A)", "found"), ("Found in the point cloud (C)", "cloud"),
+                           ("Selected by hand (S)", "manual"),
                            ("Decided", "decided")):
             self.show_filter.addItem(label, key)
         self.show_filter.currentIndexChanged.connect(lambda *_: self.fill())
@@ -1820,7 +1821,7 @@ class ReviewPage(Page):
         p = self.project
         r = review.state(p)
         items = []
-        for a in r["anomalies"]:
+        for a in review.listed(p):
             e = review.edit_for(p, a["t0"], a["t1"])
             items.append({"id": a["id"], "t0": a["t0"], "t1": a["t1"], "what": review.KIND_LABEL.get(a["kind"], a["kind"]),
                           "worst": review.describe_max(a), "maxv": float(a.get("max") or 0), "edit": e})
@@ -1861,6 +1862,16 @@ class ReviewPage(Page):
         if self.all_items:
             shown = "" if len(items) == len(self.all_items) else " (%d shown)" % len(items)
             msg.append("%d listed%s, %d still open." % (len(self.all_items), shown, n_open))
+        from ..core import cloudareas
+        cd = cloudareas.load(p)
+        if cd is not None:
+            n_c = len(cd["areas"])
+            msg.append("Point cloud (CloudPro, %s): %d problem area%s%s." % (
+                (cd.get("measured_utc") or "")[:16], n_c, "" if n_c == 1 else "s",
+                "" if cd["current"] else ", measured on an earlier trajectory: check line separation in CloudPro "
+                                         "again after it updates"))
+            if not cd["current"]:
+                self.pending.setStyleSheet("color: %s;" % theme.AMBER)
         self.pending.setText(" ".join(msg))
         self.b_reproc.setVisible(review.exclusions_pending(p))
         self._draw_map()
@@ -1872,6 +1883,7 @@ class ReviewPage(Page):
         keep = {"all": lambda it: True,
                 "open": lambda it: review.is_open(it["edit"]),
                 "found": lambda it: str(it["id"]).startswith("A"),
+                "cloud": lambda it: str(it["id"]).startswith("C"),
                 "manual": lambda it: str(it["id"]).startswith("S"),
                 "decided": lambda it: not review.is_open(it["edit"])}.get(f, lambda it: True)
         items = [it for it in items if keep(it)]
@@ -2198,16 +2210,18 @@ class ReviewPage(Page):
         r = review.state(p)
         if review.exclusions_pending(p):
             return "warn", "process again"
-        if not r["anomalies"] and not r["edits"]:
+        # problem areas from the point cloud count while they were found on this trajectory (2.2.0)
+        anoms = [a for a in review.listed(p) if a.get("current", True)]
+        if not anoms and not r["edits"]:
             if r.get("detected_at"):
                 return "done", "nothing over the limits"
             return "todo", "find anomalies"
-        n_open = sum(1 for a in r["anomalies"] if review.is_open(review.edit_for(p, a["t0"], a["t1"])))
+        n_open = sum(1 for a in anoms if review.is_open(review.edit_for(p, a["t0"], a["t1"])))
         n_open += sum(1 for e in r["edits"] if e["action"] == "reject" and not any(
-            review.edit_for(p, a["t0"], a["t1"]) is e for a in r["anomalies"]))
+            review.edit_for(p, a["t0"], a["t1"]) is e for a in anoms))
         if n_open:
             return "warn", "%d open" % n_open
-        return "done", "%d reviewed" % (len(r["anomalies"]) + len([e for e in r["edits"] if e.get("source") == "manual"]))
+        return "done", "%d reviewed" % (len(anoms) + len([e for e in r["edits"] if e.get("source") == "manual"]))
 
 
 # ---------------------------------------------------------------------------

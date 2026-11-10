@@ -9,6 +9,10 @@ from .planview import COVER_LOW, COVER_OK, COVER_POOR
 from .props import _ToolWindow
 
 PAIR_COLS = ["Lines", "Patches", "Median", "95 %", "East", "North", "Up", "Rest"]
+AREA_COLS = ["#", "Line", "Easting", "Northing", "Size", "Median", "Max", "Time (UTC)", "GPS seconds of week"]
+UNITS = ["cm; size m². Line = the line at fault when the area shows against several lines, else the pair.",
+         "cm; shift of the second line against the first; rest = left after that shift.",
+         "cm; median against the lines each one overlaps."]
 
 
 def _cm(v, signed=False):
@@ -19,7 +23,7 @@ def _cm(v, signed=False):
 
 class SeparationWindow(_ToolWindow):
     def __init__(self, mw):
-        super().__init__(mw, "CloudPro - line separation", (760, 560))
+        super().__init__(mw, "CloudPro - line separation", (900, 560))
         self.res = None
         self.current = True
         lay = QtWidgets.QVBoxLayout(self)
@@ -33,13 +37,18 @@ class SeparationWindow(_ToolWindow):
         self.lbl_info.setWordWrap(True)
         lay.addWidget(self.lbl_info)
 
-        lay.addWidget(self._title("LINE PAIRS  ·  cm  ·  shift of the second line against the first"))
+        self.tabs = QtWidgets.QTabWidget()
+        self.areas = self._table(AREA_COLS)
         self.pairs = self._table(PAIR_COLS)
-        lay.addWidget(self.pairs, 3)
-        lay.addWidget(self._title("LINES  ·  cm  ·  median against the lines each one overlaps"))
         self.lines = self._table(["Line", "Median", "Pairs", "Patches"])
-        lay.addWidget(self.lines, 2)
+        for w, t in ((self.areas, "PROBLEM AREAS"), (self.pairs, "LINE PAIRS"), (self.lines, "LINES")):
+            self.tabs.addTab(w, t)
+        lay.addWidget(self.tabs, 1)
+        self.lbl_units = self._title("")
+        lay.addWidget(self.lbl_units)
+        self.tabs.currentChanged.connect(self._units)
 
+        self.areas.itemSelectionChanged.connect(self._area_picked)
         self.pairs.itemSelectionChanged.connect(lambda: self._picked(self.pairs))
         self.lines.itemSelectionChanged.connect(lambda: self._picked(self.lines))
 
@@ -74,6 +83,22 @@ class SeparationWindow(_ToolWindow):
         t.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         t.horizontalHeader().setStretchLastSection(True)
         return t
+
+    def _units(self, i=None):
+        self.lbl_units.setText(UNITS[self.tabs.currentIndex()])
+
+    def _area_picked(self):
+        """A problem area chosen: the Plan shows its line (or pair) and the Inspection Area goes there."""
+        if getattr(self, "_filling", False) or self.res is None:
+            return
+        rows = self.areas.selectionModel().selectedRows() if self.areas.selectionModel() else []
+        if not rows:
+            return
+        it = self.areas.item(rows[0].row(), 0)
+        aid = it.data(Qt.ItemDataRole.UserRole) if it is not None else None
+        a = next((x for x in self.res.problem_areas(self.tolerance) if x["id"] == aid), None)
+        if a is not None:
+            self.mw.goto_problem(a)
 
     def _picked(self, table):
         """A pair or a line chosen: the Plan shows only that one's separation."""
@@ -123,6 +148,7 @@ class SeparationWindow(_ToolWindow):
             self.lbl_info.setText("")
             self.pairs.setRowCount(0)
             self.lines.setRowCount(0)
+            self.areas.setRowCount(0)
             self.btn_save.setEnabled(False)
             return
         self.btn_save.setEnabled(True)
@@ -169,6 +195,28 @@ class SeparationWindow(_ToolWindow):
                 self.lines.setItem(i, j, it)
         self.lines.resizeColumnsToContents()
         self.lines.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+        areas = r.problem_areas(self.tolerance)
+        self.areas.setRowCount(len(areas))
+        for i, a in enumerate(areas):
+            t0, t1 = a["t0"], a["t1"]
+            vals = [str(a["id"]), S.area_lines_text(a, nm), "%.1f" % a["e"], "%.1f" % a["n"], "%.0f" % a["m2"],
+                    _cm(a["median"]), _cm(a["max"]),
+                    S.area_times_text(a, nm), S.area_times_text(a, nm, gps=True)]
+            for j, v in enumerate(vals):
+                it = QtWidgets.QTableWidgetItem(v)
+                if j == 0:
+                    it.setData(Qt.ItemDataRole.UserRole, a["id"])
+                if j in (2, 3, 4, 5, 6):
+                    it.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+                if j in (5, 6):
+                    it.setForeground(self._colour(a[("median", "max")[j - 5]]))
+                if j == 7 and t0 is not None:
+                    it.setToolTip(S.time_text(t0, t1))
+                self.areas.setItem(i, j, it)
+        self.areas.resizeColumnsToContents()
+        self.areas.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+        self.tabs.setTabText(0, "PROBLEM AREAS  %d" % len(areas))
+        self._units()
 
     def save_report(self):
         if self.res is None or self.mw.project is None:

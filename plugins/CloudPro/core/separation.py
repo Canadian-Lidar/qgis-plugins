@@ -34,7 +34,7 @@ import numpy as np
 
 from .store import REJECTED, parse_key
 
-VERSION = 2
+VERSION = 3
 PATCH = 1.0                       # cube side (m); must divide the tile size
 PATCHES = (0.5, 1.0, 2.0)
 MIN_POINTS = 12                   # points of one line in a cube
@@ -69,8 +69,9 @@ def signature(project):
 
 
 # --------------------------------------------------------------------------------------------- one tile
-def _tile_patches(a, x0, y0, T, patch):
-    """Patch pairs in one tile: (la, lb, n[k,3], d[k], col[k]) with col the cell index (iy * n + ix) in the tile."""
+def _tile_patches(a, x0, y0, T, patch, tbase=0.0):
+    """Patch pairs in one tile: (la, lb, n[k,3], d[k], col[k], n, ta[k], tb[k]) with col the cell index
+    (iy * n + ix) in the tile and ta / tb the mean time (s after tbase) of each line's points in the cube."""
     m = (a["flag"] & REJECTED) == 0
     for c in NOISE_CLASSES:
         m &= a["cls"] != c
@@ -106,9 +107,11 @@ def _tile_patches(a, x0, y0, T, patch):
         return np.bincount(inv, weights=w, minlength=M)
     sx, sy, sz = s(xc), s(yc), s(zc)
     sxx, syy, szz, sxy, sxz, syz = s(xc * xc), s(yc * yc), s(zc * zc), s(xc * yc), s(xc * zc), s(yc * zc)
+    stt = s(b["t"] - tbase)
     g = np.flatnonzero(good)
     c = cnt[g].astype(float)
     mx, my, mz = sx[g] / c, sy[g] / c, sz[g] / c
+    tm = stt[g] / c
     C = np.empty((len(g), 3, 3))
     C[:, 0, 0] = sxx[g] / c - mx * mx
     C[:, 1, 1] = syy[g] / c - my * my
@@ -127,6 +130,7 @@ def _tile_patches(a, x0, y0, T, patch):
     if flat.sum() < 2:
         return None
     g = g[flat]
+    tm = tm[flat]
     nrm = vec[flat, :, 0]
     # one orientation per normal: up for flat surfaces, else east (then north) - the sign only has to agree
     sgn = np.where(np.abs(nrm[:, 2]) > 0.2, np.sign(nrm[:, 2]),
@@ -144,7 +148,7 @@ def _tile_patches(a, x0, y0, T, patch):
     cz = (czc + zbase + 0.5) * patch + mz[flat]
     cen = np.stack([cx, cy, cz], 1)
     # pairs: entries are sorted by cube, then line (key order); pair i with i+s inside the same cube
-    out_la, out_lb, out_n, out_d, out_col = [], [], [], [], []
+    out_la, out_lb, out_n, out_d, out_col, out_ta, out_tb = [], [], [], [], [], [], []
     cos_max = math.cos(math.radians(MAX_ANGLE))
     for s_ in range(1, nl):
         if s_ >= len(cube):
@@ -168,14 +172,16 @@ def _tile_patches(a, x0, y0, T, patch):
         out_n.append(nn[ok])
         out_d.append(d[ok])
         out_col.append(col[i][ok])
+        out_ta.append(tm[i][ok])
+        out_tb.append(tm[j][ok])
     if not out_la:
         return None
     return (np.concatenate(out_la), np.concatenate(out_lb), np.concatenate(out_n), np.concatenate(out_d),
-            np.concatenate(out_col), n)
+            np.concatenate(out_col), n, np.concatenate(out_ta), np.concatenate(out_tb))
 
 
 def _column_median(col, absd, n):
-    """n x n grid (row = y) of the median |d| per cell; NaN where no patch."""
+    """n x n grid (row = y) of the median value (|d|, a time ...) per cell; NaN where no patch."""
     grid = np.full(n * n, np.nan, np.float32)
     if len(col):
         o = np.lexsort((absd, col))
@@ -222,10 +228,13 @@ def solve_shift(n, d):
 
 
 class Result:
-    def __init__(self, data, grids, pair_grids=None):
+    def __init__(self, data, grids, pair_grids=None, time_grids=None):
         self.data = data                  # json-able dict
         self.grids = grids                # tile key -> n x n float32 median |d| (m), every pair
         self.pair_grids = pair_grids or {}    # (tile key, a, b) -> the same for one pair
+        self.time_grids = time_grids or {}    # (tile key, a, b) -> (2, n, n) float32: median time of a's and b's
+        #                                       points per cell, s after data["t_base"]
+        self._areas = {}
         self._by_tile = {}
         for (k, a, b) in self.pair_grids:
             self._by_tile.setdefault(k, []).append((a, b))
@@ -263,6 +272,13 @@ class Result:
     def tiles(self):
         return list(self.grids)
 
+    def problem_areas(self, tol=DEFAULT_TOLERANCE):
+        """problem_areas(self, tol), cached per tolerance."""
+        k = round(float(tol), 4)
+        if k not in self._areas:
+            self._areas[k] = problem_areas(self, tol)
+        return self._areas[k]
+
     def is_current(self, project):
         return self.data.get("signature") == signature(project)
 
@@ -282,8 +298,11 @@ def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
         raise ValueError("the patch size must divide the tile size (%g m)" % T)
     keys = [k for k in st.keys() if int(st.counts.get(k, 0)) > 0]
     t0 = time.time()
+    t_starts = [float(l["t0"]) for l in project.lines if l.get("t0")]
+    tbase = math.floor(min(t_starts)) if t_starts else 0.0
     grids = {}
     pair_grids = {}
+    time_grids = {}
     pair_rows = {}                          # (a, b) -> list of (n, d)
     pair_count = {}
     hist_edges = np.r_[np.arange(0, 0.20001, 0.0005), 10.0]
@@ -296,7 +315,7 @@ def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
             return k, None
         i, j = parse_key(k)
         a = st.tile_array(k)
-        return k, _tile_patches(a, i * T, j * T, T, patch)
+        return k, _tile_patches(a, i * T, j * T, T, patch, tbase)
 
     workers = workers or max(1, min(8, (os.cpu_count() or 2) - 1))
     with ThreadPoolExecutor(max_workers=workers) as ex:
@@ -308,7 +327,7 @@ def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
                 progress(done[0] / max(1, len(keys)), "Line separation: tile %d of %d" % (done[0], len(keys)))
             if res is None:
                 continue
-            la, lb, nn, d, col, n = res
+            la, lb, nn, d, col, n, ta, tb = res
             ad = np.abs(d)
             grids[k] = _column_median(col, ad, n)
             hist += np.histogram(ad, hist_edges)[0]
@@ -317,6 +336,8 @@ def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
                 sel = np.flatnonzero(pk == p)
                 ab = (int(p // 65536), int(p % 65536))
                 pair_grids[(k,) + ab] = _column_median(col[sel], ad[sel], n)
+                time_grids[(k,) + ab] = np.stack([_column_median(col[sel], ta[sel], n),
+                                                  _column_median(col[sel], tb[sel], n)])
                 pair_count[ab] = pair_count.get(ab, 0) + len(sel)
                 if len(sel) > PAIR_SAMPLE // 4:
                     sel = rng.choice(sel, PAIR_SAMPLE // 4, replace=False)
@@ -348,7 +369,10 @@ def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
         m = np.array([x[0] for x in v], float)
         lines.append({"id": l, "name": names.get(l, "Line %d" % l), "pairs": len(v), "patches": int(w.sum()),
                       "median": float(np.sum(m * w) / w.sum())})
-    data = {"version": VERSION, "patch": patch, "signature": signature(project),
+    org = getattr(st, "origin", None)
+    data = {"version": VERSION, "patch": patch, "tile": T, "t_base": tbase,
+            "origin": [float(v) for v in org[:2]] if org is not None else [0.0, 0.0],
+            "signature": signature(project),
             "utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()), "seconds": round(time.time() - t0, 1),
             "tiles": len(keys), "tiles_with_overlap": len(grids), "patches": int(hist.sum()),
             "median": _hist_median(hist_edges, hist), "pairs": sorted(pairs, key=lambda p: -p["median"]),
@@ -356,9 +380,286 @@ def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
             "hist": {"edges": hist_edges.tolist(), "counts": hist.astype(int).tolist()},
             "settings": {"min_points": MIN_POINTS, "max_thickness": MAX_THICKNESS, "max_angle": MAX_ANGLE,
                          "max_sep": MAX_SEP}}
-    res = Result(data, grids, pair_grids)
+    res = Result(data, grids, pair_grids, time_grids)
     save(project, res)
     return res
+
+
+# --------------------------------------------------------------------------------------------- problem areas
+AREA_MIN_M2 = 4.0                 # smallest problem area (m2 of cells beyond twice the tolerance)
+MERGE_GAP_S = 1.0                 # s: problem areas of the same line this close in time are one
+AREA_MAX_SHARE = 0.5              # an area covering more of a pair's overlap is the whole pair, not a local area
+
+
+def _clusters(gx, gy):
+    """Labels of 8-connected clusters of integer cells."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    n = len(gx)
+    if n == 0:
+        return np.zeros(0, int)
+    key = gx.astype(np.int64) * 4_000_000 + gy.astype(np.int64)
+    o = np.argsort(key)
+    ks = key[o]
+    rows, cols = [], []
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            if dx == 0 and dy == 0:
+                continue
+            q = key + dx * 4_000_000 + dy
+            pos = np.searchsorted(ks, q)
+            pos = np.clip(pos, 0, n - 1)
+            hit = ks[pos] == q
+            rows.append(np.flatnonzero(hit))
+            cols.append(o[pos[hit]])
+    r = np.concatenate(rows)
+    c = np.concatenate(cols)
+    g = coo_matrix((np.ones(len(r)), (r, c)), shape=(n, n))
+    return connected_components(g, directed=False)[1]
+
+
+def problem_areas(res, tol=DEFAULT_TOLERANCE):
+    """Local areas where two lines disagree by more than twice the tolerance: per pair, 8-connected clusters of
+    such cells of at least AREA_MIN_M2 that cover less than AREA_MAX_SHARE of the pair's overlap (a whole pair
+    off is shown by the pair's median). Clusters of different pairs that share cells are one area; the line common
+    to all its pairs is the one at fault ("line"), else None. Largest first:
+    [{"id", "pairs": [(a, b)], "line", "lines", "x", "y" (project frame, m), "e", "n" (world), "bbox"
+      (x0, y0, x1, y1), "m2", "median", "max", "t0", "t1" (UTC s of the line at fault's points, or of every
+      line in the area)}]"""
+    T = float(res.data.get("tile", 50.0))
+    pt = res.patch
+    n = int(round(T / pt))
+    tb = float(res.data.get("t_base", 0.0))
+    lim = 2 * tol
+    cell_min = max(1, int(math.ceil(AREA_MIN_M2 / (pt * pt))))
+    per_pair = {}
+    for (k, a, b), g in res.pair_grids.items():
+        i, j = parse_key(k)
+        ok = np.isfinite(g)
+        cnt = int(ok.sum())
+        bad = ok & (g > lim)
+        rec = per_pair.setdefault((a, b), {"cells": 0, "gx": [], "gy": [], "v": [], "ta": [], "tb": []})
+        rec["cells"] += cnt
+        if not bad.any():
+            continue
+        iy, ix = np.nonzero(bad)
+        rec["gx"].append(i * n + ix)
+        rec["gy"].append(j * n + iy)
+        rec["v"].append(g[iy, ix])
+        tg = res.time_grids.get((k, a, b))
+        if tg is not None:
+            rec["ta"].append(tg[0][iy, ix])
+            rec["tb"].append(tg[1][iy, ix])
+        else:
+            rec["ta"].append(np.full(len(ix), np.nan, np.float32))
+            rec["tb"].append(np.full(len(ix), np.nan, np.float32))
+    raw = []
+    for (a, b), rec in per_pair.items():
+        if not rec["gx"]:
+            continue
+        gx, gy = np.concatenate(rec["gx"]), np.concatenate(rec["gy"])
+        v, ta, tbb = np.concatenate(rec["v"]), np.concatenate(rec["ta"]), np.concatenate(rec["tb"])
+        lab = _clusters(gx, gy)
+        for L in range(int(lab.max()) + 1 if len(lab) else 0):
+            m = lab == L
+            c = int(m.sum())
+            if c < cell_min or c > AREA_MAX_SHARE * max(1, rec["cells"]):
+                continue
+            raw.append({"pair": (a, b), "cells": set(zip(gx[m].tolist(), gy[m].tolist())), "v": v[m],
+                        "t": {a: ta[m], b: tbb[m]}})
+    # merge clusters of different pairs that share cells
+    owner = {}
+    parent = list(range(len(raw)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    for i, r in enumerate(raw):
+        for c in r["cells"]:
+            j = owner.setdefault(c, i)
+            if j != i:
+                parent[find(i)] = find(j)
+    groups = {}
+    for i in range(len(raw)):
+        groups.setdefault(find(i), []).append(raw[i])
+    org = res.data.get("origin", [0.0, 0.0])
+    blobs = []
+    for parts in groups.values():
+        cells = set().union(*[p["cells"] for p in parts])
+        pairs = sorted({p["pair"] for p in parts})
+        common = set(pairs[0])
+        for pr in pairs[1:]:
+            common &= set(pr)
+        line = next(iter(common)) if len(common) == 1 and len(pairs) > 1 else None
+        spans = {}
+        for p in parts:
+            for l, tv in p["t"].items():
+                if line is not None and l != line:
+                    continue
+                tv = tv[np.isfinite(tv)].astype(np.float64)
+                if len(tv):
+                    lo, hi = spans.get(l, (np.inf, -np.inf))
+                    spans[l] = (min(lo, float(tv.min()) + tb), max(hi, float(tv.max()) + tb))
+        blobs.append({"pairs": set(pairs), "line": line, "cells": cells, "v": [p["v"] for p in parts],
+                      "spans": spans})
+    # one area per stretch of a line: blobs with the same line at fault whose times overlap or nearly touch
+    # (the line's footprint can cross several separate places in the same seconds)
+    blobs.sort(key=lambda r: (r["line"] is None, r["line"] if r["line"] is not None else 0,
+                              min((s[0] for s in r["spans"].values()), default=0)))
+    merged = []
+    for bl in blobs:
+        m = merged[-1] if merged else None
+        if (m is not None and bl["line"] is not None and m["line"] == bl["line"] and bl["spans"] and m["spans"]
+                and bl["spans"][bl["line"]][0] <= m["spans"][m["line"]][1] + MERGE_GAP_S):
+            m["pairs"] |= bl["pairs"]
+            m["boxes"].append(bl["cells"])
+            m["cells"] = m["cells"] | bl["cells"]
+            m["v"] += bl["v"]
+            a0, a1 = m["spans"][m["line"]]
+            b0, b1 = bl["spans"][bl["line"]]
+            m["spans"][m["line"]] = (min(a0, b0), max(a1, b1))
+            continue
+        bl["boxes"] = [bl["cells"]]
+        merged.append(bl)
+    out = []
+    for bl in merged:
+        cells = bl["cells"]
+        pairs = sorted(bl["pairs"])
+        lines = sorted({l for pr in pairs for l in pr})
+        cx = np.array([c[0] for c in cells], float)
+        cy = np.array([c[1] for c in cells], float)
+        v = np.concatenate(bl["v"])
+        boxes = []
+        for cs in bl["boxes"]:
+            bx = np.array([c[0] for c in cs], float)
+            by = np.array([c[1] for c in cs], float)
+            boxes.append((float(bx.min() * pt), float(by.min() * pt), float((bx.max() + 1) * pt),
+                          float((by.max() + 1) * pt)))
+        big = max(bl["boxes"], key=len)
+        bx = np.array([c[0] for c in big], float)
+        by = np.array([c[1] for c in big], float)
+        x, y = float((bx.mean() + 0.5) * pt), float((by.mean() + 0.5) * pt)
+        spans = {int(l): sp for l, sp in sorted(bl["spans"].items(), key=lambda kv: kv[1][0])}
+        first = next(iter(spans.values()), (None, None))
+        out.append({"pairs": pairs, "line": bl["line"], "lines": lines, "x": x, "y": y,
+                    "e": x + float(org[0]), "n": y + float(org[1]),
+                    "bbox": (float(cx.min() * pt), float(cy.min() * pt), float((cx.max() + 1) * pt),
+                             float((cy.max() + 1) * pt)), "boxes": boxes,
+                    "m2": len(cells) * pt * pt, "median": float(np.median(v)), "max": float(v.max()),
+                    "spans": spans, "t0": first[0], "t1": first[1]})
+    out.sort(key=lambda r: -r["m2"] * r["median"])
+    for i, r in enumerate(out):
+        r["id"] = i + 1
+    return out
+
+
+def area_times_text(area, names, gps=False):
+    """'15:02:00.2-15:02:03.3' for the line at fault, else each line's: 'Line 3 15:02:00.2-..; Line 6 ...'."""
+    sp = area.get("spans") or {}
+    if not sp:
+        return "-"
+    f = (lambda a, b: gps_text(a, b).replace("GPS ", "").replace(" s of week", "")) if gps else \
+        (lambda a, b: "%s-%s" % (_hms(a), _hms(b)))
+    if area["line"] is not None or len(sp) == 1:
+        a, b = next(iter(sp.values()))
+        return f(a, b)
+    return "; ".join("%s %s" % (names.get(str(l), "Line %d" % (l + 1)), f(a, b)) for l, (a, b) in sp.items())
+
+
+def area_lines_text(area, names):
+    """'Line 3' when one line is at fault, else 'Line 1 / Line 3'."""
+    nm = lambda l: names.get(str(l), "Line %d" % (l + 1))      # noqa: E731
+    if area["line"] is not None:
+        return nm(area["line"])
+    return " / ".join(nm(l) for l in area["lines"])
+
+
+GPS_EPOCH = 315964800.0
+LEAP_SECONDS = 18                 # GPS - UTC since 2017
+
+
+def _hms(t):
+    return time.strftime("%H:%M:%S", time.gmtime(t)) + (".%d" % int(10 * (t % 1)))
+
+
+def time_text(t0, t1):
+    """'2026-10-20 15:00:02.0-15:00:02.9 UTC' (the date once)."""
+    if t0 is None:
+        return "-"
+    return "%s %s-%s UTC" % (time.strftime("%Y-%m-%d", time.gmtime(t0)), _hms(t0), _hms(t1))
+
+
+def gps_text(t0, t1):
+    """The same span in GPS seconds of the week (as in an SBET or PosPro)."""
+    if t0 is None:
+        return "-"
+    g = lambda t: (t - GPS_EPOCH + LEAP_SECONDS) % 604800.0      # noqa: E731
+    return "GPS %.1f-%.1f s of week" % (g(t0), g(t1))
+
+
+# --------------------------------------------------------------------------------------------- for PosPro
+FEEDBACK_SCHEMA = "dcs.problem_areas/1"
+FEEDBACK_NAME = "problem_areas.json"
+
+
+def gps_week_sow(t):
+    g = t - GPS_EPOCH + LEAP_SECONDS
+    return int(g // 604800), float(g % 604800)
+
+
+def feedback(project, res, tol=DEFAULT_TOLERANCE):
+    """The problem areas as PosPro reads them (dcs.problem_areas/1): where and when each line's points disagree
+    with the other lines, and the trajectory the points were georeferenced with."""
+    try:
+        from ..guide import installed_version
+        ver = installed_version()
+    except Exception:                           # noqa: BLE001
+        ver = ""
+    inp = project.data.get("inputs", {}) or {}
+    tr = inp.get("trajectory", {}) or {}
+    nm = res.data.get("names", {})
+    areas = []
+    for a in res.problem_areas(tol):
+        rec = {"id": a["id"], "line": nm.get(str(a["line"])) if a["line"] is not None else None,
+               "lines": [nm.get(str(l), str(l)) for l in a["lines"]],
+               "pairs": [[nm.get(str(x), str(x)) for x in pr] for pr in a["pairs"]],
+               "e": round(a["e"], 2), "n": round(a["n"], 2), "area_m2": round(a["m2"], 1),
+               "median_m": round(a["median"], 4), "max_m": round(a["max"], 4)}
+        times = []
+        for l, (t0, t1) in (a.get("spans") or {}).items():
+            w0, s0 = gps_week_sow(t0)
+            w1, s1 = gps_week_sow(t1)
+            times.append({"line": nm.get(str(l), str(l)), "utc": [round(t0, 2), round(t1, 2)], "gps_week": w0,
+                          "gps_sow": [round(s0, 2), round(s1 + (w1 - w0) * 604800, 2)]})
+        rec["times"] = times                # one entry: the line at fault; else one per line of the pair
+        if times:                           # the first, also at the top level
+            rec.update({k: times[0][k] for k in ("utc", "gps_week", "gps_sow")})
+        areas.append(rec)
+    return {"schema": FEEDBACK_SCHEMA, "written_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "by": "CloudPro %s" % ver, "measured_utc": res.data.get("utc"), "tolerance_m": tol,
+            "patch_m": res.patch, "crs": project.crs, "leap_seconds": LEAP_SECONDS,
+            "trajectory": {"source": tr.get("source"), "handover_id": tr.get("handover_id"),
+                           "description": tr.get("description")},
+            "current": res.is_current(project), "summary": verdict(res, tol), "areas": areas}
+
+
+def write_feedback(project, res, tol=DEFAULT_TOLERANCE):
+    """03_CloudPro/out/problem_areas.json (atomic). Not a handover: it does not finalize CloudPro or make any
+    stage stale; PosPro shows it in Review and the Trajectory editor. Returns the path or None."""
+    if project is None or res is None:
+        return None
+    try:
+        d = project.out_dir
+        path = os.path.join(d, FEEDBACK_NAME)
+        tmp = path + ".part"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(feedback(project, res, tol), f, indent=1)
+        os.replace(tmp, path)
+        return path
+    except OSError:
+        return None
 
 
 def _hist_median(edges, cnt):
@@ -378,6 +679,7 @@ def save(project, res):
     with open(tmp, "wb") as f:
         arrs = {("t" + k): v for k, v in res.grids.items()}
         arrs.update({("p%s_%d_%d" % kab): v for kab, v in res.pair_grids.items()})
+        arrs.update({("q%s_%d_%d" % kab): v for kab, v in res.time_grids.items()})
         np.savez_compressed(f, **arrs)
     os.replace(tmp, os.path.join(d, "grids.npz"))
     tmp = os.path.join(d, "separation.json.part")
@@ -394,14 +696,14 @@ def load(project):
         if data.get("version") != VERSION:
             return None
         with np.load(os.path.join(d, "grids.npz")) as z:
-            grids, pg = {}, {}
+            grids, pg, tg = {}, {}, {}
             for k in z.files:
                 if k[0] == "t":
                     grids[k[1:]] = z[k]
                 else:
                     i, j, a, b = k[1:].split("_")
-                    pg[("%s_%s" % (i, j), int(a), int(b))] = z[k]
-        return Result(data, grids, pg)
+                    (pg if k[0] == "p" else tg)[("%s_%s" % (i, j), int(a), int(b))] = z[k]
+        return Result(data, grids, pg, tg)
     except (OSError, ValueError, KeyError):
         return None
 
@@ -425,15 +727,25 @@ def verdict(res, tol=DEFAULT_TOLERANCE):
     def who(p):
         return "%s / %s" % (nm.get(str(p["a"]), p["a"]), nm.get(str(p["b"]), p["b"]))
     worst = max(res.pairs, key=lambda p: p["median"])
+    areas = res.problem_areas(tol)
+    if areas:
+        at = sorted({area_lines_text(a, nm) for a in areas})
+        local = " %d local problem area%s (%s)." % (len(areas), "" if len(areas) == 1 else "s", ", ".join(at[:4])
+                                                    + (" ..." if len(at) > 4 else ""))
+    else:
+        local = ""
     if worst["median"] <= tol:
+        if areas:
+            return ("Lines agree within %.0f cm (largest median %.1f cm, %s), except%s"
+                    % (100 * tol, 100 * worst["median"], who(worst), local))
         return "Lines agree within %.0f cm (largest median %.1f cm, %s)." % (100 * tol, 100 * worst["median"], who(worst))
     varying = [p for p in res.pairs if p["median"] > tol and p["rest"] > tol]
     if varying:
         v = max(varying, key=lambda p: p["rest"])
         return ("Largest median %.1f cm (%s); %.1f cm remains after a constant shift (%s): the error changes along "
-                "the line." % (100 * worst["median"], who(worst), 100 * v["rest"], who(v)))
-    return ("Largest median %.1f cm (%s); a constant shift per line would bring every pair within %.0f cm."
-            % (100 * worst["median"], who(worst), 100 * tol))
+                "the line.%s" % (100 * worst["median"], who(worst), 100 * v["rest"], who(v), local))
+    return ("Largest median %.1f cm (%s); a constant shift per line would bring every pair within %.0f cm.%s"
+            % (100 * worst["median"], who(worst), 100 * tol, local))
 
 
 def report_lines(res, tol=DEFAULT_TOLERANCE, project_name=""):
@@ -455,6 +767,16 @@ def report_lines(res, tol=DEFAULT_TOLERANCE, project_name=""):
             ("%s / %s" % (nm.get(str(p["a"]), p["a"]), nm.get(str(p["b"]), p["b"])))[:24],
             "{:,}".format(p["patches"]), _cm(p["median"]), _cm(p["p95"]), _cm(s[0], True), _cm(s[1], True),
             _cm(s[2], True), _cm(p["rest"]), p["walls"]))
+    areas = res.problem_areas(tol)
+    L += ["", "Problem areas (local, beyond %.0f cm; the line at fault when the area shows in several pairs):"
+          % (200 * tol)]
+    if not areas:
+        L.append("    none")
+    for a in areas:
+        day = time.strftime("%Y-%m-%d", time.gmtime(a["t0"])) + " " if a["t0"] else ""
+        L.append("  #%-3d %-22s E %.1f N %.1f  %5.0f m2  median %s cm, max %s cm  %s%s UTC  (GPS %s s of week)" % (
+            a["id"], area_lines_text(a, nm)[:22], a["e"], a["n"], a["m2"], _cm(a["median"]), _cm(a["max"]),
+            day, area_times_text(a, nm), area_times_text(a, nm, gps=True)))
     L += ["", "Per line (median against the lines it overlaps, weighted by patches), cm:"]
     for l in res.lines:
         L.append("%-24s %7s  (%d pair%s)" % (l["name"][:24], _cm(l["median"]), l["pairs"], "" if l["pairs"] == 1 else "s"))

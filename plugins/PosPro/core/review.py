@@ -53,7 +53,7 @@ DEFAULTS = {
 }
 KIND_LABEL = {"solution": "Solution type", "sd_h": "Horizontal σ", "sd_v": "Vertical σ",
               "sep_h": "Fwd/bwd separation", "imu_only": "IMU only", "heading": "Heading σ",
-              "manual": "Selected by hand"}
+              "manual": "Selected by hand", "cloud": "Point cloud"}
 ACTION_LABEL = {"exclude": "Bridged with IMU", "poor": "Marked poor", "interpolate": "Interpolated",
                 "reject": "Rejected", "accept": "Accepted"}
 METHODS = {"smooth": "smooth curve", "straight": "straight line"}
@@ -158,11 +158,24 @@ def unit(kind):
     return {"solution": "", "sd_h": "m", "sd_v": "m", "sep_h": "m", "imu_only": "s", "heading": "°"}.get(kind, "")
 
 
+def listed(project):
+    """Every window on the review list: the stored anomalies (found by the limits, selected by hand) and the
+    problem areas CloudPro found in the point cloud (PosPro 2.2.0, read from its file, not stored), by time."""
+    from . import cloudareas
+    th = state(project)["thresholds"]
+    out = list(state(project)["anomalies"]) + cloudareas.anomalies(
+        project, (float(th.get("extend_before_s", 0)), float(th.get("extend_after_s", 0))))
+    return sorted(out, key=lambda x: x["t0"])
+
+
 def describe_max(a):
     if a["kind"] == "solution":
         return {0: "fixed", 1: "float", 2: "PPP", 3: "DGNSS", 4: "single", 6: "none"}.get(int(round(a["max"])), "")
     if a["kind"] == "manual":
         return ""
+    if a["kind"] == "cloud":
+        from . import cloudareas
+        return cloudareas.describe(a)
     return "%.3f %s" % (a["max"], unit(a["kind"]))
 
 
