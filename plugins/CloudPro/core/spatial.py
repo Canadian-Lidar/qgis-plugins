@@ -1,5 +1,7 @@
 """Spatial helpers shared by the filters: grids, voxels, neighbour queries,
 connected components and batched local geometry."""
+import math
+
 import numpy as np
 
 try:
@@ -64,6 +66,61 @@ def group_median(ids, n, v):
 def tree(xyz):
     need_scipy()
     return cKDTree(xyz, leafsize=32, balanced_tree=False, compact_nodes=False)
+
+
+CHUNK = 2_000_000          # queries per block: bounded memory however many points
+
+
+def fewer_than(tr, q, r, kmin):
+    """For each query point: fewer than kmin other points within r (r scalar or per point)?
+
+    The same answer as query_ball_point(q, r, return_length=True) - 1 < kmin, but from the kmin + 1 nearest
+    points: the cost no longer grows with the density (counting every neighbour within r took thousands of
+    neighbours per point on a dense facade). Queried in blocks, so memory stays bounded."""
+    q = np.asarray(q, np.float64)
+    r = np.broadcast_to(np.asarray(r, np.float64), (len(q),))
+    out = np.zeros(len(q), bool)
+    k = int(kmin) + 1
+    todo = np.arange(len(q))
+    # exact shortcut: two points in one cube of side a are within a * sqrt(3); a query point whose cube (side
+    # min(r) / sqrt(3)) holds k tree points (itself included when it is in the tree) has kmin others within r
+    rmin = float(r.min()) if len(r) else 0.0
+    if len(q) > 50_000 and rmin > 0:
+        dense = _dense_cells(tr.data, q, rmin / math.sqrt(3.0) * (1 - 1e-9), k)
+        todo = np.flatnonzero(~dense)
+    for s in range(0, len(todo), CHUNK):
+        ii = todo[s:s + CHUNK]
+        d, _ = tr.query(q[ii], k=k, workers=-1)
+        d = d.reshape(len(d), -1)
+        out[ii] = d[:, k - 1] > r[ii]
+    return out
+
+
+def _dense_cells(data, q, a, need):
+    """For each query point: does its cube of side a (grid anchored at the data's minimum) hold at least
+    `need` data points? (The neighbour count it stands in for includes the query point itself when it is one
+    of the data points, exactly as the count within r does.)"""
+    lo = data.min(0)
+    cd = np.floor((data - lo) / a).astype(np.int64)
+    cq = np.floor((q - lo) / a).astype(np.int64)
+    dims = np.maximum(cd.max(0), cq.max(0)) + 1
+    if float(dims[0]) * dims[1] * dims[2] > 9e18:
+        return np.zeros(len(q), bool)
+    kd = (cd[:, 0] * dims[1] + cd[:, 1]) * dims[2] + cd[:, 2]
+    kq = (cq[:, 0] * dims[1] + cq[:, 1]) * dims[2] + cq[:, 2]
+    u, c = np.unique(kd, return_counts=True)
+    pos = np.clip(np.searchsorted(u, kq), 0, len(u) - 1)
+    return (u[pos] == kq) & (c[pos] >= need)
+
+
+def mean_knn_distance(tr, q, k):
+    """Mean distance to the k nearest other points (the first neighbour is the point itself), in blocks."""
+    q = np.asarray(q, np.float64)
+    out = np.empty(len(q), np.float64)
+    for s in range(0, len(q), CHUNK):
+        d, _ = tr.query(q[s:s + CHUNK], k=k + 1, workers=-1)
+        out[s:s + CHUNK] = d[:, 1:].mean(1)
+    return out
 
 
 def knn(tr, q, k):

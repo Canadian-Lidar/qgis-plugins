@@ -111,9 +111,38 @@ def test_ray_dedup():
     print("ray de-duplication: same voxels as np.unique: OK")
 
 
+def test_neighbour_count():
+    """Weather (DROR/LIOR/DIOR) and ROR: the nearest-neighbour test with the dense-cube shortcut gives exactly
+    the answer of counting every neighbour within r, and does not slow down with density."""
+    import time
+    from CloudPro.core import spatial as sp
+    r = np.random.default_rng(4)
+    wall = np.column_stack([r.uniform(0, 40, 1_500_000), 30 + r.normal(0, 0.01, 1_500_000),
+                            r.uniform(0, 10, 1_500_000)])                 # ~3,750 points / m2
+    noise = r.uniform([0, 0, -2], [40, 40, 20], (100_000, 3))
+    data = np.concatenate([wall, noise])
+    tr = sp.tree(data)
+    q = np.concatenate([data[::2], r.uniform([0, 0, -2], [40, 40, 20], (20_000, 3))])   # some not in the tree
+    rad = np.maximum(0.04, r.uniform(0, 0.4, len(q)))
+    for kmin in (1, 3, 8):
+        t = time.time()
+        ref = tr.query_ball_point(q, rad, workers=-1, return_length=True) - 1 < kmin
+        t_ref = time.time() - t
+        t = time.time()
+        got = sp.fewer_than(tr, q, rad, kmin)
+        t_new = time.time() - t
+        assert np.array_equal(ref, got), kmin
+        print("neighbour count kmin=%d: identical (%d of %d too few), %.2f s -> %.2f s: OK"
+              % (kmin, ref.sum(), len(q), t_ref, t_new))
+    d, _ = tr.query(q[:50_000], k=13, workers=-1)
+    assert np.allclose(d[:, 1:].mean(1), sp.mean_knn_distance(tr, q[:50_000], 12))
+    print("SOR mean distance in blocks: identical: OK")
+
+
 if __name__ == "__main__":
     test_disk_opening()
     test_smrf_same()
     test_grid_stats()
     test_ray_dedup()
+    test_neighbour_count()
     print("test_filter_speed: OK")

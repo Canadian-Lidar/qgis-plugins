@@ -2174,6 +2174,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.after_edit()
 
     def after_edit(self):
+        self._edit_rev = getattr(self, "_edit_rev", 0) + 1     # a preview from before this edit is stale
         self._col_cache = {}
         self._fill_classes()
         self.refresh_views()
@@ -2385,10 +2386,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._prev_pending = True
             return
         g = F.FilterGroup.from_dict(self.filters.group.to_dict())
-        scope = self._scope_mask(self.filters.cmb_scope.currentText())
+        scope_name = self.filters.cmb_scope.currentText()
+        scope = self._scope_mask(scope_name)
         ps = self.ps
         flag = [False]
         self._prev_cancel = flag
+        self._prev_key = (repr(g.to_dict()), scope_name, id(ps), getattr(self, "_edit_rev", 0))
         ref, tracks, origin = self._reference(), self.tracks, self._origin()
         self.filters.set_status("Preview running...")
 
@@ -2420,6 +2423,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if ps is not self.ps:
             return
         self.preview = ctx
+        self.preview_key = getattr(self, "_prev_key", None)
         newly = int((((ctx.flag & REJECTED) != 0) & ~self.ps.rejected).sum())
         reacc = int((((ctx.flag & REJECTED) == 0) & self.ps.rejected).sum())
         ncls = int((ctx.cls != self.ps.cls).sum())
@@ -2459,6 +2463,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.edits is None or self.filters.group is None or self._guard("running another filter"):
             return
         g = F.FilterGroup.from_dict(self.filters.group.to_dict())
+        if scope in ("Inspection Area", "Slice"):
+            # the live preview already ran exactly this group on these points: use its result, no second run
+            key = (repr(g.to_dict()), scope, id(self.ps), getattr(self, "_edit_rev", 0))
+            if self.preview is not None and self._prev_cancel is None and getattr(self, "preview_key", None) == key:
+                self.accept_preview()
+                return
+        # never two runs of a group at once: a preview still computing is stopped (it would share the cores and
+        # double the memory)
+        if self._prev_cancel is not None:
+            self._prev_cancel[0] = True
+            self._prev_pending = False
+        if self.filters.btn_prev.isChecked():
+            self.clear_preview(refresh=False)
+            self.filters.preview_done()
         if scope in ("Inspection Area", "Slice"):
             mask = self._scope_mask(scope)
             ps = self.ps
@@ -2714,8 +2732,15 @@ class MainWindow(QtWidgets.QMainWindow):
             if act is not None:
                 self.project.record_filter(self.filters.group.to_dict(), self.filters.cmb_scope.currentText(),
                                            act.size)
-            self.filters.set_status("%s points changed%s" % ("{:,}".format(act.size if act else 0),
-                                                             ("\n" + "\n".join(ctx.messages)) if ctx.messages else ""))
+            tim = getattr(ctx, "timings", [])
+            ttxt = ("%s points in %.1f s: " % ("{:,}".format(len(ps)), sum(t for _n, t in tim)) +
+                    ", ".join("%s %.1f s" % (n, t) for n, t in tim)) if tim else ""
+            self.filters.set_status("%s points changed%s%s" % ("{:,}".format(act.size if act else 0),
+                                                               ("\n" + ttxt) if ttxt else "",
+                                                               ("\n" + "\n".join(ctx.messages)) if ctx.messages else ""))
+            if ttxt:
+                self.project.log("Filter '%s' on the %s: %s" % (self.filters.group.name,
+                                                               self.filters.cmb_scope.currentText().lower(), ttxt))
             self.after_edit()
         elif tag == "filter_tiled":
             self.filters.set_status("%s points changed" % "{:,}".format(res))
