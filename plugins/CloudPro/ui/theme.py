@@ -4,7 +4,8 @@ what only CloudPro's views need (view background, fonts for the painted
 views, the main-window tool bars and status bar) on top of it."""
 from dcs_core import theme as _t
 from dcs_core.theme import (ACCENT, AMBER, BG, BLUE, BORDER, BRIGHT, DIM, FIELD, MAPLE, RED, SURF, SURF2,  # noqa: F401
-                            TEXT, VIOLET, dark_menu, font, mark, msg_info, msg_question, msg_warn, polish)
+                            TEXT, VIOLET, dark_menu, font, get_text, mark, msg_info, msg_question, msg_warn,
+                            polish)
 
 VIEW_BG = (42, 45, 49)          # dcs_core.theme.VIEW_BG
 UI = _t.UI
@@ -68,3 +69,18 @@ def mono(size=11):
 
 def ui_font(size=12, bold=True):
     return _t.font("ui", size, 700 if bold else 500)
+
+
+def get_number(parent, title, label, value, lo, hi, decimals=1):
+    """A themed number box (QInputDialog.getDouble drew dark text on a light box on Windows 11): (value, ok)."""
+    from qgis.PyQt.QtWidgets import QDialog, QInputDialog
+    d = QInputDialog(parent)
+    d.setWindowTitle(title)
+    d.setLabelText(label)
+    d.setInputMode(QInputDialog.InputMode.DoubleInput)
+    d.setDoubleRange(lo, hi)
+    d.setDoubleDecimals(decimals)
+    d.setDoubleValue(value)
+    _t._dark(d)
+    ok = d.exec() == QDialog.DialogCode.Accepted
+    return d.doubleValue(), ok

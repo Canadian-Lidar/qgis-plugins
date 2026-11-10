@@ -280,7 +280,8 @@ class CloudProPlugin:
         if win is None:
             return
         if win.project is None:
-            QtWidgets.QMessageBox.information(self.iface.mainWindow(), "CloudPro", "Open a project first.")
+            from .ui import theme
+            theme.msg_info(self.iface.mainWindow(), "CloudPro", "Open a project first.")
             return
         canvas = self.iface.mapCanvas()
         if self.maptool is None:
