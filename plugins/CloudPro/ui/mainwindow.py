@@ -2343,8 +2343,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_linked(key, pt)
 
     def _set_linked(self, source, pt):
-        """Mark pt (x, y, z or None) in every view but the source: a cross on the point, or a dashed vertical line
-        where the view does not hold it (outside the slice, or no height)."""
+        """Mark pt (x, y, z or None) in every view but the source: a cross on the point in the Plan and the 3D view
+        (a dashed vertical line in 3D when there is no height), and always a dashed vertical line at its place
+        across the slice in the Slice view (Sean's choice, 10 Nov 2026)."""
         marks = {"plan": None, "slice": None, "3d": None}
         if pt is not None and self.box:
             x, y, z = pt
@@ -2355,9 +2356,8 @@ class MainWindow(QtWidgets.QMainWindow):
             along, pos, th, _full = self._slice()
             a_ = u if along else w
             inside = abs(u) <= b["length"] / 2 + 1e-6 and abs(w) <= b["width"] / 2 + 1e-6
-            in_slab = abs((w if along else u) - pos) <= th / 2 + 1e-6
             if inside:
-                marks["slice"] = ("plus", a_, z) if (z is not None and in_slab) else ("line", a_)
+                marks["slice"] = ("line", a_)        # Sean: the Slice always shows a vertical line (HYPACK style)
             if z is not None:
                 marks["3d"] = ("plus", (x, y, z))
             elif inside and len(self.ps):

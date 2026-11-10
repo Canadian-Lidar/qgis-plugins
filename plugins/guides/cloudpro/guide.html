@@ -36,7 +36,7 @@
 <div style="break-inside:avoid"><h2>What is new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
-<tr><td><b>2.1.0</b></td><td><b>Linked cursor:</b> the point under the mouse in one view is marked in the other two, with a cross on the same point or a dashed vertical line where that view does not hold it (<a href="#views">Views and navigation</a>).</td></tr>
+<tr><td><b>2.1.0</b></td><td><b>Linked cursor:</b> the point under the mouse in one view is marked in the other two: a cross on it in the Plan and the 3D view, a dashed vertical line at its place in the Slice (<a href="#views">Views and navigation</a>).</td></tr>
 <tr><td><b>2.0.3</b></td><td>Each view keeps its own colour ramp and point size (they changed every view); a linked view follows the ramp of the view it is linked to. The Plan, Slice and 3D titles are the same size as the panel titles, with each view's controls right after its title. The Classification legend shows the class names without their numbers. The small window showing <i>PosPro trajectory · AlignPro calibration</i> no longer pops up (that text is the Georeference step's tooltip).</td></tr>
 <tr><td><b>2.0.2</b></td><td>Class colours without clashes: every class colour is clearly different from every other one and from the rejected (magenta), preview (orange, green) and selected (white) colours. Class 15 (transmission tower) is blue, road markings (68) pale cyan instead of white, and 0, 3, 5, 10, 11, 13, 19, 20, 65, 66, 69, 70, 71 and the unlisted classes changed slightly or more (table in Classes).</td></tr>
 <tr><td><b>2.0.1</b></td><td>Class 7 (low point, noise) is dark red instead of magenta, so it is not mistaken for rejected points when a view is coloured by Classification.</td></tr>
@@ -211,8 +211,8 @@
 <h1 id="views"><span class="num">{N}</span>Views and navigation</h1>
 
 <h2 id="linked">Linked cursor</h2>
-<p>Move the mouse over a point in any view and the other two views show the same point: a white <b>cross</b> on it where that view holds it, or a dashed <b>vertical line</b> at its place where it does not (a point outside the current slice, or empty ground under the mouse in the Plan, which has no height there). In the Plan the point is the one drawn under the mouse (the top one); in the Slice the nearest one; in the 3D view the nearest visible one, within 10 pixels. The marks go when the mouse leaves the view.</p>
-<figure class="h55"><img src="fig/linked_cursor.png"><figcaption><b>Figure {N}.1</b> The mouse on a point in the Slice: the cross marks it in the Plan and the 3D view.</figcaption></figure>
+<p>Move the mouse over a point in any view and the other two views show the same point: a white <b>cross</b> on it in the Plan and the 3D view, and a dashed <b>vertical line</b> at its place across the slice in the Slice view (whether the point is in the current slice or not). Over empty ground in the Plan, which has no height there, the 3D view shows a vertical line too. In the Plan the point is the one drawn under the mouse (the top one); in the Slice the nearest one; in the 3D view the nearest visible one, within 10 pixels. The marks go when the mouse leaves the view.</p>
+<figure class="h55"><img src="fig/linked_cursor.png"><figcaption><b>Figure {N}.1</b> The mouse on a point in the Plan: a cross marks it in the 3D view, a dashed vertical line in the Slice.</figcaption></figure>
 
 <h2>Plan</h2>
 <figure class="h66"><img src="fig/plan.png"><figcaption><b>Figure {N}.2</b> The Plan: the project grid (mean height, hill shaded), the two drive lines L1 and L2, the Inspection Area with its handles under the mouse, the two lines of the slice, and the legend of the points (left).</figcaption></figure>

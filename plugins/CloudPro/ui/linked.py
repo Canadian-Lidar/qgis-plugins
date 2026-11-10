@@ -1,8 +1,8 @@
 """The linked cursor (CloudPro 2.1.0): the point under the mouse in one view is marked in the other two.
 
-    +  a cross around the same point (it is in that view)
-    |  a dashed vertical line at its position when the view does not hold that point (outside the slice, or the
-       mouse is over empty ground in the Plan): where it is along that view
+    +  a cross around the same point in the Plan and the 3D view
+    |  a dashed vertical line at its place in the Slice view (always), and in the 3D view when the mouse is over
+       empty ground in the Plan (no height)
 """
 from ..qt import QtCore, QtGui, Qt
 

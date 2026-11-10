@@ -61,6 +61,9 @@ off = np.flatnonzero(np.abs(u - pos) > th * 3 if not along else np.abs(w - pos) 
 k = int(off[len(off) // 2])
 win._set_linked("plan", (float(ps.x[k]), float(ps.y[k]), float(ps.z[k])))
 assert win.slice.linked[0] == "line", win.slice.linked
+win._set_linked("3d", pt)                                          # a point in the slice: a line too (Sean)
+assert win.slice.linked[0] == "line"
+win._set_linked("plan", (float(ps.x[k]), float(ps.y[k]), float(ps.z[k])))
 assert win.v3d.linked[0] == "plus" and win.plan.linked is None
 print("Plan (outside the slice) → Slice: vertical line; 3D: cross")
 
