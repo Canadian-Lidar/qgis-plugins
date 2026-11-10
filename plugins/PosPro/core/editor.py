@@ -86,7 +86,7 @@ class Track:
         st = np.zeros(len(self.t), dtype=np.int8)
         code = {"interpolate": STATE_INTERP, "poor": STATE_POOR, "exclude": STATE_EXCL, "accept": STATE_ACCEPT,
                 "reject": STATE_OPEN}
-        for a in r["anomalies"]:
+        for a in review.listed(project):
             if review.edit_for(project, a["t0"], a["t1"]) is None:
                 st[self.span(a["t0"], a["t1"])] = STATE_OPEN
         for e in r["edits"]:

@@ -26,6 +26,7 @@ from .plots import TimePlot
 STATE_COLOURS = {editor.STATE_GOOD: theme.GREEN, editor.STATE_OPEN: theme.RED, editor.STATE_INTERP: theme.VIOLET,
                  editor.STATE_POOR: theme.AMBER, editor.STATE_EXCL: theme.BLUE, editor.STATE_ACCEPT: "#8ef0cf"}
 SEL = QColor("#ffd84d")
+CLOUD = QColor("#ff6ec7")        # problem areas found in the point cloud (CloudPro), 2.2.0
 ANT1, ANT2, ANT_MEAS = "#00e5aa", "#3ab4f2", "#ff9a3c"
 HOVER = QColor("#e3e7ea")
 MARK = QColor("#f5a623")
@@ -168,8 +169,29 @@ class PlanView(QWidget):
                 p.drawRect(QRectF(min(ax, bx), min(ay, by), abs(bx - ax), abs(by - ay)))
             else:
                 p.drawPolygon(QPolygonF([QPointF(x, y) for x, y in self._shape]))
+        self._cloud_marks(p)
         self._scalebar(p)
         self._legend(p)
+
+    def _cloud_marks(self, p):
+        """Problem areas found in the point cloud: the stretch outlined in pink with its label (C1 ...)."""
+        tr = self.track
+        for lab, a, b in getattr(self, "cloud_spans", []):
+            sl = tr.span(a, b)
+            if sl.stop <= sl.start:
+                continue
+            xs, ys = self.to_screen(tr.fe[sl], tr.fn[sl])
+            if not len(xs):
+                continue
+            p.setPen(QPen(QColor(0, 0, 0, 200), 7))
+            p.drawPolyline(QPolygonF([QPointF(x, y) for x, y in zip(xs, ys)]))
+            p.setPen(QPen(CLOUD, 3.5))
+            p.drawPolyline(QPolygonF([QPointF(x, y) for x, y in zip(xs, ys)]))
+            m = len(xs) // 2
+            r = QRectF(xs[m] + 8, ys[m] - 18, 10 + 8 * len(lab), 16)
+            p.fillRect(r, QColor(0, 0, 0, 210))
+            p.setPen(CLOUD)
+            p.drawText(r, _af(Qt.AlignmentFlag.AlignCenter), lab)
 
     def _lines(self, p, idx, vals, cols, ex, ny):
         tr = self.track
@@ -474,6 +496,7 @@ class ProfilePlot(TimePlot):
         super().__init__("Height", "m", parent)
         self.select_mode = False
         self.sel_windows = []
+        self.cloud_windows = []          # (label, t0, t1): problem areas found in the point cloud
         self._sel_drag = None
         self.setMinimumHeight(170)
 
@@ -483,6 +506,17 @@ class ProfilePlot(TimePlot):
             return
         p = QPainter(self)
         pr = self._plot_rect()
+        for lab, a, b in self.cloud_windows:
+            if b < self.x0 or a > self.x1:
+                continue
+            xa, xb = self._tx(max(a, self.x0), pr), self._tx(min(b, self.x1), pr)
+            c = QColor(CLOUD)
+            c.setAlpha(40)
+            p.fillRect(QRectF(xa, pr.top(), max(2.0, xb - xa), pr.height()), c)
+            p.setPen(QPen(CLOUD, 1.2, Qt.PenStyle.DashLine))
+            p.drawRect(QRectF(xa, pr.top() + 1, max(2.0, xb - xa), pr.height() - 2))
+            p.setPen(CLOUD)
+            p.drawText(QRectF(xa + 3, pr.top() + 3, 60, 14), _af(Qt.AlignmentFlag.AlignLeft), lab)
         wins = list(self.sel_windows)
         if self._sel_drag is not None:
             a, b = self._sel_drag
@@ -799,6 +833,10 @@ class TrajectoryEditor(PluginWindow):
                 c = QColor(STATE_COLOURS[s])
                 c.setAlpha(46)
                 pl.add_band(float(tr.t[a]), float(tr.t[b - 1]), c)
+        from ..core import cloudareas
+        spans = [(a["id"], a["t0"], a["t1"]) for a in cloudareas.anomalies(self.project)]
+        pl.cloud_windows = spans
+        self.plan.cloud_spans = spans
         if keep_range and x0 is not None:
             pl.set_xrange(x0, x1)
         else:
@@ -869,7 +907,7 @@ class TrajectoryEditor(PluginWindow):
         r = review.state(p)
         rows = []
         seen = {}
-        for a in r["anomalies"]:
+        for a in review.listed(p):
             key = (round(a["t0"], 1), round(a["t1"], 1))
             if key in seen:
                 k = seen[key]
