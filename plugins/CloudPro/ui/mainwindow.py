@@ -36,6 +36,11 @@ from .viewpanes import PlanPane, SlicePane, View3DPane
 
 PLUGIN = "CloudPro"
 CLASS_SHORTLIST = [1, 2, 3, 4, 5, 6, 7, 9, 11, 14, 18, 64, 65, 66, 67, 68, 69, 70, 71]
+def engine_status():
+    from ..core import engine
+    return engine.status()
+
+
 SCALAR_MODES = ("Height", "Intensity", "Intensity (range normalised)", "Time", "Range")
 
 
@@ -1441,8 +1446,10 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self.clear_preview(refresh=False)
             ps = PointSet.from_store(self.project.store, self.box)
-            if len(ps):
+            t_read = time.time()
+            if len(ps):                                  # random order: any first part is an even sample (panning)
                 ps = ps.subset(np.random.default_rng(int(len(ps)) % 9973).permutation(len(ps)))
+            t_mix = time.time()
             self.ps = ps
             self.edits.ps = ps
             self.selected = None
@@ -1450,11 +1457,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self._col_cache = {}
             self._ranges = {}
             self._fill_classes()
+            t_prep = time.time()
             self.refresh_views(fit=fit)
             self._area_info()
+            t_draw = time.time()
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
-        self.status("Loaded %s points in %.2f s" % ("{:,}".format(len(self.ps)), time.time() - t), 4000)
+        # where the time went, for comparing machines and data (also in the History log)
+        msg = "Loaded %s points in %.1f s (read %.1f, order %.1f, prepare %.1f, draw %.1f; %s)" % (
+            "{:,}".format(len(self.ps)), time.time() - t, t_read - t, t_mix - t_read, t_prep - t_mix, t_draw - t_prep,
+            engine_status())
+        self.status(msg, 15000)
+        if time.time() - t > 2.0:                        # slow loads only: stepping the area would flood History
+            self.project.log(msg)
 
     # ================================================================ navigation
     def _slice_half(self):

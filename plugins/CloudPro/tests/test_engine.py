@@ -201,6 +201,71 @@ def check_line_counts():
     print("RANSAC scores: 64 candidates identical")
 
 
+def check_rasters():
+    """View drawing in the engine: Plan / Slice identical to numpy's sort-based drawing at point size 1; at larger
+    sizes every pixel shows the highest point covering it; 3D picks the nearest point per pixel."""
+    from CloudPro.ui import render
+    rng = np.random.default_rng(11)
+    n, W, H = 600_000, 640, 480
+    sx = rng.uniform(-20, W + 20, n).astype(np.float32)
+    sy = rng.uniform(-20, H + 20, n).astype(np.float32)
+    key = np.round(rng.normal(30, 4, n), 2).astype(np.float32)          # ties on purpose
+    col = rng.integers(0, 2 ** 32, n, dtype=np.uint64).astype(np.uint32) | np.uint32(0xFF000000)
+    real = render._engine
+    render._engine = lambda: None
+    try:
+        ref = render.rasterise(sx, sy, key, col, W, H, 1)
+        bn, dn, nn = render.rasterise_nearest(sx, sy, key, col, W, H, 1)
+    finally:
+        render._engine = real
+    got = engine.raster_top(sx, sy, key, col, W, H, 1)
+    assert (ref == got).all()
+    big = engine.raster_top(sx, sy, key, col, W, H, 3)
+    ix, iy = sx.astype(np.int32), sy.astype(np.int32)
+    p = (iy * W + ix)[(ix >= 1) & (iy >= 1) & (ix < W - 1) & (iy < H - 1)][:2000]
+    assert (big.ravel()[p] != 0xFF09100F).all()
+    an, de, ne = engine.raster_near(sx, sy, key, col, W, H, 1)
+    assert ne == nn and np.isfinite(de).sum() == np.isfinite(dn).sum()
+    fin = np.isfinite(de)
+    assert np.allclose(de[fin], dn[fin], atol=0.01)                      # numpy rounds depths to 16 bits
+    print("view drawing: Plan / Slice identical to numpy at size 1, 3D nearest point per pixel (%d visible)" % ne)
+
+
+def check_load():
+    """Inspection Area loading: the same points in the same order as the per-point numpy test, for boxes that
+    contain whole tiles, cut tiles diagonally and use a height range."""
+    import math
+    from CloudPro.core import pointset as PS
+    dcs, p = _job.fresh_job("engl")
+    IM.import_chain(p, chain.resolve(dcs), IM.ImportOptions(threads=2))
+    tr = p.tracks()
+    t = tr[sorted(tr)[0]]
+    m = len(t["t"]) // 2
+    real = engine._lib
+    for L, W, db, zr in ((105, 35, 0, None), (400, 120, 37, None), (200, 60, 90, (-3.0, 4.0)), (300, 300, 0, None)):
+        box = dict(cx=float(t["E"][m]), cy=float(t["N"][m]), length=L, width=W,
+                   bearing=(math.degrees(float(t["heading"][m])) + db) % 360)
+        a = PS.PointSet.from_store(p.store, box, zr)
+        engine._lib, engine._why = None, "test"
+        try:
+            b = PS.PointSet.from_store(p.store, box, zr)
+        finally:
+            engine._lib, engine._why = real, ""
+        assert len(a) > 0 and np.array_equal(a.code, b.code) and np.array_equal(a.z, b.z), (L, W, db)
+    # the numpy path of 1.9.4 tested every point of every tile in the box's north-aligned extent: same answer
+    box = dict(cx=float(t["E"][m]), cy=float(t["N"][m]), length=400, width=120, bearing=37.0)
+    cor = PS.rect_corners(box["cx"], box["cy"], 400, 120, 37.0)
+    codes = []
+    for k in p.store.tiles_in_bbox(cor[:, 0].min(), cor[:, 1].min(), cor[:, 0].max(), cor[:, 1].max()):
+        r = p.store.tile_array(k)
+        u, v = PS.to_box_frame(r["x"] * 1e-3, r["y"] * 1e-3, box["cx"], box["cy"], 37.0)
+        idx = np.flatnonzero((np.abs(u) <= 200) & (np.abs(v) <= 60))
+        codes.append((np.int64(p.store.key_id(k)) << 40) | idx.astype(np.int64))
+    assert np.array_equal(np.concatenate(codes), PS.PointSet.from_store(p.store, box).code)
+    p.store.close()
+    print("Inspection Area loading: identical points and order (4 boxes, engine and numpy, and 1.9.4's test)")
+
+
 def main():
     check_available()
     check_read_points()
@@ -209,6 +274,8 @@ def main():
     check_rays()
     check_cluster()
     check_line_counts()
+    check_rasters()
+    check_load()
 
 
 if __name__ == "__main__":

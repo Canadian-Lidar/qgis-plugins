@@ -135,9 +135,17 @@ def colour_points(ps, mode, lut="Rainbow", rng=None, line_colours=None, idx=None
 # ---------------------------------------------------------------------------
 # rasteriser
 # ---------------------------------------------------------------------------
+def _engine():
+    """The compiled engine when it is loaded (the views then draw in one pass), else None (numpy below)."""
+    from ..core import engine
+    return engine if engine.available() else None
+
+
 def rasterise(px, py, key, col, w, h, size=1, bg=0xFF09100F, depth_out=None, dval=None):
     """Draw points at pixel coords (float) into a (h, w) uint32 buffer.
     key: larger = drawn on top (uint16 after scaling). Returns (buffer, pix index per drawn point)."""
+    if len(px) > 20_000 and _engine() is not None:          # one pass in the compiled engine
+        return _engine().raster_top(px, py, key, col, w, h, size, bg, depth_out, dval)
     buf = np.full(h * w, bg, np.uint32)
     if len(px) == 0:
         return buf.reshape(h, w)
@@ -183,6 +191,8 @@ def rasterise_nearest(sx, sy, z, col, w, h, size=1, bg=0xFF09100F):
     Faster than rasterise() for big clouds: one depth sort and one scatter over all points, and
     the splat passes only over the visible points (at most one per pixel), in a padded buffer so
     no per-pass bounds masks are needed."""
+    if len(sx) > 20_000 and _engine() is not None:          # one pass in the compiled engine
+        return _engine().raster_near(sx, sy, z, col, w, h, size, bg)
     pad = max(1, size)
     wp, hp = w + 2 * pad, h + 2 * pad
     buf = np.full(hp * wp, bg, np.uint32)

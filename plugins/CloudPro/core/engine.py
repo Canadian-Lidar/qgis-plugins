@@ -19,7 +19,7 @@ import sys
 
 import numpy as np
 
-VERSION = 1                         # cp_version() this code expects
+VERSION = 2                         # cp_version() this code expects
 _lib = None
 _why = ""
 
@@ -125,6 +125,21 @@ def _load():
                                    C.c_void_p]
         lib.cp_line_counts.restype = None
         lib.cp_line_counts.argtypes = [C.c_void_p, C.c_int64] + [C.c_void_p] * 4 + [C.c_int64, C.c_double, C.c_void_p]
+        V, I, D, U32 = C.c_void_p, C.c_int, C.c_double, C.c_uint32
+        lib.cp_key_range.restype = None
+        lib.cp_key_range.argtypes = [V, V, V, C.c_int64, I, I, V]
+        lib.cp_raster_top.restype = None
+        lib.cp_raster_top.argtypes = [V, V, V, V, C.c_int64, I, I, I, D, D, V, V, V, V]
+        lib.cp_merge_top.restype = None
+        lib.cp_merge_top.argtypes = [V, V, V, V, V, V, C.c_int64]
+        lib.cp_near_winners.restype = None
+        lib.cp_near_winners.argtypes = [V, V, V, C.c_int64, C.c_int64, I, I, V, V]
+        lib.cp_merge_near.restype = None
+        lib.cp_merge_near.argtypes = [V, V, V, V, C.c_int64]
+        lib.cp_splat_near.restype = C.c_int64
+        lib.cp_splat_near.argtypes = [V, V, V, I, I, I, U32, V]
+        lib.cp_in_box.restype = C.c_int64
+        lib.cp_in_box.argtypes = [C.c_void_p, C.c_int64] + [C.c_double] * 8 + [C.c_void_p]
         lib.cp_grid_stats.restype = None
         lib.cp_grid_stats.argtypes = [C.c_void_p, C.c_int64, C.c_int64, C.c_int64, C.c_int64, C.c_int64] + \
             [C.c_void_p] * 6
@@ -319,3 +334,99 @@ def line_counts(P2, anchors, normals, half, nthreads=None):
     with cf.ThreadPoolExecutor(nthreads) as ex:
         list(ex.map(lambda ab: one(*ab), zip(cuts[:-1], cuts[1:])))
     return out
+
+
+def _f4(a):
+    return np.ascontiguousarray(a, np.float32)
+
+
+def _pieces(n, minimum=2_000_000):
+    """Cuts of [0, n) into one piece per worker thread (none below `minimum` points per piece)."""
+    k = max(1, min(threads(), n // minimum))
+    return np.linspace(0, n, k + 1).astype(np.int64)
+
+
+_POOL = None
+
+
+def _pool():
+    global _POOL
+    if _POOL is None:
+        import concurrent.futures as cf
+        _POOL = cf.ThreadPoolExecutor(max_workers=threads(), thread_name_prefix="CloudPro engine")
+    return _POOL
+
+
+def raster_top(sx, sy, key, col, w, h, size=1, bg=0xFF09100F, depth_out=None, dval=None):
+    """render.rasterise on every core: the highest-key point per pixel -> (h, w) uint32 (identical at size 1)."""
+    lib = _load()
+    sx, sy, key = _f4(sx), _f4(sy), _f4(key)
+    col = np.ascontiguousarray(col, np.uint32)
+    dv = _f4(dval) if (dval is not None and depth_out is not None) else None
+    n, npix = len(sx), w * h
+    cuts = _pieces(n)
+    rngs = np.empty((len(cuts) - 1, 2))
+
+    def kr(j):
+        a, b = cuts[j], cuts[j + 1]
+        lib.cp_key_range(_ptr(sx[a:]), _ptr(sy[a:]), _ptr(key[a:]), b - a, int(w), int(h), _ptr(rngs[j]))
+    list(_pool().map(kr, range(len(cuts) - 1)))
+    kmin, kmax = float(rngs[:, 0].min()), float(rngs[:, 1].max())
+    out = np.full(npix, int(bg) & 0xFFFFFFFF, np.uint32)
+    if not kmax >= kmin:
+        return out.reshape(h, w)
+
+    def piece(j):
+        a, b = cuts[j], cuts[j + 1]
+        buf = np.full(npix, int(bg) & 0xFFFFFFFF, np.uint32)
+        best = np.full(npix, -1, np.int32)
+        dep = np.array(depth_out, np.float32) if dv is not None else None
+        lib.cp_raster_top(_ptr(sx[a:]), _ptr(sy[a:]), _ptr(key[a:]), _ptr(col[a:]), b - a, int(w), int(h),
+                          int(size), kmin, kmax, _ptr(buf), _ptr(best), _ptr(dv[a:]) if dv is not None else None,
+                          _ptr(dep) if dep is not None else None)
+        return buf, best, dep
+    parts = list(_pool().map(piece, range(len(cuts) - 1)))
+    buf, best, dep = parts[0]
+    for b2, best2, d2 in parts[1:]:                       # in order: later points win ties, as in one pass
+        lib.cp_merge_top(_ptr(buf), _ptr(best), _ptr(dep) if dep is not None else None, _ptr(b2), _ptr(best2),
+                         _ptr(d2) if d2 is not None else None, npix)
+    if dep is not None:
+        depth_out[:] = dep
+    return buf.reshape(h, w)
+
+
+def raster_near(sx, sy, z, col, w, h, size=1, bg=0xFF09100F):
+    """render.rasterise_nearest on every core -> (buffer (h, w), depth (h*w,) float32 inf where empty, visible)."""
+    lib = _load()
+    sx, sy, z = _f4(sx), _f4(sy), _f4(z)
+    col = np.ascontiguousarray(col, np.uint32)
+    n, npix = len(sx), w * h
+    cuts = _pieces(n)
+
+    def piece(j):
+        a, b = cuts[j], cuts[j + 1]
+        dep = np.full(npix, np.inf, np.float32)
+        win = np.full(npix, -1, np.int64)
+        lib.cp_near_winners(_ptr(sx[a:]), _ptr(sy[a:]), _ptr(z[a:]), b - a, int(a), int(w), int(h), _ptr(dep),
+                            _ptr(win))
+        return dep, win
+    parts = list(_pool().map(piece, range(len(cuts) - 1)))
+    dep, win = parts[0]
+    for d2, w2 in parts[1:]:
+        lib.cp_merge_near(_ptr(dep), _ptr(win), _ptr(d2), _ptr(w2), npix)
+    buf = np.empty(npix, np.uint32)
+    nv = lib.cp_splat_near(_ptr(win), _ptr(dep), _ptr(col), int(w), int(h), int(size), int(bg) & 0xFFFFFFFF,
+                           _ptr(buf))
+    return buf.reshape(h, w), dep, int(nv)
+
+
+def in_box(a, cx, cy, bearing, length, width, zrange=None):
+    """Indices of a tile's records inside a rotated box: PointSet.from_store's test, in one pass."""
+    lib = _load()
+    a = np.ascontiguousarray(a)
+    b = np.radians(bearing)
+    idx = np.empty(len(a), np.int64)
+    z0, z1 = (zrange if zrange is not None else (1.0, 0.0))
+    k = lib.cp_in_box(_ptr(a), len(a), float(cx), float(cy), float(np.sin(b)), float(np.cos(b)), length / 2.0,
+                      width / 2.0, float(z0), float(z1), _ptr(idx))
+    return idx[:k]
