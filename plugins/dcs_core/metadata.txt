@@ -3,7 +3,7 @@ name=DCS Core
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Shared base of the Canadian Lidar Data Collection Systems plugins (PosPro, AlignPro, CloudPro, RemixPro): one project per job, handover files between stages, stale-result detection, shared menu and look. Menu: Plugins > Canadian Lidar > Data Systems.
-version=1.9.0
+version=1.9.1
 author=Canadian Lidar
 email=seantobrien@gmail.com
 about=Install this before PosPro, AlignPro, CloudPro and RemixPro. It keeps one project per job in Processing/<Name>/ beside the captures, records what each stage published and what it was built from, flags results that are out of date when an earlier stage is re-run, and gives every plugin the same menu, look, chain bar and readers for the mapper's .clraw captures, SBET trajectories and LAS. It has no window of its own.
@@ -15,7 +15,8 @@ experimental=False
 deprecated=False
 hasProcessingProvider=no
 tags=canadian lidar,mobile mapping,dcs
-changelog=1.9.0 NAD83(CSRS) epochs (API 10): coordinates are moved between reference epochs (for example the observation date and New Brunswick's 1997.0) with NRCan's NAD83v70VG velocity grid, bundled (Open Government Licence - Canada).
+changelog=1.9.1 Readable lists and tables on Windows: with QGIS 4 the Windows 11 style painted the rows of lists, tables and trees white with light text (RemixPro's recordings table was unreadable except the selected row). Their background and rows are now painted in the dark theme by DCS Core, with each row's own text colours kept, a teal selection band and themed tick boxes. All plugins benefit; no API change (API 10).
+    1.9.0 NAD83(CSRS) epochs (API 10): coordinates are moved between reference epochs (for example the observation date and New Brunswick's 1997.0) with NRCan's NAD83v70VG velocity grid, bundled (Open Government Licence - Canada).
     1.8.0 Reliability (API 9): the project file can no longer lose a change when two plugins or two QGIS windows save at once (exclusive locks, a short wait instead of an error, safe takeover of a lock left by a crash, retries on Windows while another program holds a file open). AlignPro and CloudPro results go out of date when a survey line they read changes or a new one is added, also when PosPro processed navigation recordings. System profiles: PosPro and AlignPro saving at the same time keep each other's sections, profiles whose names differ only in case keep separate files, and the recording system's unit serial number is now found. Damaged or partly copied .clraw files no longer stop the line list. Lower memory use reading long SBET trajectories. Navigation packets with a bad checksum are left out. LAS files: correct header flags and date; a failed export leaves no partial file. Floating windows: native title-bar clicks no longer reach the docking code (QGIS 4 / Windows).
     1.7.0 System profiles (API 8): a mapper system's checked antenna offsets, rear axle, IMU, vehicle, Lidar lever arm, mounting angles and latency saved on this computer, matched to a job by the mapper unit and Certus serial numbers, with a shared System profiles window for PosPro and AlignPro.
     1.6.1 Description names the menu correctly: Plugins > Canadian Lidar > Data Systems. No change for the plugins (still API 7).
