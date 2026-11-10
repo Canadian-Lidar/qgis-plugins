@@ -151,6 +151,7 @@ class MainWindow(QtWidgets.QMainWindow):
             v.toolRequested.connect(self.set_tool)
             v.menu_provider = self._view_menu
         self.v3d.selectionMade.connect(lambda m, t: self.edit_selection(self.v3d, m))
+        self.v3d.gpuStatus.connect(lambda t: self.status("3D view: " + t, 8000))
         self.v3d.pointPicked.connect(lambda j: self.show_point(self.v3d.idx[j] if j >= 0 else -1))
         self.plan.boxChanged.connect(self._box_from_plan)
         self.plan.slice_lines = self._plan_slice_lines
@@ -805,6 +806,7 @@ class MainWindow(QtWidgets.QMainWindow):
             for w in (self._props, self._area):
                 if w is not None:
                     w.close()
+            self.v3d.release_gpu()
 
     def ensure_lock(self):
         """The window is shown again after being closed: take the job's edit lock again (closing released it).

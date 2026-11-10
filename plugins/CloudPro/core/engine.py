@@ -19,7 +19,7 @@ import sys
 
 import numpy as np
 
-VERSION = 2                         # cp_version() this code expects
+VERSION = 3                         # cp_version() this code expects
 _lib = None
 _why = ""
 
@@ -140,6 +140,20 @@ def _load():
         lib.cp_splat_near.argtypes = [V, V, V, I, I, I, U32, V]
         lib.cp_in_box.restype = C.c_int64
         lib.cp_in_box.argtypes = [C.c_void_p, C.c_int64] + [C.c_double] * 8 + [C.c_void_p]
+        lib.cp_eye_dome.restype = None
+        lib.cp_eye_dome.argtypes = [C.c_void_p, C.c_void_p, C.c_int, C.c_int, C.c_float, C.c_int, C.c_int,
+                                    C.c_void_p]
+        lib.cp_gl_init.restype = C.c_int
+        lib.cp_gl_init.argtypes = []
+        lib.cp_gl_upload.restype = C.c_int
+        lib.cp_gl_upload.argtypes = [C.c_void_p, C.c_void_p, C.c_int64, C.c_void_p]
+        lib.cp_gl_renderer.restype = None
+        lib.cp_gl_renderer.argtypes = [C.c_char_p, C.c_int]
+        lib.cp_gl_free.restype = None
+        lib.cp_gl_free.argtypes = [C.c_void_p, C.c_void_p]
+        lib.cp_gl_draw.restype = C.c_int
+        lib.cp_gl_draw.argtypes = [C.c_void_p, C.c_int64, C.c_void_p, C.c_void_p, C.c_int, C.c_int, C.c_float,
+                                   C.c_uint32, C.c_void_p, C.c_void_p, C.c_void_p]
         lib.cp_grid_stats.restype = None
         lib.cp_grid_stats.argtypes = [C.c_void_p, C.c_int64, C.c_int64, C.c_int64, C.c_int64, C.c_int64] + \
             [C.c_void_p] * 6
@@ -430,3 +444,60 @@ def in_box(a, cx, cy, bearing, length, width, zrange=None):
     k = lib.cp_in_box(_ptr(a), len(a), float(cx), float(cy), float(np.sin(b)), float(np.cos(b)), length / 2.0,
                       width / 2.0, float(z0), float(z1), _ptr(idx))
     return idx[:k]
+
+
+# ---------------------------------------------------------------- OpenGL (3D view on the graphics card)
+def gl_init():
+    """With an OpenGL context current: 1 when the engine found every OpenGL function it needs."""
+    lib = _load()
+    return bool(lib is not None and lib.cp_gl_init())
+
+
+def gl_renderer():
+    """The OpenGL renderer | vendor names (after gl_init, context current)."""
+    lib = _load()
+    b = C.create_string_buffer(256)
+    lib.cp_gl_renderer(b, 256)
+    return b.value.decode("utf-8", "replace")
+
+
+def gl_upload(ids, xyz=None, col=None, n=0):
+    lib = _load()
+    x = np.ascontiguousarray(xyz, np.float32) if xyz is not None else None
+    c = np.ascontiguousarray(col, np.uint32) if col is not None else None
+    return lib.cp_gl_upload(_ptr(x) if x is not None else None, _ptr(c) if c is not None else None, int(n),
+                            _ptr(ids))
+
+
+def gl_free(ids, fb):
+    lib = _load()
+    if lib is not None:
+        lib.cp_gl_free(_ptr(ids), _ptr(fb))
+
+
+def gl_draw(ids, m, proj, view, w, h, size, bg, fb, want_depth=True):
+    """-> (buffer (h, w) uint32 ARGB, window depth (h, w) float32 or None, status)."""
+    lib = _load()
+    out = np.empty(h * w, np.uint32)
+    dep = np.empty(h * w, np.float32) if want_depth else None
+    pr = np.ascontiguousarray(proj, np.float32)
+    vw = np.ascontiguousarray(view, np.float32)
+    st = lib.cp_gl_draw(_ptr(ids), int(m), _ptr(pr), _ptr(vw), int(w), int(h), float(size), int(bg) & 0xFFFFFFFF,
+                        _ptr(fb), _ptr(out), _ptr(dep) if dep is not None else None)
+    return out.reshape(h, w), (dep.reshape(h, w) if dep is not None else None), int(st)
+
+
+def eye_dome(buf, depth, strength=1.2):
+    """render.eye_dome (radius 1) compiled, rows split over the cores."""
+    lib = _load()
+    h, w = buf.shape
+    b = np.ascontiguousarray(buf, np.uint32)
+    d = np.ascontiguousarray(depth, np.float32).reshape(-1)
+    out = np.empty_like(b)
+    k = max(1, min(threads(), h // 64))
+    cuts = np.linspace(0, h, k + 1).astype(int)
+    jobs = [_pool().submit(lib.cp_eye_dome, _ptr(b), _ptr(d), w, h, float(strength), int(cuts[i]), int(cuts[i + 1]),
+                           _ptr(out)) for i in range(k)]
+    for j in jobs:
+        j.result()
+    return out
