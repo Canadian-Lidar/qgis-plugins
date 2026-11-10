@@ -10,7 +10,7 @@ FLAGS="-O2 -std=gnu99 -ffp-contract=off -fno-fast-math -Wall -Wno-unused-functio
 mkdir -p $OUT/linux $OUT/windows
 T=${1:-all}
 if [ "$T" = all ] || [ "$T" = linux ]; then
-  python3 -m ziglang cc -target x86_64-linux-gnu.2.17 $FLAGS -shared -fPIC -fvisibility=hidden src/cp_engine.c \
+  python3 -m ziglang cc -target x86_64-linux-gnu.2.17 $FLAGS -shared -fPIC -fvisibility=hidden src/cp_engine.c -ldl \
     -o $OUT/linux/libcpengine.so -lm
 fi
 if [ "$T" = all ] || [ "$T" = windows ]; then

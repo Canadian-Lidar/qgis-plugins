@@ -1,5 +1,6 @@
-"""Interactive 3-D point view (software renderer, works on every QGIS
-install without OpenGL drivers).
+"""Interactive 3-D point view. With a graphics card (OpenGL 2.1 or later, CloudPro 1.9.7) every point is drawn by
+the card in one call, moving or still (ui/gpu3d.py); without one - or with software OpenGL - the engine draws on the
+processor as before (works on every QGIS install).
 
 Mouse: left drag = orbit around the centre (the centre of the Inspection
 Area; it follows the area when it moves), Shift+left or middle drag = pan,
@@ -51,6 +52,7 @@ class CloudView3D(QtWidgets.QWidget):
     viewChanged = Signal()
     legendMenu = Signal(object)                  # right-click on the colour scale bar (global pos)
     _stillReady = Signal(object)
+    gpuStatus = Signal(str)                      # once: drawn by the graphics card, or why not
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -103,6 +105,12 @@ class CloudView3D(QtWidgets.QWidget):
         self._busy = False
         self._again = False
         self._stillReady.connect(self._on_still)
+        # graphics card: created on the first frame; None = not tried, False = not usable (processor drawing)
+        self.use_gpu = True
+        self._gpu_r = None
+        self.gpu_why = ""
+        self._far_key = None
+        self._far = 1000.0
 
     # ---------------------------------------------------------------- data
     def set_points(self, P, col, idx, fit=False):
@@ -117,6 +125,8 @@ class CloudView3D(QtWidgets.QWidget):
             self._L = (P - self._origin).astype(np.float32)
         else:
             self._L = np.zeros((0, 3), np.float32)
+        if self._gpu_r:
+            self._gpu_r.need_pts = True
         if fit:
             self.fit()
         elif self._area_z and len(P):
@@ -128,6 +138,8 @@ class CloudView3D(QtWidgets.QWidget):
 
     def set_colours(self, col):
         self.col = col
+        if self._gpu_r:
+            self._gpu_r.need_col = True
         self._dirty = True
         self.update()
 
@@ -376,6 +388,62 @@ class CloudView3D(QtWidgets.QWidget):
             else:
                 self.lod_max = int(min(8e6, max(250_000, rate * 0.033)))
 
+    # ------------------------------------------------------------ graphics card
+    def _gpu(self):
+        """The card's renderer, or None (not usable / turned off: draw on the processor)."""
+        if not self.use_gpu or self._gpu_r is False:
+            return None
+        if self._gpu_r is None:
+            from .gpu3d import GpuRenderer
+            r = GpuRenderer()
+            ok = r.available()
+            self.gpu_why = r.why
+            self._gpu_r = r if ok else False
+            self.gpuStatus.emit(("graphics card - " if ok else "processor - ") + r.why)
+        return self._gpu_r or None
+
+    def gpu_active(self):
+        return self._gpu() is not None
+
+    def _far_plane(self):
+        k = (id(self._L), len(self._L))
+        if k != self._far_key:
+            from .gpu3d import far_plane
+            L = self._L if len(self._L) <= 2_000_000 else self._L[::len(self._L) // 1_000_000]
+            self._far = far_plane(L, None, 0.0)
+            self._far_key = k
+        return self._far * max(1.0, self.zscale) + self.dist
+
+    def _gpu_frame(self, shade):
+        """All points drawn by the card -> buffer, or None (then the processor draws; a failed upload or frame
+        turns the card off for this view)."""
+        g = self._gpu()
+        if g is None:
+            return None
+        try:
+            ok = g.set_points(self._L, self.col)
+            # near clipping plane at 1 % of the viewing distance (at least 5 cm): the card's 24-bit depth then
+            # separates points as finely as the processor's float depth does
+            res = g.frame(self._cam(), len(self._L), self.point_size, self._far_plane(), 0xFF09100F,
+                          depth=shade, near=0.01 * self.dist) if ok else None
+        except Exception as e:                  # noqa: BLE001
+            res, self.gpu_why = None, "OpenGL error (%s)" % e
+        if res is None:
+            if not self.gpu_why.startswith("OpenGL error"):
+                self.gpu_why = "the graphics card could not hold or draw the points"
+            self.release_gpu()
+            self._gpu_r = False
+            self.gpuStatus.emit("processor - " + self.gpu_why)
+            return None
+        buf, z = res
+        if shade:
+            buf = render.eye_dome(buf, z, self.edl_strength)
+        return np.ascontiguousarray(buf, np.uint32)
+
+    def release_gpu(self):
+        if self._gpu_r:
+            self._gpu_r.release()
+
     def _render(self, quick=None):
         """Draw a frame now. quick: the reduced moving-frame budget (default: while interacting)."""
         n = len(self.P)
@@ -385,6 +453,11 @@ class CloudView3D(QtWidgets.QWidget):
             return
         if quick is None:
             quick = self._interacting
+        if self.gpu_active():
+            buf = self._gpu_frame(self.edl and not self._interacting)
+            if buf is not None:
+                self._set_image(buf, n)
+                return
         m = min(n, self.lod_max) if quick else min(n, getattr(self, "rest_max", 12_000_000))
         t0 = time.perf_counter()
         shade = self.edl and not self._interacting
@@ -438,7 +511,7 @@ class CloudView3D(QtWidgets.QWidget):
         p.fillRect(self.rect(), QtGui.QColor(*theme.VIEW_BG))
         if self._dirty or self._img is None or self._img.width() != self.width() or \
                 self._img.height() != self.height():
-            if self.async_still and not self._interacting:
+            if self.async_still and not self._interacting and not self.gpu_active():
                 # a quick frame now (with shading), the full one from the worker when it is ready
                 self._render(quick=True)
                 if self.shown < min(len(self.P), getattr(self, "rest_max", 12_000_000)):

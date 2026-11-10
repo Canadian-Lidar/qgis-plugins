@@ -10,6 +10,7 @@
  *   cp_grid_stats    per-tile 0.5 m grid of accepted points (Store.grid_stats)
  */
 #include <math.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,7 +21,7 @@
 #define CP_API __attribute__((visibility("default")))
 #endif
 
-#define CP_ENGINE_VERSION 2
+#define CP_ENGINE_VERSION 3
 #define PKT 1080
 #define NCH 32
 #define NBLK 8
@@ -800,4 +801,282 @@ CP_API int64_t cp_in_box(const uint8_t *recs, int64_t n, double cx, double cy, d
         idx[k++] = i;
     }
     return k;
+}
+
+/* ------------------------------------------------------------------ 3D view on the graphics card (OpenGL) */
+
+/* The caller (Qt) creates an OpenGL context and makes it current; these functions look the OpenGL entry points up
+   themselves (opengl32.dll + wglGetProcAddress on Windows, libGL on Linux), so CloudPro does not depend on the
+   OpenGL bindings of a particular QGIS build. Fixed-function pipeline (compatibility profile, OpenGL 2.1 +
+   framebuffer objects): the points live in vertex buffers on the card; a frame is one glDrawArrays(GL_POINTS)
+   into an off-screen framebuffer with a depth test, read back as BGRA (= QImage ARGB32) and as depth. */
+
+/* Eye-dome lighting (CloudPro 1.9.7), rows y0..y1 of an h x w picture: the same sums as ui/render.eye_dome -
+   each drawn pixel is darkened by how much nearer it is than its four neighbours (log2 depth); empty pixels
+   (depth inf) and the picture's edge add nothing. Writes out (may not be buf). */
+CP_API void cp_eye_dome(const uint32_t *buf, const float *depth, int w, int h, float strength, int y0, int y1,
+                        uint32_t *out)
+{
+    const int dx[4] = {1, -1, 0, 0}, dy[4] = {0, 0, 1, -1};
+    for (int y = y0; y < y1; y++) {
+        for (int x = 0; x < w; x++) {
+            int64_t i = (int64_t)y * w + x;
+            float d = depth[i];
+            if (!(d < INFINITY)) { out[i] = buf[i]; continue; }
+            float L = log2f(d > 1e-3f ? d : 1e-3f), acc = 0.0f;
+            for (int k = 0; k < 4; k++) {
+                int xx = x + dx[k], yy = y + dy[k];
+                if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+                float dn = depth[(int64_t)yy * w + xx];
+                if (!(dn < INFINITY)) continue;
+                float diff = L - log2f(dn > 1e-3f ? dn : 1e-3f);
+                if (diff > 0) acc += diff;
+            }
+            float sh = expf(-strength * 300.0f * acc / 4.0f);
+            uint32_t c = buf[i];
+            uint32_t r = (uint32_t)((float)((c >> 16) & 0xFF) * sh), g = (uint32_t)((float)((c >> 8) & 0xFF) * sh),
+                     b = (uint32_t)((float)(c & 0xFF) * sh);
+            out[i] = 0xFF000000u | (r << 16) | (g << 8) | b;
+        }
+    }
+}
+
+#ifdef _WIN32
+#include <windows.h>
+#define GLAPIENTRY __stdcall
+#else
+#include <dlfcn.h>
+#define GLAPIENTRY
+#endif
+
+typedef unsigned int GLenum_; typedef unsigned int GLuint_; typedef int GLint_; typedef int GLsizei_;
+typedef float GLfloat_; typedef ptrdiff_t GLsizeiptr_;
+#define CPGL_POINTS 0x0000
+#define CPGL_DEPTH_TEST 0x0B71
+#define CPGL_LESS 0x0201
+#define CPGL_COLOR_BUFFER_BIT 0x4000
+#define CPGL_DEPTH_BUFFER_BIT 0x0100
+#define CPGL_FLOAT 0x1406
+#define CPGL_UNSIGNED_BYTE 0x1401
+#define CPGL_BGRA 0x80E1
+#define CPGL_VERTEX_ARRAY 0x8074
+#define CPGL_COLOR_ARRAY 0x8076
+#define CPGL_PROJECTION 0x1701
+#define CPGL_MODELVIEW 0x1700
+#define CPGL_ARRAY_BUFFER 0x8892
+#define CPGL_STATIC_DRAW 0x88E4
+#define CPGL_FRAMEBUFFER 0x8D40
+#define CPGL_RENDERBUFFER 0x8D41
+#define CPGL_COLOR_ATTACHMENT0 0x8CE0
+#define CPGL_DEPTH_ATTACHMENT 0x8D00
+#define CPGL_RGBA8 0x8058
+#define CPGL_DEPTH_COMPONENT24 0x81A6
+#define CPGL_DEPTH_COMPONENT 0x1902
+#define CPGL_FRAMEBUFFER_COMPLETE 0x8CD5
+#define CPGL_PACK_ALIGNMENT 0x0D05
+#define CPGL_POINT_SMOOTH 0x0B10
+
+static struct {
+    int ok;
+    void (GLAPIENTRY *Viewport)(GLint_, GLint_, GLsizei_, GLsizei_);
+    void (GLAPIENTRY *ClearColor)(GLfloat_, GLfloat_, GLfloat_, GLfloat_);
+    void (GLAPIENTRY *ClearDepth)(double);
+    void (GLAPIENTRY *Clear)(unsigned);
+    void (GLAPIENTRY *Enable)(GLenum_);
+    void (GLAPIENTRY *Disable)(GLenum_);
+    void (GLAPIENTRY *DepthFunc)(GLenum_);
+    void (GLAPIENTRY *PointSize)(GLfloat_);
+    void (GLAPIENTRY *MatrixMode)(GLenum_);
+    void (GLAPIENTRY *LoadMatrixf)(const GLfloat_ *);
+    void (GLAPIENTRY *EnableClientState)(GLenum_);
+    void (GLAPIENTRY *DisableClientState)(GLenum_);
+    void (GLAPIENTRY *VertexPointer)(GLint_, GLenum_, GLsizei_, const void *);
+    void (GLAPIENTRY *ColorPointer)(GLint_, GLenum_, GLsizei_, const void *);
+    void (GLAPIENTRY *DrawArrays)(GLenum_, GLint_, GLsizei_);
+    void (GLAPIENTRY *ReadPixels)(GLint_, GLint_, GLsizei_, GLsizei_, GLenum_, GLenum_, void *);
+    void (GLAPIENTRY *PixelStorei)(GLenum_, GLint_);
+    void (GLAPIENTRY *Finish)(void);
+    unsigned (GLAPIENTRY *GetError)(void);
+    const unsigned char *(GLAPIENTRY *GetString)(GLenum_);
+    void (GLAPIENTRY *GenBuffers)(GLsizei_, GLuint_ *);
+    void (GLAPIENTRY *DeleteBuffers)(GLsizei_, const GLuint_ *);
+    void (GLAPIENTRY *BindBuffer)(GLenum_, GLuint_);
+    void (GLAPIENTRY *BufferData)(GLenum_, GLsizeiptr_, const void *, GLenum_);
+    void (GLAPIENTRY *GenFramebuffers)(GLsizei_, GLuint_ *);
+    void (GLAPIENTRY *DeleteFramebuffers)(GLsizei_, const GLuint_ *);
+    void (GLAPIENTRY *BindFramebuffer)(GLenum_, GLuint_);
+    void (GLAPIENTRY *GenRenderbuffers)(GLsizei_, GLuint_ *);
+    void (GLAPIENTRY *DeleteRenderbuffers)(GLsizei_, const GLuint_ *);
+    void (GLAPIENTRY *BindRenderbuffer)(GLenum_, GLuint_);
+    void (GLAPIENTRY *RenderbufferStorage)(GLenum_, GLenum_, GLsizei_, GLsizei_);
+    void (GLAPIENTRY *FramebufferRenderbuffer)(GLenum_, GLenum_, GLenum_, GLuint_);
+    GLenum_ (GLAPIENTRY *CheckFramebufferStatus)(GLenum_);
+} gl;
+
+static void *gl_proc(const char *name)
+{
+#ifdef _WIN32
+    static HMODULE lib = NULL;
+    typedef PROC (WINAPI *WGLGETPROC)(LPCSTR);
+    static WGLGETPROC wglp = NULL;
+    if (!lib) {
+        lib = LoadLibraryA("opengl32.dll");
+        if (!lib) return NULL;
+        wglp = (WGLGETPROC)(void *)GetProcAddress(lib, "wglGetProcAddress");
+    }
+    void *p = wglp ? (void *)wglp(name) : NULL;
+    if (p == NULL || p == (void *)1 || p == (void *)2 || p == (void *)3 || p == (void *)-1)
+        p = (void *)GetProcAddress(lib, name);
+    return p;
+#else
+    static void *lib = NULL;
+    typedef void *(*GLXGETPROC)(const unsigned char *);
+    static GLXGETPROC gp = NULL;
+    if (!lib) {
+        lib = dlopen("libGL.so.1", RTLD_LAZY | RTLD_GLOBAL);
+        if (!lib) lib = dlopen("libGL.so", RTLD_LAZY | RTLD_GLOBAL);
+        if (!lib) return NULL;
+        gp = (GLXGETPROC)dlsym(lib, "glXGetProcAddressARB");
+    }
+    void *p = dlsym(lib, name);
+    if (!p && gp) p = gp((const unsigned char *)name);
+    return p;
+#endif
+}
+
+#define LOADGL(f, n) if (!(*(void **)&gl.f = gl_proc(n))) return 0
+#define LOADGL2(f, a, b) if (!(*(void **)&gl.f = gl_proc(a)) && !(*(void **)&gl.f = gl_proc(b))) return 0
+
+/* Look the entry points up (call with the context current). 1 when everything needed is there. */
+CP_API int cp_gl_init(void)
+{
+    if (gl.ok) return 1;
+    LOADGL(Viewport, "glViewport"); LOADGL(ClearColor, "glClearColor"); LOADGL(ClearDepth, "glClearDepth");
+    LOADGL(Clear, "glClear"); LOADGL(Enable, "glEnable"); LOADGL(Disable, "glDisable");
+    LOADGL(DepthFunc, "glDepthFunc"); LOADGL(PointSize, "glPointSize"); LOADGL(MatrixMode, "glMatrixMode");
+    LOADGL(LoadMatrixf, "glLoadMatrixf"); LOADGL(EnableClientState, "glEnableClientState");
+    LOADGL(DisableClientState, "glDisableClientState"); LOADGL(VertexPointer, "glVertexPointer");
+    LOADGL(ColorPointer, "glColorPointer"); LOADGL(DrawArrays, "glDrawArrays"); LOADGL(ReadPixels, "glReadPixels");
+    LOADGL(PixelStorei, "glPixelStorei"); LOADGL(Finish, "glFinish"); LOADGL(GetError, "glGetError");
+    LOADGL(GetString, "glGetString");
+    LOADGL2(GenBuffers, "glGenBuffers", "glGenBuffersARB"); LOADGL2(DeleteBuffers, "glDeleteBuffers", "glDeleteBuffersARB");
+    LOADGL2(BindBuffer, "glBindBuffer", "glBindBufferARB"); LOADGL2(BufferData, "glBufferData", "glBufferDataARB");
+    LOADGL2(GenFramebuffers, "glGenFramebuffers", "glGenFramebuffersEXT");
+    LOADGL2(DeleteFramebuffers, "glDeleteFramebuffers", "glDeleteFramebuffersEXT");
+    LOADGL2(BindFramebuffer, "glBindFramebuffer", "glBindFramebufferEXT");
+    LOADGL2(GenRenderbuffers, "glGenRenderbuffers", "glGenRenderbuffersEXT");
+    LOADGL2(DeleteRenderbuffers, "glDeleteRenderbuffers", "glDeleteRenderbuffersEXT");
+    LOADGL2(BindRenderbuffer, "glBindRenderbuffer", "glBindRenderbufferEXT");
+    LOADGL2(RenderbufferStorage, "glRenderbufferStorage", "glRenderbufferStorageEXT");
+    LOADGL2(FramebufferRenderbuffer, "glFramebufferRenderbuffer", "glFramebufferRenderbufferEXT");
+    LOADGL2(CheckFramebufferStatus, "glCheckFramebufferStatus", "glCheckFramebufferStatusEXT");
+    gl.ok = 1;
+    return 1;
+}
+
+/* The OpenGL renderer and vendor ("llvmpipe ...", "NVIDIA GeForce ..."), into out (n bytes, NUL-terminated). */
+CP_API void cp_gl_renderer(char *out, int n)
+{
+    if (n <= 0) return;
+    out[0] = 0;
+    if (!gl.ok) return;
+    const char *r = (const char *)gl.GetString(0x1F01), *v = (const char *)gl.GetString(0x1F00);
+    int k = 0;
+    for (const char *q = r ? r : ""; *q && k < n - 1; q++) out[k++] = *q;
+    for (const char *q = " | "; v && *q && k < n - 1; q++) out[k++] = *q;
+    for (const char *q = v ? v : ""; *q && k < n - 1; q++) out[k++] = *q;
+    out[k] = 0;
+}
+
+/* Upload n points (float32 xyz, local coordinates) and/or their colours (uint32 ARGB) into vertex buffers;
+   ids[0] = positions, ids[1] = colours (0 = create). Either pointer may be NULL to keep that buffer. 0 on success. */
+CP_API int cp_gl_upload(const float *xyz, const uint32_t *col, int64_t n, uint32_t *ids)
+{
+    if (!gl.ok) return -1;
+    while (gl.GetError() != 0) {}
+    if (xyz) {
+        if (!ids[0]) gl.GenBuffers(1, &ids[0]);
+        gl.BindBuffer(CPGL_ARRAY_BUFFER, ids[0]);
+        gl.BufferData(CPGL_ARRAY_BUFFER, (GLsizeiptr_)(n * 12), xyz, CPGL_STATIC_DRAW);
+    }
+    if (col) {
+        if (!ids[1]) gl.GenBuffers(1, &ids[1]);
+        gl.BindBuffer(CPGL_ARRAY_BUFFER, ids[1]);
+        gl.BufferData(CPGL_ARRAY_BUFFER, (GLsizeiptr_)(n * 4), col, CPGL_STATIC_DRAW);
+    }
+    gl.BindBuffer(CPGL_ARRAY_BUFFER, 0);
+    return gl.GetError() == 0 ? 0 : -2;
+}
+
+CP_API void cp_gl_free(uint32_t *ids, uint32_t *fb)
+{
+    if (!gl.ok) return;
+    if (ids[0] || ids[1]) gl.DeleteBuffers(2, ids);
+    ids[0] = ids[1] = 0;
+    if (fb && fb[0]) { gl.DeleteFramebuffers(1, &fb[0]); gl.DeleteRenderbuffers(2, &fb[1]); fb[0] = fb[1] = fb[2] = 0; }
+}
+
+/* One frame of the first m points: projection and model-view matrices (column-major, OpenGL's), w x h pixels,
+   point size, background ARGB. fb[0..4] = framebuffer, colour and depth renderbuffers, width, height (made or
+   remade here when the size changes). out: w*h uint32 (QImage ARGB32, top row first); depth (may be NULL): w*h
+   float window depth 0..1 (1 = empty), top row first. 0 on success. */
+CP_API int cp_gl_draw(const uint32_t *ids, int64_t m, const float *proj, const float *view, int w, int h, float size,
+                      uint32_t bg, uint32_t *fb, uint32_t *out, float *depth)
+{
+    if (!gl.ok) return -1;
+    while (gl.GetError() != 0) {}
+    if (!fb[0] || (int)fb[3] != w || (int)fb[4] != h) {
+        if (fb[0]) { gl.DeleteFramebuffers(1, &fb[0]); gl.DeleteRenderbuffers(2, &fb[1]); }
+        gl.GenFramebuffers(1, &fb[0]);
+        gl.GenRenderbuffers(2, &fb[1]);
+        gl.BindFramebuffer(CPGL_FRAMEBUFFER, fb[0]);
+        gl.BindRenderbuffer(CPGL_RENDERBUFFER, fb[1]);
+        gl.RenderbufferStorage(CPGL_RENDERBUFFER, CPGL_RGBA8, w, h);
+        gl.FramebufferRenderbuffer(CPGL_FRAMEBUFFER, CPGL_COLOR_ATTACHMENT0, CPGL_RENDERBUFFER, fb[1]);
+        gl.BindRenderbuffer(CPGL_RENDERBUFFER, fb[2]);
+        gl.RenderbufferStorage(CPGL_RENDERBUFFER, CPGL_DEPTH_COMPONENT24, w, h);
+        gl.FramebufferRenderbuffer(CPGL_FRAMEBUFFER, CPGL_DEPTH_ATTACHMENT, CPGL_RENDERBUFFER, fb[2]);
+        fb[3] = (uint32_t)w; fb[4] = (uint32_t)h;
+        if (gl.CheckFramebufferStatus(CPGL_FRAMEBUFFER) != CPGL_FRAMEBUFFER_COMPLETE) return -3;
+    } else {
+        gl.BindFramebuffer(CPGL_FRAMEBUFFER, fb[0]);
+    }
+    gl.Viewport(0, 0, w, h);
+    gl.ClearColor(((bg >> 16) & 255) / 255.0f, ((bg >> 8) & 255) / 255.0f, (bg & 255) / 255.0f, ((bg >> 24) & 255) / 255.0f);
+    gl.ClearDepth(1.0);
+    gl.Clear(CPGL_COLOR_BUFFER_BIT | CPGL_DEPTH_BUFFER_BIT);
+    gl.Enable(CPGL_DEPTH_TEST);
+    gl.DepthFunc(CPGL_LESS);
+    gl.Disable(CPGL_POINT_SMOOTH);
+    gl.PointSize(size > 1 ? size : 1.0f);
+    gl.MatrixMode(CPGL_PROJECTION); gl.LoadMatrixf(proj);
+    gl.MatrixMode(CPGL_MODELVIEW); gl.LoadMatrixf(view);
+    if (m > 0 && ids[0] && ids[1]) {
+        gl.EnableClientState(CPGL_VERTEX_ARRAY);
+        gl.EnableClientState(CPGL_COLOR_ARRAY);
+        gl.BindBuffer(CPGL_ARRAY_BUFFER, ids[0]);
+        gl.VertexPointer(3, CPGL_FLOAT, 0, (const void *)0);
+        gl.BindBuffer(CPGL_ARRAY_BUFFER, ids[1]);
+        gl.ColorPointer(CPGL_BGRA, CPGL_UNSIGNED_BYTE, 0, (const void *)0);   /* ARGB words = B,G,R,A bytes */
+        gl.DrawArrays(CPGL_POINTS, 0, (GLsizei_)m);
+        gl.BindBuffer(CPGL_ARRAY_BUFFER, 0);
+        gl.DisableClientState(CPGL_COLOR_ARRAY);
+        gl.DisableClientState(CPGL_VERTEX_ARRAY);
+    }
+    gl.PixelStorei(CPGL_PACK_ALIGNMENT, 1);
+    gl.ReadPixels(0, 0, w, h, CPGL_BGRA, CPGL_UNSIGNED_BYTE, out);
+    if (depth) gl.ReadPixels(0, 0, w, h, CPGL_DEPTH_COMPONENT, CPGL_FLOAT, depth);
+    gl.BindFramebuffer(CPGL_FRAMEBUFFER, 0);
+    int err = (int)gl.GetError();
+    /* OpenGL's rows start at the bottom: flip to top-first in place */
+    for (int y = 0; y < h / 2; y++) {
+        uint32_t *a = out + (size_t)y * w, *b = out + (size_t)(h - 1 - y) * w;
+        for (int x = 0; x < w; x++) { uint32_t t = a[x]; a[x] = b[x]; b[x] = t; }
+        if (depth) {
+            float *c = depth + (size_t)y * w, *d = depth + (size_t)(h - 1 - y) * w;
+            for (int x = 0; x < w; x++) { float t = c[x]; c[x] = d[x]; d[x] = t; }
+        }
+    }
+    for (int64_t i = 0; i < (int64_t)w * h; i++) out[i] |= 0xFF000000u;   /* opaque */
+    return err == 0 ? 0 : -4;
 }

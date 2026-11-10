@@ -233,6 +233,8 @@ def rasterise_nearest(sx, sy, z, col, w, h, size=1, bg=0xFF09100F):
 
 def eye_dome(buf, depth, strength=1.2, radius=1):
     """Eye-dome lighting on a depth buffer (inf = empty)."""
+    if radius == 1 and buf.size > 20_000 and _engine() is not None and hasattr(_engine(), "eye_dome"):
+        return _engine().eye_dome(buf, depth, strength)             # compiled, every core (1.9.7)
     h, w = buf.shape
     D = depth.reshape(h, w)
     valid = np.isfinite(D)
