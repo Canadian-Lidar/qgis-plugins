@@ -101,6 +101,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ps = PointSet(0)
         self.box = None
         self.lut = "Rainbow"
+        self.luts = {"plan": "Rainbow", "slice": "Rainbow", "3d": "Rainbow"}   # colour ramp per view (2.0.3)
+        self.sizes = {"plan": 2, "slice": 2, "3d": 2}                         # point size per view (2.0.3)
         # rejected points stay in the store (nothing is deleted); each view hides them unless its own
         # "show rejected" eye is on. Hidden by default: views then draw and colour only accepted points.
         self.show_rej = {"plan": False, "slice": False, "3d": False}
@@ -233,10 +235,8 @@ class MainWindow(QtWidgets.QMainWindow):
             hl = QtWidgets.QHBoxLayout(head)
             hl.setContentsMargins(8, 2, 6, 2)
             hl.setSpacing(4)
-            lab = QtWidgets.QLabel(title)
-            lab.setFont(theme.ui_font(13))
-            lab.setStyleSheet("color: %s; letter-spacing: 1px;" % theme.ACCENT)
-            hl.addWidget(lab)
+            from .viewpanes import _title
+            hl.addWidget(_title(title))
             hl.addStretch(1)
             self._make_dock(key, title, w, head, hl)
         self._default_layout()
@@ -269,6 +269,15 @@ class MainWindow(QtWidgets.QMainWindow):
         d.setWidget(widget)
         cl = chrome.IconButton("close", "Hide this view (project menu > Windows brings it back)", size=26)
         cl.clicked.connect(d.close)
+        if key in ("plan", "slice", "3d"):
+            # 2.0.3: the view's controls right after its title; only the close button on the right
+            for i in reversed(range(head_layout.count())):
+                it = head_layout.itemAt(i)
+                if it.spacerItem() is not None:
+                    head_layout.takeAt(i)
+            head_layout.insertSpacing(1, 10)
+            if key != "slice":                  # the Slice's slider takes the free space
+                head_layout.addStretch(1)
         head_layout.addSpacing(4)
         head_layout.addWidget(cl)
         d.setTitleBarWidget(head)
@@ -340,7 +349,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.header = h
         self.chainbar = h.chain
         h.stepClicked.connect(self._step_clicked)
-        self.lbl_inputs = QtWidgets.QLabel("")       # the inputs line: now the Georeference step's tooltip
+        # the inputs line: only text for the Georeference step's tooltip (2.0.3: kept inside the window and never
+        # shown - in 2.0.0-2.0.2 it had no parent and popped up as a small window of its own)
+        self.lbl_inputs = QtWidgets.QLabel("", self)
         self.lbl_inputs.hide()
         m = QtWidgets.QMenu(h.project_btn)
         m.addAction("New job project...", self.new_project)
@@ -717,6 +728,16 @@ class MainWindow(QtWidgets.QMainWindow):
         sc = p.data.get("view", {}).get("scales", {})
         self.scales = {k: {m: tuple(v) for m, v in sc.get(k, {}).items()} for k in ("plan", "slice", "3d")}
         self._proj_ranges = {}
+        vv = p.data.get("view", {})
+        for k in ("plan", "slice", "3d"):
+            lut = (vv.get("luts") or {}).get(k)
+            if lut in render.LUTS:
+                self.luts[k] = lut
+            sz = (vv.get("sizes") or {}).get(k)
+            if sz:
+                self.set_point_size(k, sz)
+        self.plan.lut = self.luts["plan"]
+        self._col_cache = {}
         self.filters.load(p.filters_dir)
         self._fill_lines()
         self.plan.set_project(p.store, self.tracks, {l["id"]: l["colour"] for l in p.lines})
@@ -784,7 +805,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                      "tracks_hidden": sorted(self.track_hidden),
                                      "slice": {"along": sp.along, "w": sp.width(), "th": sp.thickness(),
                                                "pos": sp.position(self._slice_half())},
-                                     "scales": {k: {m: list(v) for m, v in d.items()} for k, d in self.scales.items()}}
+                                     "scales": {k: {m: list(v) for m, v in d.items()} for k, d in self.scales.items()},
+                                     "luts": dict(self.luts), "sizes": dict(self.sizes)}
         self.project.store.sync()
         self.project.save()
         if quiet:
@@ -946,7 +968,6 @@ class MainWindow(QtWidgets.QMainWindow):
                                           "AlignPro calibration" if cal == "applied" else cal)
             lvl = "ok" if cal == "applied" and src == "pospro" else "warn"
         self.lbl_inputs.setText(txt)
-        self.lbl_inputs.setVisible(bool(txt))
         self.lbl_inputs.setToolTip(txt)
         self.lbl_inputs.setProperty("level", lvl)
         self.lbl_inputs.style().unpolish(self.lbl_inputs)
@@ -1699,7 +1720,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return np.zeros(0, np.uint32)
         scalar = mode in SCALAR_MODES
         rng = self._range(mode, view) if scalar else None
-        key = (mode, self.lut, self.preview is not None, rng)
+        lut = self._lut_of(view)
+        key = (mode, lut, self.preview is not None, rng)
         c = self._col_cache.get(key)
         if c is not None:
             return c
@@ -1707,14 +1729,14 @@ class MainWindow(QtWidgets.QMainWindow):
             c = render.pack(FILE_COLOURS[self.file_idx % len(FILE_COLOURS)])
         elif scalar:
             c = render.colour_points(self.ps if self.preview is None else _Proxy(self.ps, z=self.preview.z), mode,
-                                     self.lut, rng=rng)
+                                     lut, rng=rng)
         else:
             lc = np.array([render.hex_rgb(l.get("colour", "#00e5aa")) for l in self.project.lines] or [(0, 229, 170)],
                           np.uint8)
             src = self.ps
             if self.preview is not None and mode == "Classification":
                 src = _Proxy(self.ps, cls=self.preview.cls)
-            c = render.colour_points(src, mode, self.lut, line_colours=lc)
+            c = render.colour_points(src, mode, lut, line_colours=lc)
         self._col_cache[key] = c
         return c
 
@@ -1800,8 +1822,12 @@ class MainWindow(QtWidgets.QMainWindow):
                        ("Fixed minimum / maximum…", "manual")], cur,
                   lambda kind: self._scale_dialog(key, mode) if kind == "manual" else
                   self.set_scale(key, mode, (kind,)))
-        rm = m.addMenu("Colour ramp  ·  %s" % self.cmb_lut.currentText())
-        radio(rm, [(t, t) for t in render.LUTS], self.cmb_lut.currentText(), self.cmb_lut.setCurrentText)
+        rm = m.addMenu("Colour ramp  ·  %s" % self._lut_of(key))
+        radio(rm, [(t, t) for t in render.LUTS], self.luts[key], lambda t: self.set_lut(key, t))
+        if linked:
+            rm.setTitle("Colour ramp  ·  %s (linked to the %s view)" % (self._lut_of(key),
+                                                                       self.VIEW_NAMES[self._root(key)]))
+            rm.setEnabled(False)
         lm = m.addMenu("Link colours  ·  %s" % (pane.link.currentText().replace("= ", "to ")
                                                 if linked else "own"))
         radio(lm, [("Own colours and scale" if not pane.link.itemData(i) else
@@ -1814,9 +1840,9 @@ class MainWindow(QtWidgets.QMainWindow):
             cs = m.addMenu("Cell size  ·  %s" % self.cb_cell.currentText())
             radio(cs, [(self.cb_cell.itemText(i), i) for i in range(self.cb_cell.count())], self.cb_cell.currentIndex(),
                   self.cb_cell.setCurrentIndex)
-        ps_ = m.addMenu("Point size  ·  %d px" % self.sp_size.value())
+        ps_ = m.addMenu("Point size  ·  %d px" % self.sizes[key])
         radio(ps_, [("%d px" % v, v) for v in range(self.sp_size.minimum(), self.sp_size.maximum() + 1)],
-              self.sp_size.value(), self.sp_size.setValue)
+              self.sizes[key], lambda v: self.set_point_size(key, v))
         if key == "plan":
             bs = m.addMenu("Brush size  ·  %d px" % self.sp_brush.value())
             sizes = sorted(set(self.BRUSH_SIZES) | {self.sp_brush.value()})
@@ -1917,12 +1943,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if mode in ("Height", "Intensity", "Intensity (range normalised)", "Time", "Range"):
             lo, hi = self._range(mode, view)
             st = self.scales.get(self._root(view), {}).get(mode, ("area",)) if view else ("area",)
-            info.update(kind="ramp", lo=lo, hi=hi, lut=self.lut,
+            lut = self._lut_of(view)
+            info.update(kind="ramp", lo=lo, hi=hi, lut=lut,
                         note={"area": "", "project": "project", "manual": "fixed"}[st[0]])
             if mode == "Height":
                 info["fmt"] = lambda v: "%.2f m" % (v + o[2])
             elif mode.startswith("Intensity"):
-                info["lut"] = "Grey" if self.lut == "Rainbow" else self.lut
+                info["lut"] = "Grey" if lut == "Rainbow" else lut
                 info["fmt"] = lambda v: "%.0f" % v
             elif mode == "Time":
                 info["lut"] = "Viridis"
@@ -1934,8 +1961,8 @@ class MainWindow(QtWidgets.QMainWindow):
         elif mode == "Classification":
             cls = self.preview.cls if self.preview is not None else self.ps.cls
             u = np.unique(cls)
-            info.update(kind="swatches", items=[(tuple(render.CLASS_COLOURS[int(k)]), "%d %s" % (
-                k, F.ASPRS.get(int(k), ""))) for k in u])
+            info.update(kind="swatches", items=[(tuple(render.CLASS_COLOURS[int(k)]), F.ASPRS.get(int(k), "") or
+                                                 "Class %d" % k) for k in u])     # 2.0.3: names only, no numbers
         elif mode == "Line":
             ids = set(np.unique(self.ps.line).tolist())
             info.update(kind="swatches", items=[(render.hex_rgb(l.get("colour", "#00e5aa")), "L%d %s" % (
@@ -1996,13 +2023,42 @@ class MainWindow(QtWidgets.QMainWindow):
             self.cb_cell.blockSignals(False)
 
     def _lut(self, m):
+        """Every view's colour ramp at once (the hidden Colours field; the legend menu sets one view)."""
         self.lut = m
+        for k in self.luts:
+            self.luts[k] = m
         self.plan.lut = m
         self.plan.invalidate()
         self._col_cache = {}
         self.refresh_views()
 
+    def _lut_of(self, view):
+        """The colour ramp a view uses: its own, or the one of the view it is linked to."""
+        if not view:
+            return self.lut
+        return self.luts.get(self._root(view), self.lut)
+
+    def set_lut(self, key, m):
+        """One view's colour ramp (legend menu). The Plan's ramp also colours its project grid."""
+        self.luts[key] = m
+        if key == "plan":
+            self.plan.lut = m
+            self.plan.invalidate()
+        self._col_cache = {}
+        self.refresh_views(which=tuple(k for k in self.panes if self._root(k) == key))
+
+    def set_point_size(self, key, v):
+        """One view's point size (legend menu)."""
+        self.sizes[key] = int(v)
+        w = {"plan": self.plan, "slice": self.slice, "3d": self.v3d}[key]
+        w.point_size = int(v)
+        w._dirty = True
+        w.update()
+
     def _point_size(self, v):
+        """Every view's point size at once (the hidden Point field; the legend menu sets one view)."""
+        for k in self.sizes:
+            self.sizes[k] = int(v)
         for w in (self.plan, self.slice, self.v3d):
             w.point_size = v
             w._dirty = True
