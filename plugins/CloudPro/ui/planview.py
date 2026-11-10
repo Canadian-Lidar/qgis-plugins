@@ -19,8 +19,9 @@ from ..qt import QtCore, QtGui, Qt, Signal, evpos, mods
 from . import render, theme
 from .view2d import CloudView2D
 
-ATTRS = ["Mean height", "Max height", "Min height", "Span", "Hit count", "Density", "Coverage", "Reject count",
-         "Intensity", "None"]
+ATTRS = ["Mean height", "Max height", "Min height", "Span", "Hit count", "Density", "Coverage", "Line separation",
+         "Reject count", "Intensity", "None"]
+SEPARATION = "Line separation"
 COVER_OK, COVER_LOW, COVER_POOR = (0, 229, 170), (245, 166, 35), (232, 72, 85)   # theme ACCENT, AMBER, RED
 
 
@@ -38,6 +39,11 @@ class PlanView(CloudView2D):
         self.attr = "Mean height"
         self.target_density = DEFAULT_TARGET
         self._cover = None
+        self.separation = None               # core.separation.Result (2.2.0)
+        self.separation_current = True
+        self.separation_filter = None        # None (every pair), ("pair", a, b) or ("line", l)
+        self._sep_stats = None
+        self.tolerance = 0.03                # m: green within, amber within twice, red beyond
         self.lut = "Rainbow"
         self.shade = True
         self.box = None
@@ -65,6 +71,67 @@ class PlanView(CloudView2D):
             self.target_density = target
             if self.attr == "Coverage":
                 self.invalidate()
+
+    def set_separation(self, res, current=True):
+        self.separation = res
+        self.separation_current = current
+        self.separation_filter = None
+        self._sep_stats = None
+        if self.attr == SEPARATION:
+            self.invalidate()
+
+    def set_separation_filter(self, f):
+        if f != self.separation_filter:
+            self.separation_filter = f
+            self._sep_stats = None
+            if self.attr == SEPARATION:
+                self.invalidate()
+
+    def _sep_grid(self, key):
+        r, f = self.separation, self.separation_filter
+        if r is None:
+            return None
+        if f is None:
+            return r.grid(key)
+        if f[0] == "pair":
+            return r.grid(key, pair=(f[1], f[2]))
+        return r.grid(key, line=f[1])
+
+    def separation_title(self):
+        r, f = self.separation, self.separation_filter
+        nm = (r.data.get("names", {}) if r is not None else {})
+        if f is None:
+            return "All line pairs"
+        if f[0] == "pair":
+            return "%s / %s" % (nm.get(str(f[1]), f[1]), nm.get(str(f[2]), f[2]))
+        return "%s against the others" % nm.get(str(f[1]), f[1])
+
+    def set_tolerance(self, tol):
+        tol = max(0.001, float(tol))
+        if tol != self.tolerance:
+            self.tolerance = tol
+            if self.attr == SEPARATION:
+                self.invalidate()
+
+    def separation_shares(self):
+        """(share of cells within the tolerance, within twice, beyond, median of the cells) of what is shown."""
+        if self.separation is None:
+            return None
+        if self._sep_stats is None:
+            vals = []
+            for k in self.separation.tiles():
+                g = self._sep_grid(k)
+                if g is not None:
+                    vals.append(g[np.isfinite(g)])
+            v = np.concatenate(vals) if vals else np.zeros(0)
+            self._sep_stats = v
+        v = self._sep_stats
+        if not len(v):
+            return None
+        t = self.tolerance
+        a = float((v <= t).mean())
+        b = float((v <= 2 * t).mean())
+        return a, b - a, 1 - b, float(np.median(v))
 
     def coverage(self):
         """coverage_summary() for the current cell and target, cached until the grid changes."""
@@ -185,6 +252,8 @@ class PlanView(CloudView2D):
         im = self._tiles.get(key)
         if im is not None:
             return im
+        if self.attr == SEPARATION:
+            return self._separation_image(key)
         v = self._attr_grid(self.store.load_grid(key))
         if v is None:
             return None
@@ -213,6 +282,26 @@ class PlanView(CloudView2D):
             rgb *= (0.55 + 0.45 * np.clip(sh, 0, 1))[..., None]
         if self.attr != "Coverage":
             rgb *= 0.55                  # dimmed: the points of the Inspection Area stand out on top
+        argb = render.pack(np.clip(rgb, 0, 255).astype(np.uint8))
+        argb = np.where(ok, argb, np.uint32(0))
+        argb = np.ascontiguousarray(np.flipud(argb.reshape(n, n)))
+        img = QtGui.QImage(argb.data, n, n, 4 * n, QtGui.QImage.Format.Format_ARGB32).copy()
+        self._tiles[key] = img
+        return img
+
+    def _separation_image(self, key):
+        g = self._sep_grid(key)
+        if g is None:
+            return None
+        n = g.shape[0]
+        ok = np.isfinite(g)
+        d = np.nan_to_num(g, nan=0.0)
+        t = self.tolerance
+        rgb = np.empty(g.shape + (3,), np.float32)
+        rgb[...] = COVER_POOR
+        rgb[d <= 2 * t] = COVER_LOW
+        rgb[d <= t] = COVER_OK
+        rgb *= 0.8 if self.separation_current else 0.45     # dimmed when out of date
         argb = render.pack(np.clip(rgb, 0, 255).astype(np.uint8))
         argb = np.where(ok, argb, np.uint32(0))
         argb = np.ascontiguousarray(np.flipud(argb.reshape(n, n)))
@@ -249,6 +338,8 @@ class PlanView(CloudView2D):
         paint_2d(p, self)                        # the linked cursor on top of the drive lines and the area
         if self._range and self.has_underlay() and self.attr == "Coverage":
             self._legend(p)                      # 2.0.0: only the coverage key (one colour legend per view)
+        elif self.has_underlay() and self.attr == SEPARATION and self.separation is not None:
+            self._separation_legend(p)
         p.end()
 
     def _draw_tracks(self, p):
@@ -318,6 +409,30 @@ class PlanView(CloudView2D):
         p.setPen(QtGui.QColor(theme.DIM))
         p.drawText(QtCore.QRectF(x, y + 16, w, 16), int(Qt.AlignmentFlag.AlignLeft),
                    "%s covered · median %.0f" % (_area(c.get("area_m2", 0)), c.get("median", 0)))
+
+    def _separation_legend(self, p):
+        t = 100 * self.tolerance
+        sh = self.separation_shares() or (0, 0, 0, None)
+        rows = [(COVER_OK, "≤ %g cm" % t, sh[0]), (COVER_LOW, "%g – %g cm" % (t, 2 * t), sh[1]),
+                (COVER_POOR, "> %g cm" % (2 * t), sh[2])]
+        p.setFont(theme.mono(10))
+        w = 200
+        x, y = self.width() - w - 12, 30
+        p.fillRect(QtCore.QRectF(x - 8, y - 6, w + 12, 18 * len(rows) + 52), QtGui.QColor(38, 41, 45, 215))
+        for i, (col, text, share) in enumerate(rows):
+            p.fillRect(QtCore.QRectF(x, y + 18 * i + 2, 12, 10), QtGui.QColor(*col))
+            p.setPen(QtGui.QColor(theme.TEXT))
+            p.drawText(QtCore.QRectF(x + 18, y + 18 * i - 1, w - 18, 16), int(Qt.AlignmentFlag.AlignLeft), text)
+            p.drawText(QtCore.QRectF(x + 18, y + 18 * i - 1, w - 22, 16), int(Qt.AlignmentFlag.AlignRight),
+                       "%.0f%%" % (100 * share))
+        y += 18 * len(rows) + 4
+        med = sh[3]
+        p.setPen(QtGui.QColor(theme.BRIGHT if self.separation_current else theme.AMBER))
+        p.drawText(QtCore.QRectF(x, y, w, 16), int(Qt.AlignmentFlag.AlignLeft), self.separation_title())
+        p.setPen(QtGui.QColor(theme.DIM if self.separation_current else theme.AMBER))
+        p.drawText(QtCore.QRectF(x, y + 16, w, 16), int(Qt.AlignmentFlag.AlignLeft),
+                   ("median %.1f cm · share of cells" % (100 * med) if med is not None else "")
+                   if self.separation_current else "Out of date: check again")
 
     b_offset_z = 0.0
 

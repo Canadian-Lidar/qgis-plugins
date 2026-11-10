@@ -7,6 +7,7 @@ In the DCS chain (a job's shared project):
     python -m cloudpro.cli filter  D:/Job/Processing/Street/Street.dcsproj --group "Mobile mapping - standard clean"
     python -m cloudpro.cli publish D:/Job/Processing/Street/Street.dcsproj --dem 0.5   (LAS + grid + cloud.json)
     python -m cloudpro.cli info    D:/Job/Processing/Street/Street.dcsproj
+    python -m cloudpro.cli separation D:/Job/Processing/Street/Street.dcsproj [--tolerance 0.03] [--report sep.txt]
 
 Stand-alone projects (no chain):
 
@@ -79,6 +80,11 @@ def main(argv=None):
     n.add_argument("project")
     n.add_argument("--target", type=float, default=100.0, help="coverage target density, pts/m2 (default 100)")
     n.add_argument("--cell", type=float, default=1.0, help="coverage cell size, m (default 1)")
+    sp = sub.add_parser("separation", help="how far overlapping lines sit apart (nothing is changed)")
+    sp.add_argument("project")
+    sp.add_argument("--tolerance", type=float, default=0.03, help="m (default 0.03)")
+    sp.add_argument("--patch", type=float, default=1.0, help="cube size, m: 0.5, 1 or 2 (default 1)")
+    sp.add_argument("--report", default="", help="also write the report to this file")
     u = sub.add_parser("update")
     u.add_argument("project")
     pb = sub.add_parser("publish")
@@ -112,6 +118,17 @@ def main(argv=None):
                 print("  %-9s %s%s" % (label, st, ("  (" + "; ".join(why) + ")") if why else ""))
             for w in chain.georef_state(prj):
                 print("  ! " + w)
+        return 0
+    if a.cmd == "separation":
+        from .core import separation
+        res = separation.run(prj, _progress, patch=a.patch)
+        txt = "\n".join(separation.report_lines(res, a.tolerance, prj.name))
+        print("\n" + txt)
+        if a.report:
+            with open(a.report, "w", encoding="utf-8") as f:
+                f.write(txt + "\n")
+        prj.log("Line separation checked: %s" % separation.verdict(res, a.tolerance))
+        prj.save()
         return 0
     if a.cmd == "import":
         paths = []

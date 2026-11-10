@@ -21,6 +21,7 @@ import numpy as np
 
 from .. import __version__ as VERSION
 from ..core import perflog
+from ..core import separation as SEP
 from ..core import chain
 from ..core import filters as F
 from ..core import importer as IM
@@ -33,7 +34,7 @@ from . import chrome, render, theme
 from .dialogs import ExportDialog, ImportDialog
 from .filterpanel import FilterPanel
 from .props import AreaProperties, InfoPanel, ProjectProperties
-from .planview import ATTRS
+from .planview import ATTRS, SEPARATION
 from .viewpanes import COLOUR_MODES, PlanPane, SlicePane, View3DPane
 
 PLUGIN = "CloudPro"
@@ -134,6 +135,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._prev_pending = False
         self._edit_lock = None
         self._props = None
+        self._sepwin = None
         self._area = None
         self.bridge = Bridge()
         self.bridge.progress.connect(self._on_progress)
@@ -203,6 +205,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plan_pane.grid.currentTextChanged.connect(self._grid_attr)
         self.plan_pane.target.setValue(self._saved_target())
         self.plan.set_target(self.plan_pane.target.value())
+        self.plan.set_tolerance(self._saved_tolerance())
         self.plan_pane.target.valueChanged.connect(self._target)
         self.slice_pane.sliceChanged.connect(self._slice_changed)
         self.slice_pane.stepRequested.connect(lambda d: self.step("sec_next" if d > 0 else "sec_prev"))
@@ -397,6 +400,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for txt, fn, sc in (("Project properties (information, geodetics, survey configuration, files)...",
                              self.show_properties, "Ctrl+R"), (None, None, None),
                             ("Georeference / update the points...", self.georeference, "Ctrl+I"),
+                            ("Check line separation...", self.check_separation, ""),
                             ("Finalize for the job (LAS, ground grid, cloud.json)...", self.publish_dialog, "Ctrl+P"),
                             ("Export (LAS, XYZ, grid) anywhere...", self.export, "Ctrl+E"),
                             ("Save", self.save_project, "Ctrl+S"), (None, None, None),
@@ -752,6 +756,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.filters.load(p.filters_dir)
         self._fill_lines()
         self.plan.set_project(p.store, self.tracks, {l["id"]: l["colour"] for l in p.lines})
+        self._load_separation()
         self.plan.b_offset_z = float(self._origin()[2])
         self._track_masks()
         self.setWindowTitle("CloudPro")
@@ -888,6 +893,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tracks = {}
         self._reset_view_state()
         self.plan.set_project(None, {}, {})
+        self.plan.set_separation(None)
+        if self._sepwin is not None:
+            self._sepwin.close()
         self.lines_w.clear()
         self.header.set_project_name("")
         self.header.set_steps([])
@@ -1848,6 +1856,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if key == "plan":
             gm = m.addMenu("Grid  ·  %s" % self.plan_pane.grid.currentText())
             radio(gm, [(t, t) for t in ATTRS], self.plan_pane.grid.currentText(), self.plan_pane.grid.setCurrentText)
+            if self.plan_pane.grid.currentText() == SEPARATION:
+                tm = m.addMenu("Tolerance  ·  %g cm" % (100 * self.plan.tolerance))
+                radio(tm, [("%g cm" % (100 * t), t) for t in SEP.TOLERANCES], self.plan.tolerance, self.set_tolerance)
+                m.addAction("Line separation results…", self.show_separation)
+                m.addAction("Check line separation again", self.check_separation)
             cs = m.addMenu("Cell size  ·  %s" % self.cb_cell.currentText())
             radio(cs, [(self.cb_cell.itemText(i), i) for i in range(self.cb_cell.count())], self.cb_cell.currentIndex(),
                   self.cb_cell.setCurrentIndex)
@@ -2006,6 +2019,63 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plan.attr = a
         self.plan_pane.target.setVisible(a == "Coverage")
         self.plan.invalidate()
+        if a == SEPARATION and self.project is not None and self.plan.separation is None and not self._busy:
+            self.check_separation()             # nothing measured yet: measure it
+
+    # ------------------------------------------------------------------ line separation (2.2.0)
+    def _load_separation(self):
+        res = SEP.load(self.project) if self.project is not None else None
+        cur = res.is_current(self.project) if res is not None else True
+        self.plan.set_separation(res, cur)
+        if self._sepwin is not None:
+            self._sepwin.set_result(res, cur)
+
+    @staticmethod
+    def _saved_tolerance():
+        try:
+            from qgis.PyQt.QtCore import QSettings
+            return float(QSettings().value("CloudPro/separation_tolerance", SEP.DEFAULT_TOLERANCE))
+        except (ImportError, TypeError, ValueError):
+            return SEP.DEFAULT_TOLERANCE
+
+    def set_tolerance(self, tol):
+        self.plan.set_tolerance(tol)
+        try:
+            from qgis.PyQt.QtCore import QSettings
+            QSettings().setValue("CloudPro/separation_tolerance", float(tol))
+        except ImportError:
+            pass
+        if self._sepwin is not None:
+            self._sepwin.refresh()
+
+    def check_separation(self):
+        """Project menu > Check line separation: how far overlapping lines sit apart (nothing is changed)."""
+        if self.project is None or not self.project.store.keys():
+            theme.msg_info(self, "CloudPro", "Georeference the lines first: the check reads the points.")
+            return
+        if len(self.project.lines) < 2:
+            theme.msg_info(self, "CloudPro", "The check compares lines with each other: this job has one line.")
+            return
+        prj = self.project
+        self._run("separation", lambda progress, cancel: SEP.run(prj, progress, cancel),
+                  "Checking line separation")
+
+    def show_separation_of(self, f):
+        """The Plan's Line separation grid for every pair (None), one pair ("pair", a, b) or one line ("line", l)."""
+        if self.plan_pane.grid.currentText() != SEPARATION:
+            self.plan_pane.grid.setCurrentText(SEPARATION)
+        self.plan.set_separation_filter(f)
+
+    def show_separation(self):
+        if self.project is None:
+            return
+        if self._sepwin is None:
+            from .separationwin import SeparationWindow
+            self._sepwin = SeparationWindow(self)
+        res = self.plan.separation
+        self._sepwin.set_result(res, self.plan.separation_current)
+        self._sepwin.show()
+        self._sepwin.raise_()
 
     @staticmethod
     def _saved_target():
@@ -2986,6 +3056,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fill_lines()
         self.edits = EditManager(self.project, on_change=self._edited)
         self.plan.set_project(self.project.store, self.tracks, {l["id"]: l["colour"] for l in self.project.lines})
+        self._load_separation()
         self.plan.b_offset_z = float(self._origin()[2])
         self._track_masks()
         if self._area is not None:
@@ -3162,6 +3233,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plan.invalidate()                  # the worker rebuilt the changed grids
             self.load_box()
             self._edited(None)
+        elif tag == "separation":
+            self.plan.set_separation(res, True)
+            self.project.log("Line separation checked: %s" % SEP.verdict(res, self.plan.tolerance))
+            self.project.run_log("line separation", SEP.report_lines(res, self.plan.tolerance, self.project.name))
+            if self.plan_pane.grid.currentText() != SEPARATION:
+                self.plan_pane.grid.setCurrentText(SEPARATION)
+            self.show_separation()
         elif tag == "export":
             kind, path, n, add = res
             files = getattr(self.project, "last_export_files", None) if kind != "grid" else None
