@@ -280,11 +280,21 @@ class ImportDialog(QtWidgets.QDialog):
         return week_start_for(dt.datetime(d.year(), d.month(), d.day(), 12, tzinfo=dt.timezone.utc).timestamp())
 
 
+THIN_SPACINGS = (0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1.0, 2.0, 5.0)      # m (density = 1 / spacing^2 points per m2)
+TILE_SIZES = (50, 100, 200, 250, 500, 1000)                           # m
+GRID_CELLS = (0.05, 0.1, 0.2, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0)          # m
+
+
+def _spacing_label(s):
+    d = 1.0 / (s * s)
+    return "%g m  (%s pts/m\u00b2)" % (s, ("%g" % d) if d >= 1 else ("%.2f" % d))
+
+
 class ExportDialog(QtWidgets.QDialog):
     def __init__(self, parent=None, lines=(), start=""):
         super().__init__(parent)
         self.setWindowTitle("CloudPro - export")
-        self.resize(560, 460)
+        self.resize(600, 540)
         f = QtWidgets.QFormLayout(self)
         self.kind = QtWidgets.QComboBox()
         self.kind.addItems(["LAS 1.4 point cloud", "XYZ text (CSV)", "Grid surface (GeoTIFF)"])
@@ -311,7 +321,26 @@ class ExportDialog(QtWidgets.QDialog):
         self.classes.setPlaceholderText("all classes (or e.g. 2 for ground only)")
         self.rejected = QtWidgets.QCheckBox("Include rejected points (LAS withheld flag)")
         self.per_line = QtWidgets.QCheckBox("One file per line")
-        self.cell = dspin(0.01, 100, 0.25, 0.05, 3, " m")
+        self.thin = QtWidgets.QComboBox()
+        self.thin.addItem("All points (no thinning)", 0.0)
+        for v in THIN_SPACINGS:
+            self.thin.addItem(_spacing_label(v), v)
+        self.thin.setToolTip("Keep one real point per cell of this spacing (the point nearest the cell centre: "
+                             "coordinates and attributes untouched); the density it gives is shown beside it")
+        self.thin_mode = QtWidgets.QComboBox()
+        self.thin_mode.addItem("3D cells (keeps walls, poles and trees)", "3D")
+        self.thin_mode.addItem("2D plan cells (one point per cell, e.g. ground models)", "2D")
+        self.thin.currentIndexChanged.connect(self._kind)
+        self.tile = QtWidgets.QComboBox()
+        self.tile.addItem("One file (no tiles)", 0)
+        for v in TILE_SIZES:
+            self.tile.addItem("%d m tiles" % v, v)
+        self.tile.setToolTip("Split the export into square tiles; each file is named by its tile's lower-left "
+                             "corner (e.g. Shirley_231400_5080900.las)")
+        self.cell = QtWidgets.QComboBox()
+        for v in GRID_CELLS:
+            self.cell.addItem("%g m" % v, v)
+        self.cell.setCurrentIndex(GRID_CELLS.index(0.25))
         self.stat = QtWidgets.QComboBox()
         self.stat.addItems(["mean", "min", "max", "count", "intensity"])
         self.fill = QtWidgets.QSpinBox()
@@ -326,6 +355,9 @@ class ExportDialog(QtWidgets.QDialog):
         f.addRow(_k("Classes"), self.classes)
         f.addRow("", self.rejected)
         f.addRow("", self.per_line)
+        f.addRow(_k("Thin to"), self.thin)
+        f.addRow(_k("Thin in"), self.thin_mode)
+        f.addRow(_k("Tiles"), self.tile)
         f.addRow(_k("Grid cell"), self.cell)
         f.addRow(_k("Grid statistic"), self.stat)
         f.addRow(_k("Fill gaps up to"), self.fill)
@@ -345,6 +377,9 @@ class ExportDialog(QtWidgets.QDialog):
             w.setEnabled(k == 2)
         for w in (self.rejected, self.per_line):
             w.setEnabled(k == 0)
+        for w in (self.thin, self.tile):
+            w.setEnabled(k in (0, 1))
+        self.thin_mode.setEnabled(k in (0, 1) and bool(self.thin.currentData()))
         ext = [".las", ".csv", ".tif"][k]
         p = self.path.text()
         if p:

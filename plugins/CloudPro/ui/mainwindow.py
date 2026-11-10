@@ -2527,17 +2527,25 @@ class MainWindow(QtWidgets.QMainWindow):
         box = self.box if d.scope.currentText() == "Inspection Area" else None
         lines, classes = d.selected_lines(), parse_set(d.classes.text()) or None
         inc, per_line = d.rejected.isChecked(), d.per_line.isChecked()
-        cell, stat, fill = d.cell.value(), d.stat.currentText(), d.fill.value()
+        cell, stat, fill = float(d.cell.currentData()), d.stat.currentText(), d.fill.value()
+        spacing, thin_mode = float(d.thin.currentData() or 0) or None, d.thin_mode.currentData()
+        tile = int(d.tile.currentData() or 0) or None
         add = d.add_qgis.isChecked()
         project = self.project
+        if tile and kind in (0, 1):
+            nt = EX.plan(project, box, tile)
+            if nt > 400 and theme.msg_question(self, "CloudPro", "%d m tiles make up to %d files here.\n\nExport "
+                                               "anyway?" % (tile, nt)) != QtWidgets.QMessageBox.StandardButton.Yes:
+                return
         project.store.sync()
 
         def job(progress, cancel):
             if kind == 0:
                 return ("las", path, EX.export_las(project, path, box, lines, inc, classes, per_line, progress,
-                                                   cancel), add)
+                                                   cancel, spacing=spacing, thin_mode=thin_mode, tile=tile), add)
             if kind == 1:
-                return ("xyz", path, EX.export_xyz(project, path, box, lines, inc, classes, progress, cancel), add)
+                return ("xyz", path, EX.export_xyz(project, path, box, lines, inc, classes, progress, cancel,
+                                                   spacing=spacing, thin_mode=thin_mode, tile=tile), add)
             G, x0, yt = EX.grid_surface(project, cell, stat, box, lines, classes, fill, progress)
             return ("grid", EX.write_grid(path, G, x0, yt, cell, project.crs), int(np.isfinite(G).sum()), add)
         self._run("export", job, "Exporting")
@@ -2750,12 +2758,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self._edited(None)
         elif tag == "export":
             kind, path, n, add = res
-            self.status("Exported %s to %s" % ("{:,}".format(n), path), 10000)
+            files = getattr(self.project, "last_export_files", None) if kind != "grid" else None
+            files = files if files else [path]
+            where = path if len(files) == 1 else "%d files in %s" % (len(files), os.path.dirname(files[0]))
+            self.status("Exported %s to %s" % ("{:,}".format(n), where), 10000)
             if add and self.iface is not None:
                 from . import qgis_layers
-                qgis_layers.add_file(self.iface, path, kind)
-            theme.msg_info(self, "CloudPro", "Exported %s %s to\n%s" % (
-                "{:,}".format(n), "cells" if kind == "grid" else "points", path))
+                for fp in files[:50]:                    # many tiles: the first 50 on the map
+                    qgis_layers.add_file(self.iface, fp, kind)
+            theme.msg_info(self, "CloudPro", "Exported %s %s to\n%s%s" % (
+                "{:,}".format(n), "cells" if kind == "grid" else "points", where,
+                "\n\nThe first 50 tiles were added to the map." if add and len(files) > 50 else ""))
         self._refresh_history()
 
     def _error(self, title, ex):
