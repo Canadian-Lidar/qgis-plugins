@@ -20,6 +20,7 @@ import traceback
 import numpy as np
 
 from .. import __version__ as VERSION
+from ..core import perflog
 from ..core import chain
 from ..core import filters as F
 from ..core import importer as IM
@@ -151,7 +152,7 @@ class MainWindow(QtWidgets.QMainWindow):
             v.toolRequested.connect(self.set_tool)
             v.menu_provider = self._view_menu
         self.v3d.selectionMade.connect(lambda m, t: self.edit_selection(self.v3d, m))
-        self.v3d.gpuStatus.connect(lambda t: self.status("3D view: " + t, 8000))
+        self.v3d.gpuStatus.connect(self._gpu_status)
         self.v3d.pointPicked.connect(lambda j: self.show_point(self.v3d.idx[j] if j >= 0 else -1))
         self.plan.boxChanged.connect(self._box_from_plan)
         self.plan.slice_lines = self._plan_slice_lines
@@ -349,6 +350,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m.addAction("Save the QGIS project in the project folder", self.save_qgis_project)
         m.addSeparator()
         m.addAction("User guide (this version)", self.open_guide)
+        m.addAction("Performance report...", self.performance_report)
         h.set_project_menu(m)
         theme.dark_menu(self.recent_menu)
         self.btn_project = h.project_btn
@@ -693,6 +695,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not same:
             self._reset_view_state()
         self.project = p
+        perflog.session(p, ["3D view: %s" % (self.v3d.gpu_why or "not drawn yet")])
         if getattr(p, "store_findings", None):
             QtCore.QTimer.singleShot(0, lambda f=list(p.store_findings): self.status(
                 "Point store checked and repaired on opening (see the log): " + "; ".join(f[:3]) +
@@ -806,6 +809,9 @@ class MainWindow(QtWidgets.QMainWindow):
             for w in (self._props, self._area):
                 if w is not None:
                     w.close()
+            f3 = self.v3d.take_frame_stats()
+            if f3 and self.project is not None:
+                perflog.log(self.project, "3d", f3)
             self.v3d.release_gpu()
 
     def ensure_lock(self):
@@ -1486,6 +1492,9 @@ class MainWindow(QtWidgets.QMainWindow):
                             10000)
                 return
         self._loaded_box = dict(self.box)
+        f3 = self.v3d.take_frame_stats()                 # the previous area's 3D frames
+        if f3:
+            perflog.log(self.project, "3d", f3)
         t = time.time()
         QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
@@ -1513,6 +1522,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "{:,}".format(len(self.ps)), time.time() - t, t_read - t, t_mix - t_read, t_prep - t_mix, t_draw - t_prep,
             engine_status())
         self.status(msg, 15000)
+        perflog.log(self.project, "load", "%s; area %.0f x %.0f m" % (msg, self.box["length"], self.box["width"]))
         if time.time() - t > 2.0:                        # slow loads only: stepping the area would flood History
             self.project.log(msg)
 
@@ -2488,6 +2498,8 @@ class MainWindow(QtWidgets.QMainWindow):
         reacc = int((((ctx.flag & REJECTED) == 0) & self.ps.rejected).sum())
         ncls = int((ctx.cls != self.ps.cls).sum())
         tim = ", ".join("%s %.1fs" % (n, t) for n, t in getattr(ctx, "timings", []))
+        perflog.log(self.project, "preview", "'%s' on %s points: %.1f s (%s)" % (
+            self.filters.group.name, "{:,}".format(len(ps)), dt_, tim))
         self.filters.set_status("Preview: %s to reject (orange), %s re-accepted, %s re-classified in %.1f s\n%s%s" % (
             "{:,}".format(newly), "{:,}".format(reacc), "{:,}".format(ncls), dt_, tim,
             ("\n" + "\n".join(ctx.messages)) if ctx.messages else ""))
@@ -2673,6 +2685,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._lock_actions(True)
         self.header.set_busy(True)              # the project box turns red while CloudPro works
         self._cancel_flag = [False]
+        self._job_t0 = (tag, label, time.time())
         cancel = lambda: self._cancel_flag[0]      # noqa: E731
         self.prog.setValue(0)
         self.prog.show()
@@ -2724,6 +2737,54 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._props is not None and self._props.isVisible():
             self._props.refresh()
 
+    def _log_job(self, tag, res):
+        """Every job's time in the performance log (georeferencing, tiled filters, publish, export ...)."""
+        j, self._job_t0 = getattr(self, "_job_t0", None), None
+        if not j or j[0] != tag or self.project is None:
+            return
+        from ..core.export import Cancelled as ExportCancelled
+        how = "cancelled" if isinstance(res, (IM.Cancelled, ExportCancelled)) else \
+            ("failed: %s" % res) if isinstance(res, Exception) else "done"
+        extra = ""
+        if tag == "georef" and not isinstance(res, Exception):
+            try:
+                extra = ", %s points" % "{:,}".format(int(self.project.store.total))
+            except Exception:                   # noqa: BLE001
+                pass
+        perflog.log(self.project, "job", "%s (%s): %.1f s, %s%s%s" % (
+            j[1], tag, time.time() - j[2], how, extra, " (automatic)" if getattr(self, "_auto_georef", False) else ""))
+
+    def _gpu_status(self, text):
+        self.status("3D view: " + text, 8000)
+        perflog.log(self.project, "3d", "drawn by the " + text)
+
+    def performance_report(self):
+        """MENU > Performance report...: one text file with this computer, the job, the performance log, recent
+        History and run logs - to send for review."""
+        if self.project is None:
+            theme.msg_info(self, "CloudPro", "Open a job first: the report is written from its performance log.")
+            return
+        f3 = self.v3d.take_frame_stats()
+        if f3:
+            perflog.log(self.project, "3d", f3)
+        self.save_project(quiet=True)
+        name = "CloudPro_performance_%s_%s.txt" % (self.project.name, time.strftime("%Y%m%d_%H%M"))
+        home = os.path.expanduser("~")
+        start = next((d for d in (os.path.join(home, "Desktop"), os.path.join(home, "Documents"), home)
+                      if os.path.isdir(d)), home)
+        p, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save the performance report", os.path.join(start, name),
+                                                     "Text (*.txt)")
+        if not p:
+            return
+        try:
+            perflog.write_report(self.project, p, extra=["Inspection Area: %s" % (
+                ", ".join("%s %.1f" % (k, v) for k, v in (self.box or {}).items() if isinstance(v, (int, float))))])
+        except Exception as e:                  # noqa: BLE001
+            theme.msg_info(self, "CloudPro", "The report could not be written: %s" % e)
+            return
+        self.status("Performance report saved: %s" % p, 15000)
+        theme.msg_info(self, "CloudPro", "Performance report saved:\n%s\n\nSend this file for review." % p)
+
     def _on_done(self, tag, res):
         if self._closing:
             return
@@ -2733,6 +2794,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._busy = False
         self._busy_tag = None
         self._thread = None
+        self._log_job(tag, res)
         self._lock_actions(False)
         self.header.set_busy(False)
         self.prog.hide()
@@ -2826,6 +2888,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                ("\n" + ttxt) if ttxt else "",
                                                                ("\n" + "\n".join(ctx.messages)) if ctx.messages else ""))
             if ttxt:
+                perflog.log(self.project, "filter", "'%s' on the %s: %s" % (
+                    self.filters.group.name, self.filters.cmb_scope.currentText().lower(), ttxt))
                 self.project.log("Filter '%s' on the %s: %s" % (self.filters.group.name,
                                                                self.filters.cmb_scope.currentText().lower(), ttxt))
             self.after_edit()

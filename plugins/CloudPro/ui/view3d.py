@@ -111,6 +111,7 @@ class CloudView3D(QtWidgets.QWidget):
         self.gpu_why = ""
         self._far_key = None
         self._far = 1000.0
+        self.frame_stats = {}                    # "moving" / "still" -> [frames, seconds, points] (performance log)
 
     # ---------------------------------------------------------------- data
     def set_points(self, P, col, idx, fit=False):
@@ -440,6 +441,22 @@ class CloudView3D(QtWidgets.QWidget):
             buf = render.eye_dome(buf, z, self.edl_strength)
         return np.ascontiguousarray(buf, np.uint32)
 
+    def _count(self, kind, dt, m):
+        s = self.frame_stats.setdefault(kind, [0, 0.0, 0])
+        s[0] += 1
+        s[1] += dt
+        s[2] += m
+
+    def take_frame_stats(self):
+        """'3D frames: moving N at X ms (P points), still ...' since the last call, or '' (and reset)."""
+        st, self.frame_stats = self.frame_stats, {}
+        parts = ["%s %d at %.0f ms avg (%s points)" % (k, v[0], 1000 * v[1] / v[0], "{:,}".format(v[2] // v[0]))
+                 for k, v in sorted(st.items()) if v[0]]
+        if not parts:
+            return ""
+        how = "graphics card" if self.gpu_active() else "processor"
+        return "3D frames, %s: %s" % (how, "; ".join(parts))
+
     def release_gpu(self):
         if self._gpu_r:
             self._gpu_r.release()
@@ -454,16 +471,20 @@ class CloudView3D(QtWidgets.QWidget):
         if quick is None:
             quick = self._interacting
         if self.gpu_active():
+            t0 = time.perf_counter()
             buf = self._gpu_frame(self.edl and not self._interacting)
             if buf is not None:
                 self._set_image(buf, n)
+                self._count("moving" if self._interacting else "still", time.perf_counter() - t0, n)
                 return
         m = min(n, self.lod_max) if quick else min(n, getattr(self, "rest_max", 12_000_000))
         t0 = time.perf_counter()
         shade = self.edl and not self._interacting
         buf = _frame(self._L, self.col, self._cam(), m, self.point_size, shade, self.edl_strength)
+        dt = time.perf_counter() - t0
         if not shade or not quick:
-            self._learn(m, time.perf_counter() - t0, still=not quick)
+            self._learn(m, dt, still=not quick)
+        self._count("moving" if quick else "still", dt, m)
         self._set_image(buf, m)
 
     # ------------------------------------------------------------ still frames in a worker
@@ -501,6 +522,7 @@ class CloudView3D(QtWidgets.QWidget):
         if buf is not None and gen == self._gen and not self._interacting and \
                 buf.shape == (max(1, self.height()), max(1, self.width())):
             self._learn(m, dt, still=True)
+            self._count("still", dt, m)
             self._set_image(buf, m)
             self.update()
         elif self._again or (gen != self._gen and not self._interacting):

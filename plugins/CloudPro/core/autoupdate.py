@@ -81,6 +81,10 @@ def run(dcs_path, progress=None, cancel=None, project=None):
     if not inp.files:
         raise ValueError("no .clraw files found in the job's captures")
     opts = options(p)
+    import time
+    from . import perflog
+    perflog.session(p)
+    t0 = time.time()
     try:
         with p.dcs.run("cloudpro", PLUGIN, _version()):
             out, rest = IM.import_chain(p, inp, opts, None, progress, cancel, keep_edits=True, settings={})
@@ -90,6 +94,8 @@ def run(dcs_path, progress=None, cancel=None, project=None):
         p.log("Georeferenced automatically after the chain changed: %d line(s), %s points" % (
             len(out), "{:,}".format(sum(st["points"] for _, st in out))))
         p.save()
+        perflog.log(p, "georef", "automatic (background): %d line(s), %s points in %.1f s" % (
+            len(out), "{:,}".format(sum(st["points"] for _, st in out)), time.time() - t0))
     finally:
         p.store.close()
     return out, rest
