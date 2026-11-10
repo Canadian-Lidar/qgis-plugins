@@ -1954,8 +1954,8 @@ class MainWindow(QtWidgets.QMainWindow):
         elif mode == "Classification":
             cls = self.preview.cls if self.preview is not None else self.ps.cls
             u = np.unique(cls)
-            info.update(kind="swatches", items=[(tuple(render.CLASS_COLOURS[int(k)]), "%d %s" % (
-                k, F.ASPRS.get(int(k), ""))) for k in u])
+            info.update(kind="swatches", items=[(tuple(render.CLASS_COLOURS[int(k)]), F.ASPRS.get(int(k), "") or
+                                                 "Class %d" % k) for k in u])     # 2.0.3: names only, no numbers
         elif mode == "Line":
             ids = set(np.unique(self.ps.line).tolist())
             info.update(kind="swatches", items=[(render.hex_rgb(l.get("colour", "#00e5aa")), "L%d %s" % (
