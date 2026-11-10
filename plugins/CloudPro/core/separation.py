@@ -34,7 +34,7 @@ import numpy as np
 
 from .store import REJECTED, parse_key
 
-VERSION = 3
+VERSION = 4
 PATCH = 1.0                       # cube side (m); must divide the tile size
 PATCHES = (0.5, 1.0, 2.0)
 MIN_POINTS = 12                   # points of one line in a cube
@@ -180,6 +180,30 @@ def _tile_patches(a, x0, y0, T, patch, tbase=0.0):
             np.concatenate(out_col), n, np.concatenate(out_ta), np.concatenate(out_tb))
 
 
+CELLS = np.dtype([("c", "<i4"), ("d", "<f4"), ("ta", "<f4"), ("tb", "<f4")])
+
+
+def _cell_medians(col, val):
+    """(occupied cells, median value per cell), cells sorted."""
+    o = np.lexsort((val, col))
+    cs, vs = col[o], val[o]
+    starts = np.flatnonzero(np.r_[True, cs[1:] != cs[:-1]])
+    ends = np.r_[starts[1:], len(cs)]
+    mid = (starts + ends - 1) / 2.0
+    lo, hi = np.floor(mid).astype(int), np.ceil(mid).astype(int)
+    return cs[starts], (0.5 * (vs[lo] + vs[hi])).astype(np.float32)
+
+
+def _pair_cells(col, absd, ta, tb):
+    """One pair in one tile, sparse (CELLS): cell, median |d|, median time of each line's points."""
+    c, d = _cell_medians(col, absd)
+    out = np.empty(len(c), CELLS)
+    out["c"], out["d"] = c, d
+    out["ta"] = _cell_medians(col, ta)[1]
+    out["tb"] = _cell_medians(col, tb)[1]
+    return out
+
+
 def _column_median(col, absd, n):
     """n x n grid (row = y) of the median value (|d|, a time ...) per cell; NaN where no patch."""
     grid = np.full(n * n, np.nan, np.float32)
@@ -228,16 +252,24 @@ def solve_shift(n, d):
 
 
 class Result:
-    def __init__(self, data, grids, pair_grids=None, time_grids=None):
+    def __init__(self, data, grids, pair_cells=None):
         self.data = data                  # json-able dict
         self.grids = grids                # tile key -> n x n float32 median |d| (m), every pair
-        self.pair_grids = pair_grids or {}    # (tile key, a, b) -> the same for one pair
-        self.time_grids = time_grids or {}    # (tile key, a, b) -> (2, n, n) float32: median time of a's and b's
-        #                                       points per cell, s after data["t_base"]
+        self.pair_cells = pair_cells or {}    # (tile key, a, b) -> CELLS: only the occupied cells of one pair
+        #                                       (median |d|, median time of a's and b's points, s after t_base)
         self._areas = {}
         self._by_tile = {}
-        for (k, a, b) in self.pair_grids:
+        for (k, a, b) in self.pair_cells:
             self._by_tile.setdefault(k, []).append((a, b))
+
+    @property
+    def n(self):
+        return int(round(float(self.data.get("tile", 50.0)) / self.patch))
+
+    def _dense(self, cells):
+        g = np.full(self.n * self.n, np.nan, np.float32)
+        g[cells["c"]] = cells["d"]
+        return g.reshape(self.n, self.n)
 
     @property
     def patch(self):
@@ -255,9 +287,10 @@ class Result:
         """Median |d| per cell of a tile: every pair, one pair (a, b), or the pairs with one line (the median of
         those pairs' cells)."""
         if pair is not None:
-            return self.pair_grids.get((key, int(pair[0]), int(pair[1])))
+            c = self.pair_cells.get((key, int(pair[0]), int(pair[1])))
+            return None if c is None else self._dense(c)
         if line is not None:
-            gs = [self.pair_grids[(key, a, b)] for a, b in self._by_tile.get(key, ()) if line in (a, b)]
+            gs = [self._dense(self.pair_cells[(key, a, b)]) for a, b in self._by_tile.get(key, ()) if line in (a, b)]
             if not gs:
                 return None
             if len(gs) == 1:
@@ -301,9 +334,8 @@ def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
     t_starts = [float(l["t0"]) for l in project.lines if l.get("t0")]
     tbase = math.floor(min(t_starts)) if t_starts else 0.0
     grids = {}
-    pair_grids = {}
-    time_grids = {}
-    pair_rows = {}                          # (a, b) -> list of (n, d)
+    pair_cells = {}
+    pair_rows = {}                          # (a, b) -> [normals, d]: a sample of at most 2 x PAIR_SAMPLE
     pair_count = {}
     hist_edges = np.r_[np.arange(0, 0.20001, 0.0005), 10.0]
     hist = np.zeros(len(hist_edges) - 1)
@@ -317,7 +349,16 @@ def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
         a = st.tile_array(k)
         return k, _tile_patches(a, i * T, j * T, T, patch, tbase)
 
-    workers = workers or max(1, min(8, (os.cpu_count() or 2) - 1))
+    if not workers:
+        # threads while their memory fits in half the free memory (~150 B per point read, TILE_POINTS a tile)
+        workers = max(1, min(8, (os.cpu_count() or 2) - 1))
+        try:
+            from .perflog import _ram_gb
+            free = _ram_gb()[1]
+            if free:
+                workers = max(1, min(workers, int(free * 2 ** 30 / 2 / (150 * TILE_POINTS))))
+        except Exception:                       # noqa: BLE001
+            pass
     with ThreadPoolExecutor(max_workers=workers) as ex:
         for k, res in ex.map(one, keys):
             if cancelled and cancelled():
@@ -335,19 +376,28 @@ def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
             for p in np.unique(pk):
                 sel = np.flatnonzero(pk == p)
                 ab = (int(p // 65536), int(p % 65536))
-                pair_grids[(k,) + ab] = _column_median(col[sel], ad[sel], n)
-                time_grids[(k,) + ab] = np.stack([_column_median(col[sel], ta[sel], n),
-                                                  _column_median(col[sel], tb[sel], n)])
+                pair_cells[(k,) + ab] = _pair_cells(col[sel], ad[sel], ta[sel], tb[sel])
                 pair_count[ab] = pair_count.get(ab, 0) + len(sel)
+                # an even sample over the whole project, bounded in memory: each tile adds its share, and the
+                # pair's sample is thinned back to PAIR_SAMPLE whenever it passes twice that
                 if len(sel) > PAIR_SAMPLE // 4:
                     sel = rng.choice(sel, PAIR_SAMPLE // 4, replace=False)
-                pair_rows.setdefault(ab, []).append((nn[sel].astype(np.float32), d[sel].astype(np.float32)))
+                cur = pair_rows.get(ab)
+                nn_s, d_s = nn[sel].astype(np.float32), d[sel].astype(np.float32)
+                if cur is None:
+                    pair_rows[ab] = [nn_s, d_s]
+                else:
+                    cur[0] = np.concatenate([cur[0], nn_s])
+                    cur[1] = np.concatenate([cur[1], d_s])
+                    if len(cur[1]) > 2 * PAIR_SAMPLE:
+                        keep = rng.choice(len(cur[1]), PAIR_SAMPLE, replace=False)
+                        cur[0], cur[1] = cur[0][keep], cur[1][keep]
     names = {int(l["id"]): l.get("name", "Line %s" % l["id"]) for l in project.lines}
     pairs = []
     per_line = {}
     for (a, b), parts in sorted(pair_rows.items()):
-        nn = np.concatenate([p[0] for p in parts]).astype(float)
-        d = np.concatenate([p[1] for p in parts]).astype(float)
+        nn = parts[0].astype(float)
+        d = parts[1].astype(float)
         if len(d) > PAIR_SAMPLE:
             s = rng.choice(len(d), PAIR_SAMPLE, replace=False)
             nn, d = nn[s], d[s]
@@ -380,8 +430,9 @@ def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
             "hist": {"edges": hist_edges.tolist(), "counts": hist.astype(int).tolist()},
             "settings": {"min_points": MIN_POINTS, "max_thickness": MAX_THICKNESS, "max_angle": MAX_ANGLE,
                          "max_sep": MAX_SEP}}
-    res = Result(data, grids, pair_grids, time_grids)
+    res = Result(data, grids, pair_cells)
     save(project, res)
+    res.stamp = stamp(project)
     return res
 
 
@@ -433,26 +484,19 @@ def problem_areas(res, tol=DEFAULT_TOLERANCE):
     lim = 2 * tol
     cell_min = max(1, int(math.ceil(AREA_MIN_M2 / (pt * pt))))
     per_pair = {}
-    for (k, a, b), g in res.pair_grids.items():
+    for (k, a, b), cells in res.pair_cells.items():
         i, j = parse_key(k)
-        ok = np.isfinite(g)
-        cnt = int(ok.sum())
-        bad = ok & (g > lim)
         rec = per_pair.setdefault((a, b), {"cells": 0, "gx": [], "gy": [], "v": [], "ta": [], "tb": []})
-        rec["cells"] += cnt
-        if not bad.any():
+        rec["cells"] += len(cells)
+        bad = cells[cells["d"] > lim]
+        if not len(bad):
             continue
-        iy, ix = np.nonzero(bad)
+        iy, ix = bad["c"] // n, bad["c"] % n
         rec["gx"].append(i * n + ix)
         rec["gy"].append(j * n + iy)
-        rec["v"].append(g[iy, ix])
-        tg = res.time_grids.get((k, a, b))
-        if tg is not None:
-            rec["ta"].append(tg[0][iy, ix])
-            rec["tb"].append(tg[1][iy, ix])
-        else:
-            rec["ta"].append(np.full(len(ix), np.nan, np.float32))
-            rec["tb"].append(np.full(len(ix), np.nan, np.float32))
+        rec["v"].append(bad["d"])
+        rec["ta"].append(bad["ta"])
+        rec["tb"].append(bad["tb"])
     raw = []
     for (a, b), rec in per_pair.items():
         if not rec["gx"]:
@@ -577,7 +621,16 @@ def area_lines_text(area, names):
 
 
 GPS_EPOCH = 315964800.0
-LEAP_SECONDS = 18                 # GPS - UTC since 2017
+
+
+def _leap(t):
+    """GPS - UTC (s) at Unix time t, from DCS Core's table (the single source)."""
+    try:
+        import datetime
+        from dcs_core import timeutil
+        return int(timeutil.leap_seconds(datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=float(t))))
+    except Exception:                           # noqa: BLE001
+        return 18
 
 
 def _hms(t):
@@ -595,7 +648,7 @@ def gps_text(t0, t1):
     """The same span in GPS seconds of the week (as in an SBET or PosPro)."""
     if t0 is None:
         return "-"
-    g = lambda t: (t - GPS_EPOCH + LEAP_SECONDS) % 604800.0      # noqa: E731
+    g = lambda t: (t - GPS_EPOCH + _leap(t)) % 604800.0      # noqa: E731
     return "GPS %.1f-%.1f s of week" % (g(t0), g(t1))
 
 
@@ -605,7 +658,7 @@ FEEDBACK_NAME = "problem_areas.json"
 
 
 def gps_week_sow(t):
-    g = t - GPS_EPOCH + LEAP_SECONDS
+    g = t - GPS_EPOCH + _leap(t)
     return int(g // 604800), float(g % 604800)
 
 
@@ -639,7 +692,7 @@ def feedback(project, res, tol=DEFAULT_TOLERANCE):
         areas.append(rec)
     return {"schema": FEEDBACK_SCHEMA, "written_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "by": "CloudPro %s" % ver, "measured_utc": res.data.get("utc"), "tolerance_m": tol,
-            "patch_m": res.patch, "crs": project.crs, "leap_seconds": LEAP_SECONDS,
+            "patch_m": res.patch, "crs": project.crs, "leap_seconds": _leap(time.time()),
             "trajectory": {"source": tr.get("source"), "handover_id": tr.get("handover_id"),
                            "description": tr.get("description")},
             "current": res.is_current(project), "summary": verdict(res, tol), "areas": areas}
@@ -678,14 +731,23 @@ def save(project, res):
     tmp = os.path.join(d, "grids.npz.part")
     with open(tmp, "wb") as f:
         arrs = {("t" + k): v for k, v in res.grids.items()}
-        arrs.update({("p%s_%d_%d" % kab): v for kab, v in res.pair_grids.items()})
-        arrs.update({("q%s_%d_%d" % kab): v for kab, v in res.time_grids.items()})
+        arrs.update({("p%s_%d_%d" % kab): v for kab, v in res.pair_cells.items()})
         np.savez_compressed(f, **arrs)
     os.replace(tmp, os.path.join(d, "grids.npz"))
     tmp = os.path.join(d, "separation.json.part")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(res.data, f, indent=1)
     os.replace(tmp, os.path.join(d, "separation.json"))
+
+
+def stamp(project):
+    """(size, mtime) of the saved result, None when there is none."""
+    try:
+        st = os.stat(os.path.join(folder(project), "grids.npz"))
+        st2 = os.stat(os.path.join(folder(project), "separation.json"))
+        return (st.st_size, st.st_mtime_ns, st2.st_mtime_ns)
+    except OSError:
+        return None
 
 
 def load(project):
@@ -696,14 +758,16 @@ def load(project):
         if data.get("version") != VERSION:
             return None
         with np.load(os.path.join(d, "grids.npz")) as z:
-            grids, pg, tg = {}, {}, {}
+            grids, pc = {}, {}
             for k in z.files:
                 if k[0] == "t":
                     grids[k[1:]] = z[k]
-                else:
+                elif k[0] == "p":
                     i, j, a, b = k[1:].split("_")
-                    (pg if k[0] == "p" else tg)[("%s_%s" % (i, j), int(a), int(b))] = z[k]
-        return Result(data, grids, pg, tg)
+                    pc[("%s_%s" % (i, j), int(a), int(b))] = z[k]
+        res = Result(data, grids, pc)
+        res.stamp = stamp(project)
+        return res
     except (OSError, ValueError, KeyError):
         return None
 
@@ -755,8 +819,9 @@ def report_lines(res, tol=DEFAULT_TOLERANCE, project_name=""):
          % (d.get("utc", ""), d.get("seconds", 0), res.patch, "{:,}".format(d.get("patches", 0)),
             d.get("tiles_with_overlap", 0), d.get("tiles", 0)),
          "", verdict(res, tol),
-         "Overall median %s cm; %.0f %% of patches within %.0f cm." % (_cm(d.get("median")),
-                                                                     100 * res.share_within(tol), 100 * tol),
+         ("Overall median %s cm; %.0f %% of patches within %.0f cm." % (_cm(d.get("median")),
+                                                                      100 * res.share_within(tol), 100 * tol)
+          if d.get("patches") else "No patches: no flat surfaces seen by two lines."),
          "", "Line pairs (shift = line b against line a; E/N need walls; rest = left after that shift), cm:",
          "%-24s %9s %7s %7s %7s %7s %7s %7s %7s" % ("a / b", "patches", "median", "95 %", "east", "north", "up",
                                                     "rest", "walls")]

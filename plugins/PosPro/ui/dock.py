@@ -1868,8 +1868,10 @@ class ReviewPage(Page):
             n_c = len(cd["areas"])
             msg.append("Point cloud (CloudPro, %s): %d problem area%s%s." % (
                 (cd.get("measured_utc") or "")[:16], n_c, "" if n_c == 1 else "s",
-                "" if cd["current"] else ", measured on an earlier trajectory: check line separation in CloudPro "
-                                         "again after it updates"))
+                "" if cd["current"] else
+                (", measured on an earlier trajectory: check line separation in CloudPro again after it updates"
+                 if cd["other"] == "earlier trajectory" else
+                 ", measured on points not georeferenced with PosPro's trajectory")))
             if not cd["current"]:
                 self.pending.setStyleSheet("color: %s;" % theme.AMBER)
         self.pending.setText(" ".join(msg))

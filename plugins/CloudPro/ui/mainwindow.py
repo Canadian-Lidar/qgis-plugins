@@ -2024,7 +2024,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------ line separation (2.2.0)
     def _load_separation(self):
-        res = SEP.load(self.project) if self.project is not None else None
+        """The saved line separation result (read again only when its file changed: this runs after every
+        georeferencing and tiled filter run) and whether it is still current."""
+        res = None
+        if self.project is not None:
+            stamp = SEP.stamp(self.project)
+            old = self.plan.separation
+            if old is not None and stamp is not None and getattr(old, "stamp", None) == stamp:
+                res = old
+            else:
+                res = SEP.load(self.project)
         cur = res.is_current(self.project) if res is not None else True
         self.plan.set_separation(res, cur)
         if self._sepwin is not None:

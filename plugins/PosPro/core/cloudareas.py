@@ -53,9 +53,14 @@ def load(project):
         return None
     if str(doc.get("schema", "")).split("/")[0] != SCHEMA.split("/")[0]:
         return None
-    hid = (doc.get("trajectory") or {}).get("handover_id")
+    tr = doc.get("trajectory") or {}
+    hid = tr.get("handover_id")
     current = bool(hid) and hid == _pospro_id(project)
-    return {"areas": doc.get("areas", []), "current": current, "summary": doc.get("summary", ""),
+    # why not current: the points were georeferenced on an earlier PosPro trajectory, or not on PosPro's at all
+    # (CloudPro's real-time fallback)
+    other = "" if current else ("earlier trajectory" if tr.get("source") == "pospro" and hid else
+                                "not PosPro's trajectory")
+    return {"areas": doc.get("areas", []), "current": current, "other": other, "summary": doc.get("summary", ""),
             "measured_utc": doc.get("measured_utc"), "tolerance_m": doc.get("tolerance_m"),
             "trajectory": doc.get("trajectory") or {}, "by": doc.get("by", "")}
 
@@ -88,7 +93,7 @@ def anomalies(project, extend=(0.0, 0.0)):
                         "max": float(a.get("max_m") or 0.0), "median": float(a.get("median_m") or 0.0),
                         "line": t.get("line") or a.get("line"), "at_fault": a.get("line") is not None,
                         "lines": a.get("lines", []), "e": a.get("e"), "n": a.get("n"),
-                        "area_m2": a.get("area_m2"), "current": doc["current"]})
+                        "area_m2": a.get("area_m2"), "current": doc["current"], "other": doc["other"]})
     return out
 
 
@@ -99,5 +104,5 @@ def describe(a):
         who += " (or %s)" % " / ".join(x for x in a.get("lines", []) if x != a.get("line"))
     s = "%.0f cm, %s" % (100 * a.get("max", 0.0), who)
     if not a.get("current", True):
-        s += ", earlier trajectory"
+        s += ", " + (a.get("other") or "earlier trajectory")
     return s
