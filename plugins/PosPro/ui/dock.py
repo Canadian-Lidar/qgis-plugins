@@ -1908,7 +1908,8 @@ class ReviewPage(Page):
             from dcs_core import sbet as dsbet
             if dsbet.holes_matter(rh):
                 msg.insert(0, "Recording holes: the trajectory has no data for %.0f%% of its time (%d holes, longest "
-                              "%.1f s); the recording lost INS data there." % (rh["missing_pct"], rh["count"],
+                              "%.1f s); the recording lost INS data there. StripPro fills them from the Lidar: no need to "
+                              "bridge them here." % (rh["missing_pct"], rh["count"],
                                                                                rh["longest_s"]))
                 self.pending.setStyleSheet("color: %s;" % theme.AMBER)
         self.pending.setText(" ".join(msg))

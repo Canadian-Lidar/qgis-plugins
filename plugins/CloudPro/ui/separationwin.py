@@ -64,6 +64,12 @@ class SeparationPanel(QtWidgets.QWidget):
         self.lines.itemSelectionChanged.connect(lambda: self._picked(self.lines))
 
         row = QtWidgets.QHBoxLayout()
+        # 2.4.0: trajectory problems (recording holes, local errors) are fixed in StripPro when it is installed
+        self.btn_strip = QtWidgets.QPushButton("Fix in StripPro")
+        self.btn_strip.setToolTip("StripPro corrects the trajectory from the point cloud: recording holes and local "
+                                  "trajectory errors, all lines at once")
+        self.btn_strip.clicked.connect(self.open_strippro)
+        row.addWidget(self.btn_strip)
         self.btn_pospro = QtWidgets.QPushButton("Open in PosPro")
         self.btn_pospro.setToolTip("PosPro's Trajectory Review, on the chosen problem area (C rows)")
         self.btn_pospro.clicked.connect(self.open_pospro)
@@ -311,7 +317,7 @@ class SeparationPanel(QtWidgets.QWidget):
         aid = self._selected_area()
         if aid is not None:
             return {"kind": "cloud_area", "id": "C%d" % aid}
-        traj = any(self._kinds(p) & {"trajectory", "either"} for p in self.res.pairs)
+        traj = any(self._kinds(p) & {"trajectory", "either", "recording"} for p in self.res.pairs)
         if self.res.problem_areas(self.tolerance) or traj:
             return {"kind": "cloud_area"}
         return None
@@ -332,8 +338,19 @@ class SeparationPanel(QtWidgets.QWidget):
 
     def _handoff_state(self):
         ok = self.res is not None and self.current
+        try:
+            from dcs_core import registry
+            has_strip = registry.has("strippro")
+        except Exception:       # noqa: BLE001
+            has_strip = False
+        self.btn_strip.setVisible(has_strip)
+        self.btn_strip.setEnabled(ok and self.pospro_target() is not None)
         self.btn_pospro.setEnabled(ok and self.pospro_target() is not None)
         self.btn_alignpro.setEnabled(ok and self.alignpro_target() is not None)
+
+    def open_strippro(self):
+        if self.pospro_target() is not None:
+            self.mw.open_in("strippro", {"kind": "cloud_area"})
 
     def open_pospro(self):
         t = self.pospro_target()

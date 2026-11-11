@@ -130,7 +130,7 @@ class AlignProDock(PluginWindow):
             self.stack.addWidget(_scroll(pg))
         self.pg_welcome = WelcomePage(self)
         self.stack.addWidget(_scroll(self.pg_welcome))
-        self.b_view = QPushButton("DATA VIEW \u00b7 FINE TUNE")
+        self.b_view = QPushButton("CHECK / FINE TUNE")
         self.b_view.setObjectName("ppPrimary")
         self.b_view.setToolTip("Plan, profile and section of the points, re-drawn live while you adjust roll, pitch, "
                                "heading, lever arm and latency")
@@ -214,6 +214,7 @@ class AlignProDock(PluginWindow):
         theme.mapperize(self.dv)
         theme.mark(self.dv)
         self.dv.apply_requested.connect(self.apply_installation)
+        self.dv.autocal_requested.connect(self.autopatch)
         self.dv.loader = self._load_fine
         self.dv.area_changed.connect(self._view_area)
         self.dv.boxes_edited.connect(self._box_edited)
@@ -872,7 +873,8 @@ class AlignProDock(PluginWindow):
             self.message("Auto calibration: advised %.4f / %.4f / %.4f (SDEV %.4f / %.4f / %.4f), error %.2f \u2192 %.2f cm" % (
                 a["roll"], a["pitch"], a["heading"], s["roll"], s["pitch"], s["heading"],
                 res["error_before_cm"], res["error_after_cm"]))
-            self.toast("Calibration done: %.4f  %.4f  %.4f   (error %.2f \u2192 %.2f cm). Apply to finalize it." % (
+            self.toast("Calibration done: %.4f  %.4f  %.4f   (error %.2f \u2192 %.2f cm). Not in use yet: "
+                       "Apply advised & finalize." % (
                 a["roll"], a["pitch"], a["heading"], res["error_before_cm"], res["error_after_cm"]))
             for w in res.get("warnings", []):
                 self.message(w, "warning")

@@ -30,7 +30,18 @@ from qgis.PyQt.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
 from . import registry
 
-NEXT_PLUGIN = {"pospro": ("alignpro", "AlignPro"), "alignpro": ("cloudpro", "CloudPro")}
+NEXT_PLUGIN = {"pospro": ("alignpro", "AlignPro"), "alignpro": ("cloudpro", "CloudPro"),
+               "strippro": ("cloudpro", "CloudPro")}
+LABELS = {"pospro": "PosPro", "alignpro": "AlignPro", "strippro": "StripPro", "cloudpro": "CloudPro"}
+
+
+def next_stage(stage):
+    """The plugin after `stage` in the chain (1.13.0): AlignPro continues in StripPro when StripPro is
+    installed (it is optional), else in CloudPro."""
+    if stage == "alignpro" and registry.has("strippro"):
+        return "strippro"
+    n = NEXT_PLUGIN.get(stage)
+    return n[0] if n else None
 _MARK = {"done": "✓", "warn": "⚠", "error": "✕", "todo": "○", "running": "…"}
 _LEVEL = {"done": "ok", "warn": "warn", "error": "bad", "todo": "", "running": ""}
 
@@ -133,7 +144,9 @@ class StepNav(QWidget):
             self._set_msg(text, level)
             return
         stage, ready, why, path = self._cont or (nxt[0], False, "", None)
-        label = {s: n for s, n in NEXT_PLUGIN.values()}.get(stage, stage)
+        if stage == NEXT_PLUGIN.get(self.stage, (None,))[0]:
+            stage = next_stage(self.stage) or stage        # an optional stage (StripPro) between, when installed
+        label = LABELS.get(stage, stage)
         self.next.setVisible(True)
         self.next.setText("CONTINUE IN %s  ›" % label.upper())
         can = ready and path is not None and registry.has(stage)
@@ -164,7 +177,10 @@ class StepNav(QWidget):
         if not self.is_last():
             self.goto(self.index + 1)
         elif self._cont and self._cont[1] and self._cont[3]:
-            registry.open(self._cont[0], self._cont[3])
+            stage = self._cont[0]
+            if stage == NEXT_PLUGIN.get(self.stage, (None,))[0]:
+                stage = next_stage(self.stage) or stage
+            registry.open(stage, self._cont[3])
 
 
 

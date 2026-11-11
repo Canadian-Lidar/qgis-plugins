@@ -2130,7 +2130,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ok = fn(stage, path, target) if fn is not None else registry.open(stage, path)
         if not ok:
             theme.msg_info(self, "CloudPro", "%s is not installed or not enabled in QGIS." % {
-                "pospro": "PosPro", "alignpro": "AlignPro"}.get(stage, stage))
+                "pospro": "PosPro", "alignpro": "AlignPro", "strippro": "StripPro"}.get(stage, stage))
         return ok
 
     @staticmethod

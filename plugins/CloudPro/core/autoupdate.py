@@ -45,6 +45,15 @@ def decide(dcs_path, project=None):
     ps, _ = dcs.state("pospro")
     if ps != "done":
         return False, "PosPro is %s" % ps
+    # 2.4.0: a job georeferenced with StripPro's trajectory waits for StripPro (else it would be built once with
+    # PosPro's trajectory and again when StripPro runs)
+    if ((p.data.get("inputs") or {}).get("trajectory") or {}).get("source") == "strippro":
+        try:
+            ss, _ = dcs.state("strippro")
+        except Exception:                       # noqa: BLE001
+            ss = "none"
+        if ss != "done":
+            return False, "waiting for StripPro (its corrected trajectory is used for this job; it is %s)" % ss
     ov = (p.data.get("override") or {}).get("source")
     if ov not in ("recorded", "entered"):
         a, _ = dcs.state("alignpro")

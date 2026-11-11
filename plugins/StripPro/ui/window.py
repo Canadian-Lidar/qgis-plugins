@@ -191,6 +191,9 @@ class StripProWindow(PluginWindow):
         self.b_final.setObjectName("ppPrimary")
         self.b_final.clicked.connect(self.finalize)
         row.addWidget(self.b_final)
+        self.b_next = QPushButton("Continue in CloudPro  \u203a")
+        self.b_next.clicked.connect(self.continue_cloudpro)
+        row.addWidget(self.b_next)
         v.addLayout(row)
         return w
 
@@ -236,6 +239,14 @@ class StripProWindow(PluginWindow):
             self.kv.set("Calibration", ("AlignPro %.3f / %.3f / %.3f" % tuple(inp.mount)) if inp.mount else
                         "recorded mounting (AlignPro not finalized)", None if inp.mount else "warn")
             self.kv.set("Lines", ", ".join(n for n, _r in inp.lines()))
+            try:
+                st, why = self.dcs.state(KEY)
+            except Exception:       # noqa: BLE001
+                st, why = "none", []
+            words = {"done": "finalized, CloudPro uses it", "stale": "out of date: Align strips again",
+                     "none": "not finalized", "failed": "the last run failed", "running": "running"}
+            self.kv.set("StripPro", words.get(st, st) + ("\n" + "; ".join(why) if why else ""),
+                        {"done": "ok", "stale": "warn", "failed": "bad"}.get(st))
         self._show_result()
         self._update_buttons()
 
@@ -269,6 +280,12 @@ class StripProWindow(PluginWindow):
         self.b_align.setEnabled(self.inputs is not None and not busy)
         self.b_cancel.setVisible(busy)
         self.b_final.setEnabled(self.summary is not None and not busy and self.inputs is not None)
+        try:
+            from dcs_core import registry
+            done = self.dcs is not None and self.dcs.state(KEY)[0] == "done"
+            self.b_next.setEnabled(done and registry.has("cloudpro") and not busy)
+        except Exception:       # noqa: BLE001
+            self.b_next.setEnabled(False)
         st = "none"
         if self.dcs is not None:
             try:
@@ -346,6 +363,11 @@ class StripProWindow(PluginWindow):
         self.status.setText("Finalized: %d records filled into holes. CloudPro georeferences with this trajectory "
                             "from now on." % doc["strip"]["filled_records"])
         self._fill()
+
+    def continue_cloudpro(self):
+        from dcs_core import registry
+        if self.dcs is not None and registry.has("cloudpro"):
+            registry.open("cloudpro", self.dcs.path)
 
     def open_guide(self, *_):
         if self._guide:

@@ -24,6 +24,7 @@
 <h2>What's new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>1.9.0</b></td><td><b>One calibration flow:</b> the Calibration page reads <span class="ui">1 Auto calibrate</span> › <span class="ui">2 Check / fine tune…</span> › <span class="ui">3 Apply advised &amp; finalize</span>, and shows the recorded, advised and in-use angles side by side with whether the advised ones are in use and whether the ones in use are finalized; the second, typed-angles Apply is gone (type values in the Data View). The Data View has <span class="ui">Auto calibrate</span> and <span class="ui">Apply &amp; finalize these values</span>. Every button that applies also finalizes and says so. Continue goes to StripPro when it is installed. </td></tr>
 <tr><td><b>1.8.2</b></td><td>A pair measured across recording holes says <i>Recording holes</i> on the Pairs page instead of calibration or trajectory.</td></tr>
 <tr><td><b>1.8.1</b></td><td><b>Opened from CloudPro:</b> <span class="ui">Open in AlignPro</span> in CloudPro's LINE SEPARATION tab brings up the Pairs page with that line pair selected under <i>From the point cloud</i>. Needs DCS Core 1.12.0.</td></tr>
 <tr><td><b>1.8.0</b></td><td><b>From the point cloud:</b> what CloudPro's line separation check says about the calibration, per line pair, on the Pairs page, and <span class="ui">Use these lines and their overlap</span> to calibrate on that material (<a href="#cloud">From the point cloud</a>). Needs CloudPro 2.2.1 for the findings.</td></tr>
@@ -69,7 +70,7 @@
 
 <h2>Under the steps</h2>
 <ul>
-<li><span class="ui">Data View · Fine Tune</span> opens the Data View as a floating window (Chapter <a href="#dataview">Data View and fine tuning</a>).</li>
+<li><span class="ui">2 Check / fine tune…</span> opens the Data View as a floating window (Chapter <a href="#dataview">Data View and fine tuning</a>).</li>
 <li>The live figures: <b>AVG ERROR</b>, the mean point-to-plane distance over the planar patches with the current angles (green below 1 cm, amber below 2.5 cm, red above); <b>SDEV</b> and <b>SEP</b>, the average standard deviation and line separation of the map grid; the trajectory in use (<i>POSPRO</i>, <i>SBET FILE</i> or <i>REAL-TIME</i>) and <i>LOCAL ENU</i>, the local frame AlignPro works in; and the current roll (R), pitch (P) and heading (H). Hover for an explanation.</li>
 <li><span class="ui">Map grid</span>: which value the grid layer on the QGIS map shows: <i>Mean height</i> (with a hillshade), <i>Standard deviation</i>, <i>Line separation</i> (the default), <i>Count</i> or <i>Lines per cell</i>. See Chapter <a href="#maplayers">Map layers</a>.</li>
 </ul>
@@ -172,7 +173,7 @@
 <p>A <span class="ix">system profile</span> keeps what is true of the hardware rather than of one job &ndash; the Lidar lever arm, mounting angles and latency here, the antenna offsets, rear axle, IMU and vehicle in PosPro &ndash; so once you have checked them (a patch test here, <span class="ui">Check antennas</span> in PosPro) the next job from the same system starts with them. Profiles are kept on this computer and can be exported to a file and imported on another.</p>
 <ul>
 <li>A profile knows the system it was made for: the mapper unit's serial number (from the survey line's <code>session.json</code>) and the Certus serial number (from <code>hardware.json</code>).</li>
-<li><b>Save:</b> after <span class="ui">Apply advised</span>, press <span class="ui">Save to system profile…</span> (Calibration) or <span class="ui">System profile…</span> (Installation). <span class="ui">New…</span> makes a profile for this job's system; <span class="ui">Save this job's values to the profile</span> updates the selected one. Only the Lidar section is written; the antenna offsets PosPro saved stay as they are.</li>
+<li><b>Save:</b> after <span class="ui">3 Apply advised &amp; finalize</span>, press <span class="ui">Save to system profile…</span> (Calibration) or <span class="ui">System profile…</span> (Installation). <span class="ui">New…</span> makes a profile for this job's system; <span class="ui">Save this job's values to the profile</span> updates the selected one. Only the Lidar section is written; the antenna offsets PosPro saved stay as they are.</li>
 <li><b>Use:</b> when the lines are read and a profile matches the system that recorded them, AlignPro shows the values that differ and asks whether to use them. <span class="ui">Use profile values</span> applies them as if you had typed them and pressed <span class="ui">Apply</span>: the lines are georeferenced again, the profile's mounting becomes the job's starting mounting (shared with CloudPro) and the result is finalized. You are asked once per job for each version of a profile.</li>
 <li>The table in the System profiles window shows the profile beside this job; values that differ are amber. A profile made for another system can still be used, after a question.</li>
 <li>Keep the profile up to date when the hardware changes (the Lidar is remounted, an antenna is moved): save the new values after the next patch test.</li>
@@ -269,7 +270,7 @@
 <li>Press <span class="ui">Auto calibrate</span>. When it ends, the bar says <i>Calibration done … Apply to finalize it.</i> and the Data View opens with the advised angles as live values over the applied ones in grey.</li>
 <li>Read the cards. Each angle card shows the advised value and its SDEV: green below 0.02°, amber from 0.02° to 0.05°, red above. <span class="ui">Error before → after</span> is the mean point-to-plane error with the starting and the advised angles; after should be about 1 cm or less (green below 1 cm).</li>
 <li>Check the Data View (Chapter <a href="#dataview">Data View</a>): the passes should fall on one surface in the roll, pitch and heading boxes.</li>
-<li>Press <span class="ui">Apply advised</span>. AlignPro re-georeferences every line with the advised angles and finalizes <code>alignment.json</code> for CloudPro.</li>
+<li>Press <span class="ui">3 Apply advised &amp; finalize</span>. AlignPro re-georeferences every line with the advised angles and finalizes <code>alignment.json</code> for CloudPro.</li>
 <li>Press <span class="ui">Copy for mapper</span> and paste the angles into the mapper: <i>Settings › Hardware › Survey sensor › Mounting angles</i>.</li>
 </ol>
 
@@ -282,15 +283,15 @@
 <tr><td>Trajectory</td><td>The trajectory the calibration was solved on</td></tr>
 </table>
 <p>Calibration warnings appear in amber under these rows (Chapter <a href="#trouble">Troubleshooting</a>).</p>
-<p><span class="ui">Copy for mapper</span> copies the line <code>Roll 89.7187   Pitch 44.6997   Heading 0.6480</code> to the clipboard, to four decimals. It copies the <b>applied</b> angles, the ones finalized for CloudPro, so press it after <span class="ui">Apply advised</span> (or after applying your own values). To copy trial values you have not applied, use <span class="ui">Copy for mapper</span> in the Data View.</p>
+<p><span class="ui">Copy for mapper</span> copies the line <code>Roll 89.7187   Pitch 44.6997   Heading 0.6480</code> to the clipboard, to four decimals. It copies the <b>applied</b> angles, the ones finalized for CloudPro, so press it after <span class="ui">3 Apply advised &amp; finalize</span> (or after applying your own values). To copy trial values you have not applied, use <span class="ui">Copy for mapper</span> in the Data View.</p>
 
 <h2>Finalized for CloudPro</h2>
-<figure><img src="fig/calibration_published.png" style="max-height:80mm"><figcaption><b>Figure {N}.2</b> After Apply advised: the state is <i>current</i>, with the finalized values, time and identifier. The amber line is a reminder that this result was solved on an SBET file, not on PosPro's trajectory.</figcaption></figure>
+<figure><img src="fig/calibration_published.png" style="max-height:80mm"><figcaption><b>Figure {N}.2</b> After Apply advised &amp; finalize: the state is <i>current</i>, with the finalized values, time and identifier. The amber line is a reminder that this result was solved on an SBET file, not on PosPro's trajectory.</figcaption></figure>
 <ul>
 <li><b>State</b>: <i>current</i>, <i>out of date</i> (with the reasons), <i>not finalized yet</i>, <i>running now</i> or <i>the last run failed</i>.</li>
 <li><b>Values</b> and <b>Finalized</b>: the finalized roll, pitch and heading, the time (UTC) and the start of the publication's identifier.</li>
 <li>Amber notes: why it is out of date; <i>The applied values differ from the finalized ones</i>; or that the calibration was not solved on PosPro's trajectory.</li>
-<li><span class="ui">Finalize the applied values</span> writes <code>alignment.json</code> again with the values applied now. It is available when nothing is finalized, the publication is out of date, or the applied values differ from it, for example after <span class="ui">Reset AlignPro to the recorded values…</span>.</li>
+<li><span class="ui">Finalize for CloudPro</span> (shown only when needed) writes <code>alignment.json</code> again with the values applied now. It is available when nothing is finalized, the publication is out of date, or the applied values differ from it, for example after <span class="ui">Reset AlignPro to the recorded values…</span>.</li>
 </ul>
 
 <h2>Current angles</h2>
@@ -310,7 +311,7 @@
 
 <h2>Opening it</h2>
 <ul>
-<li><span class="ui">Data View · Fine Tune</span> under the steps or on the Calibration page: as a floating window.</li>
+<li><span class="ui">2 Check / fine tune…</span> under the steps or on the Calibration page: as a floating window.</li>
 <li><span class="ui">Open the Data View</span> in the project menu: where you left it.</li>
 <li>After reading the data and after Auto calibrate it opens by itself.</li>
 </ul>
@@ -360,7 +361,7 @@
 <li><span class="ui">Lever arm (m)</span>: forward, starboard, down, with a step of 0.001 to 0.1 m, and <span class="ui">Latency ms</span> in steps of 1 ms. A latency change takes a little longer to draw.</li>
 <li><b>Δ R P H</b>, <b>Δ F S D</b>: trial minus applied values.</li>
 <li><span class="ui">Start from</span>: <span class="ui">Recorded</span> (the angles and lever arm recorded in the <code>.clraw</code>, latency 0), <span class="ui">Applied</span> (the values applied to the project) or <span class="ui">Advised</span> (the auto calibration result).</li>
-<li><span class="ui">Apply to project</span> applies the trial angles, lever arm and latency, finds the planar surfaces again and finalizes <code>alignment.json</code>.</li>
+<li><span class="ui">Apply &amp; finalize these values</span> applies the trial angles, lever arm and latency, finds the planar surfaces again and finalizes <code>alignment.json</code>.</li>
 <li><span class="ui">Copy for mapper</span> copies the trial angles; the button reads <i>COPIED ✓</i> for two seconds.</li>
 </ul>
 <p>Until you apply, the panel says <b>● Trial values not applied yet</b>.</p>
@@ -371,9 +372,9 @@
 <li>Start from <span class="ui">Applied</span> or <span class="ui">Advised</span>.</li>
 <li>Watch the view that shows the angle you change: roll in the Roll box, pitch in the Pitch box, heading in the Heading box. Set <span class="ui">Ghost</span> to <i>Applied values</i> to see where you started.</li>
 <li>Nudge until the passes fall on one surface and Error now is at its lowest.</li>
-<li>Press <span class="ui">Apply to project</span>, then copy the angles to the mapper.</li>
+<li>Press <span class="ui">Apply &amp; finalize these values</span>, then copy the angles to the mapper.</li>
 </ol>
-<div class="note"><b>Note</b> The fields show angles to 0.0001°, the lever arm to the millimetre and the latency to 0.1&nbsp;ms. Values equal to the applied ones at that precision count as applied, so after <span class="ui">Apply advised</span> the panel shows nothing to apply, and <span class="ui">Apply</span> keeps the advised angles exactly (finalized as <i>calibration</i>).</div>
+<div class="note"><b>Note</b> The fields show angles to 0.0001°, the lever arm to the millimetre and the latency to 0.1&nbsp;ms. Values equal to the applied ones at that precision count as applied, so after <span class="ui">3 Apply advised &amp; finalize</span> the panel shows nothing to apply, and <span class="ui">Apply</span> keeps the advised angles exactly (finalized as <i>calibration</i>).</div>
 
 <h1><span class="num">{N}</span>6 Analyze</h1>
 <p>Analyze sweeps one value with everything else fixed and plots the mean point-to-plane error against it (the planar surfaces are fitted again at each step). The lowest point is the best value. Use it to check the latency or a lever arm component, or to confirm an angle.</p>
@@ -416,7 +417,7 @@
 <p><span class="ui">Export corrected LAS…</span> writes the points of the used lines with the applied values to a LAS file (default <code>02_AlignPro/&lt;Name&gt;_corrected.las</code>), to check them in other tools. Coordinates are in the coordinate system recorded in the capture (EPSG:2953 when none is recorded) with ellipsoidal heights; each point keeps its intensity, its line number as point source ID and its GPS time. These are the thinned points AlignPro works with; full point cloud products come from CloudPro.</p>
 
 <h1 id="publishing"><span class="num">{N}</span>Finalizing for CloudPro and the mapper</h1>
-<p>CloudPro reads only what AlignPro finalizes; the mapper keeps its own settings, so copy the angles there too (<span class="ui">Copy for mapper</span>) and enter a corrected lever arm or latency by hand. Every apply finalizes: <span class="ui">Apply advised</span>, <span class="ui">Apply</span> on the Calibration or Installation page, a right-click <span class="ui">Load these angles</span>, <span class="ui">Apply to project</span> in the Data View, <span class="ui">Apply best value</span> on the Analyze page and <span class="ui">Finalize the applied values</span>. Each one writes, in <code>02_AlignPro/out/</code>:</p>
+<p>CloudPro reads only what AlignPro finalizes; the mapper keeps its own settings, so copy the angles there too (<span class="ui">Copy for mapper</span>) and enter a corrected lever arm or latency by hand. Every apply finalizes: <span class="ui">3 Apply advised &amp; finalize</span>, <span class="ui">Apply</span> on the Calibration or Installation page, a right-click <span class="ui">Load these angles</span>, <span class="ui">Apply &amp; finalize these values</span> in the Data View, <span class="ui">Apply best value</span> on the Analyze page and <span class="ui">Finalize the applied values</span>. Each one writes, in <code>02_AlignPro/out/</code>:</p>
 <ul>
 <li><code>alignment.json</code>: the file CloudPro reads (schema <code>dcs.alignment/1</code>);</li>
 <li><code>alignment_report.txt</code> (the text report) and <code>alignment_combinations.csv</code> (one row per combination).</li>

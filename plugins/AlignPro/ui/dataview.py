@@ -80,6 +80,7 @@ class Nudge(QWidget):
 
 class DataView(QWidget):
     apply_requested = pyqtSignal(list, float, list)     # lever, latency, mount
+    autocal_requested = pyqtSignal()                     # 1.9.0: Auto calibrate from the Fine Tune view
     area_changed = pyqtSignal(object)                    # region now loaded (dict)
     boxes_edited = pyqtSignal(str)                       # a box redrawn / resized here
     extent_requested = pyqtSignal()                      # "Load map extent"
@@ -296,12 +297,19 @@ class DataView(QWidget):
         b3 = QPushButton("Advised")
         b3.setToolTip("The auto calibration result")
         b3.clicked.connect(lambda: self.load_values("advised"))
+        self.b_auto = QPushButton("Auto calibrate")
+        self.b_auto.setToolTip("Solve roll, pitch and heading from the planar patches; the result is loaded here "
+                               "as the values to try (Advised)")
+        self.b_auto.clicked.connect(self.autocal_requested.emit)
+        lay.addWidget(self.b_auto)
         row.addWidget(_key("Start from"), 0, 0, 1, 3)
         row.addWidget(b1, 1, 0)
         row.addWidget(b2, 1, 1)
         row.addWidget(b3, 1, 2)
         lay.addLayout(row)
-        self.b_apply = QPushButton("Apply to project")
+        self.b_apply = QPushButton("Apply && finalize these values")
+        self.b_apply.setToolTip("Use the values shown here: the points are placed again and alignment.json is "
+                                "finalized for CloudPro (and StripPro)")
         self.b_apply.setObjectName("ppPrimary")
         self.b_apply.clicked.connect(self._apply)
         self.b_copy = QPushButton("Copy for mapper")

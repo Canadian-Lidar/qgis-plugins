@@ -340,7 +340,7 @@ class InstallPage(Page):
         b_prof.setToolTip("Save the applied lever arm, mounting and latency as the profile of the system that "
                           "recorded these lines, or use a saved profile")
         b_prof.clicked.connect(lambda: self.dock.open_profiles())
-        self.b_apply = _primary("Apply")
+        self.b_apply = _primary("Apply && finalize")
         self.b_apply.clicked.connect(self.apply)
         self.lay.addLayout(_row(b_rev, b_prof, None, self.b_apply))
         g2, gl2 = _group("Certus as recorded")
@@ -634,12 +634,9 @@ class CalibPage(Page):
     def __init__(self, dock):
         super().__init__(dock)
         self.lay.addWidget(_title("Mounting angles"))
-        self.lay.addWidget(_hint("Auto calibrate pairs the lines and solves roll, pitch and heading from every planar "
-                                 "patch, then again leaving out each line in turn: the spread of those combinations "
-                                 "is the SDEV. Check the Data View, then Apply: the applied values are finalized for "
-                                 "CloudPro (alignment.json). Copy them to the mapper as well (Settings › Hardware › "
-                                 "Survey sensor › Mounting angles)."))
-        self.b_run = _primary("Auto calibrate")
+        # 1.9.0 (Sean, 11 Nov): one flow - 1 Auto calibrate, 2 check / fine tune, 3 Apply & finalize; the three
+        # sets of angles (recorded, advised, in use) side by side, so it is always clear which one CloudPro gets
+        self.b_run = _primary("1  Auto calibrate")
         self.b_run.clicked.connect(self.dock.autopatch)
         self.density = QComboBox()
         for k, t in engine.DENSITY_TITLES.items():
@@ -651,10 +648,14 @@ class CalibPage(Page):
         self.density_note = QLabel("")
         self.density_note.setObjectName("ppHint")
         self.density_note.setWordWrap(True)
-        b_view = QPushButton("Data View \u00b7 Fine Tune")
+        b_view = QPushButton("2  Check / fine tune\u2026")
         b_view.setToolTip("Plan, profile and section of the points, live while you adjust the values by hand")
         b_view.clicked.connect(lambda: self.dock.show_dataview("float"))
-        self.lay.addLayout(_row(self.b_run, b_view, None, "Point density", self.density))
+        self.b_adv = _primary("3  Apply advised && finalize")
+        self.b_adv.setToolTip("Use the auto calibration's angles: the points are placed again and alignment.json is "
+                              "finalized for CloudPro (and StripPro)")
+        self.b_adv.clicked.connect(self._apply_adv)
+        self.lay.addLayout(_row(self.b_run, b_view, self.b_adv, None, "Point density", self.density))
         self.lay.addWidget(self.density_note)
         cards = QHBoxLayout()
         self.cards = [Card("Roll"), Card("Pitch"), Card("Heading")]
@@ -668,8 +669,6 @@ class CalibPage(Page):
         self.warn.setWordWrap(True)
         self.warn.setStyleSheet("color: %s;" % theme.AMBER)
         self.lay.addWidget(self.warn)
-        b_adv = _primary("Apply advised")
-        b_adv.clicked.connect(self._apply_adv)
         self.b_copy = QPushButton("Copy for mapper")
         self.b_copy.setToolTip("Roll, pitch, heading to 4 decimals for the mapper's Settings page")
         self.b_copy.clicked.connect(self._copy)
@@ -680,7 +679,7 @@ class CalibPage(Page):
         self.pub_warn.setWordWrap(True)
         self.pub_warn.setStyleSheet("color: %s;" % theme.AMBER)
         gl0.addWidget(self.pub_warn)
-        self.b_pub = QPushButton("Finalize the applied values")
+        self.b_pub = QPushButton("Finalize for CloudPro")
         self.b_pub.setToolTip("Write alignment.json (02_AlignPro/out) for CloudPro with the values applied now")
         self.b_pub.clicked.connect(self.dock.publish_now)
         gl0.addLayout(_row(None, self.b_pub))
@@ -689,29 +688,30 @@ class CalibPage(Page):
         b_prof.setToolTip("Keep the applied (calibrated) mounting as this system's profile, so the next job "
                           "from it starts there")
         b_prof.clicked.connect(lambda: self.dock.open_profiles())
-        self.lay.addLayout(_row(self.b_copy, b_prof, None, b_adv))
-        self.lay.addWidget(self._pub_group)
-        g, gl = _group("Current angles", QGridLayout)
-        self.edit, self.pre = [], []
+        g, gl = _group("Angles", QGridLayout)
+        self.ang = {}
         for i, k in enumerate(KEYS):
             h = QLabel(k.upper())
             h.setObjectName("ppKey")
             gl.addWidget(h, 0, i + 1)
-            lb = QLabel("-")
-            lb.setObjectName("ppVal")
-            gl.addWidget(lb, 1, i + 1)
-            self.pre.append(lb)
-            s = _dspin(-360, 360, 4, 0.01)
-            gl.addWidget(s, 2, i + 1)
-            self.edit.append(s)
-        for r, t in ((1, "Recorded"), (2, "Current")):
+        for r, (key, t) in enumerate((("recorded", "Recorded in the .clraw"), ("advised", "Advised (auto calibration)"),
+                                      ("applied", "In use \u00b7 finalized for CloudPro"))):
             k = QLabel(t.upper())
             k.setObjectName("ppKey")
-            gl.addWidget(k, r, 0)
-        b_set = QPushButton("Apply")
-        b_set.clicked.connect(lambda: self.dock.apply_angles([s.value() for s in self.edit]))
-        gl.addWidget(b_set, 2, 4)
+            gl.addWidget(k, r + 1, 0)
+            self.ang[key] = []
+            for i in range(3):
+                lb = QLabel("-")
+                lb.setObjectName("ppVal")
+                gl.addWidget(lb, r + 1, i + 1)
+                self.ang[key].append(lb)
+            st = QLabel("")
+            st.setObjectName("ppVal")
+            gl.addWidget(st, r + 1, 4)
+            self.ang[key].append(st)
         self.lay.addWidget(g)
+        self.lay.addLayout(_row(self.b_copy, b_prof, None))
+        self.lay.addWidget(self._pub_group)
         g2, gl2 = _group("Combinations")
         gl2.addWidget(_hint("Select a row to try its angles in the Data View; right-click to apply them."))
         self.tbl = make_table(["Combi", "Lines", "Roll", "Pitch", "Heading", "Δ Roll", "Δ Pitch",
@@ -730,13 +730,8 @@ class CalibPage(Page):
             return
         self.refresh_publish()
         self._show_density()
-        for lb, v in zip(self.pre, p.cfg.get("mount_preset") or [0, 0, 0]):
-            lb.setText("%.4f" % v)
-        for s, v in zip(self.edit, p.cfg.get("mount") or [0, 0, 0]):
-            s.blockSignals(True)
-            s.setValue(v)
-            s.blockSignals(False)
         r = p.cfg.get("results")
+        self._show_angles(r)
         self.bore.clear()
         if not r:
             for c in self.cards:
@@ -775,6 +770,29 @@ class CalibPage(Page):
                 self.tbl.setItem(i, j + 1, cell(v, None, j > 0))
         self.tbl.blockSignals(False)
 
+    def _show_angles(self, r):
+        p = self.p
+        rows = {"recorded": p.cfg.get("mount_preset") or [0, 0, 0],
+                "advised": [r["advised"][k] for k in KEYS] if r else None,
+                "applied": p.cfg.get("mount") or [0, 0, 0]}
+        for key, vals in rows.items():
+            for lb, v in zip(self.ang[key][:3], vals or [None] * 3):
+                lb.setText("-" if v is None else "%.4f" % v)
+        same = rows["advised"] is not None and all(abs(a - b) < 5e-5 for a, b in zip(rows["advised"], rows["applied"]))
+        st_adv = "" if rows["advised"] is None else ("in use" if same else "not applied")
+        self.ang["advised"][3].setText(st_adv)
+        self.ang["advised"][3].setProperty("level", "ok" if same else ("warn" if st_adv else ""))
+        pst, _why, differs = p.published_state() if p.dcs is not None else ("done", [], False)
+        txt = "finalized" if pst == "done" and not differs else ("not finalized" if pst == "none" or differs
+                                                                 else "out of date")
+        self.ang["applied"][3].setText(txt)
+        self.ang["applied"][3].setProperty("level", "ok" if txt == "finalized" else "warn")
+        for key in ("advised", "applied"):
+            w = self.ang[key][3]
+            w.style().unpolish(w)
+            w.style().polish(w)
+        self.b_adv.setEnabled(rows["advised"] is not None and not same)
+
     def busy(self, on):
         self.b_run.setEnabled(not on)
 
@@ -802,6 +820,7 @@ class CalibPage(Page):
                          "final result." % ("real-time" if p.traj_info.get("source") == "realtime" else "SBET file"))
         self.pub_warn.setText("\n".join("\u26a0 " + w for w in notes))
         self.b_pub.setEnabled(bool(p.lines) and (st != "done" or differs))
+        self.b_pub.setVisible(st != "done" or differs)        # only when there is something to finalize
 
     def _show_density(self):
         p = self.p
@@ -915,7 +934,7 @@ class AnalyzePage(Page):
         self.b_start.clicked.connect(self._start)
         self.best = QLabel("")
         self.best.setObjectName("ppVal")
-        self.b_apply = QPushButton("Apply best value")
+        self.b_apply = QPushButton("Apply best value && finalize")
         self.b_apply.setEnabled(False)
         self.b_apply.clicked.connect(self._apply)
         self.lay.addLayout(_row(self.b_start, self.best, None, self.b_apply))

@@ -45,8 +45,16 @@
 <li>Press <span class="ui">Align strips</span>. StripPro reads the lines (a sample of the Lidar returns while the vehicle moves, within 40 m), places them with PosPro's trajectory and AlignPro's calibration, and solves the correction. A progress bar shows the line being read and then each iteration; <span class="ui">Cancel</span> stops it and changes nothing.</li>
 <li>Look at the before and after. Between lines the separation should drop to about a centimetre; the correction should be large inside the holes and small elsewhere.</li>
 <li>Press <span class="ui">Finalize</span>. The corrected trajectory is written, with records put into the holes inside each line (every 5 ms), and finalized for CloudPro.</li>
-<li>Open CloudPro. Its points are out of date (<i>StripPro results were added</i>) and it georeferences with StripPro's trajectory, by itself when automatic updates are on. Check line separation again: the problem areas from the holes should be gone.</li>
+<li>Press <span class="ui">Continue in CloudPro</span> (or open CloudPro). Its points are out of date (<i>StripPro results were added</i>) and it georeferences with StripPro's trajectory, by itself when automatic updates are on. Check line separation again: the problem areas from the holes should be gone.</li>
 </ol>
+<h2>Where StripPro sits in the workflow</h2>
+<ol class="steps">
+<li><b>PosPro</b>: process the trajectory. Trajectory Review is optional; holes are left to StripPro.</li>
+<li><b>AlignPro</b>: <span class="ui">1 Auto calibrate</span> › <span class="ui">2 Check / fine tune</span> › <span class="ui">3 Apply advised &amp; finalize</span>, once per system. Its last step continues in StripPro.</li>
+<li><b>StripPro</b>: <span class="ui">Align strips</span> › <span class="ui">Finalize</span> › <span class="ui">Continue in CloudPro</span>.</li>
+<li><b>CloudPro</b>: georeferences with StripPro's trajectory, then <span class="ui">Check line separation</span> confirms it. Problem areas still left go back to StripPro (<span class="ui">Fix in StripPro</span>).</li>
+</ol>
+<p>Calibrate before aligning the strips. When PosPro or AlignPro finalize again, StripPro is out of date: align the strips again. CloudPro waits for that instead of georeferencing twice.</p>
 <h2>How the correction is solved</h2>
 <p>In every 1 m cube, the points of one line within half a second get a plane when they lie on one (ground, walls, roofs). The points of the same line seen again up to 20 s later (a tilted scanner sees a wall ahead and again behind) and the points of other lines are compared with that plane, each at its own firing time. The correction per line is linear between knots: every 0.2 s inside holes, every second elsewhere, with a knot on each hole edge so it never spills into good data. Priors keep it within 1 cm and 0.005° where the trajectory had data and allow up to about a metre and 3° inside holes; a smoothness prior keeps it physical. Six Gauss–Newton iterations with refitted planes and robust weights.</p>
 <figure><img src="fig/strippro_sim.png"><figcaption><b>Figure {N}.1</b> A simulated line with Shirley's holes: point errors as recorded (red) and after StripPro (green); orange bands are the holes. Inside holes the median error went from 10.9 to 2.1 cm.</figcaption></figure>
