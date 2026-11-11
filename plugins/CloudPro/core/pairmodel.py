@@ -25,6 +25,10 @@ import numpy as np
 MIN_INFO = 30.0                   # sum of squared normal components a parameter needs to be solved
 MIN_ROLL_SPREAD = 3.0             # m: spread of (c_b - c_a) over flat patches needed for the roll slope
 MIN_SPEED = 0.5                   # m/s: slower and the direction of travel is not known
+STEEP = 0.5                       # |n_z| below this: a wall-like surface. Only these fix along / sideways (2.2.2):
+#                                   on gently sloping ground a height difference looks like an along-road shift
+SEGMENTS = 4                      # the along-road offset is also measured in this many parts of the line
+MIN_SEGMENT_WALLS = 15
 
 
 class Motion:
@@ -65,8 +69,9 @@ def _geometry(xy, ta, tb, mot_a, mot_b):
 
 def _rows(n, ua, la, ca, cb):
     A = np.zeros((len(n), 4))
-    A[:, 0] = n[:, 0] * ua[:, 0] + n[:, 1] * ua[:, 1]
-    A[:, 1] = n[:, 0] * la[:, 0] + n[:, 1] * la[:, 1]
+    steep = np.abs(n[:, 2]) < STEEP
+    A[:, 0] = np.where(steep, n[:, 0] * ua[:, 0] + n[:, 1] * ua[:, 1], 0.0)
+    A[:, 1] = np.where(steep, n[:, 0] * la[:, 0] + n[:, 1] * la[:, 1], 0.0)
     A[:, 2] = n[:, 2]
     A[:, 3] = n[:, 2] * (cb - ca)
     return A
@@ -103,8 +108,36 @@ def fit(n, d, xy, ta, tb, mot_a, mot_b):
         r = d - A @ p
         mad = 1.4826 * np.median(np.abs(r[keep] - np.median(r[keep])))
         keep = np.abs(r) <= max(3 * mad, 0.01)
+    # along: the median of the walls facing along the road (the direct measurement; the least-squares value is
+    # pulled by oblique walls and sideways terms), then the rest solved again with it fixed
+    wa0 = np.abs(A[:, 0]) > 0.4
+    if seen[0] and wa0.sum() >= 2 * MIN_SEGMENT_WALLS:
+        p[0] = float(np.median((d - A[:, 1:] @ p[1:])[wa0] / A[wa0, 0]))
+        rest_cols = [k for k in cols if k != 0]
+        if rest_cols:
+            keep = np.ones(len(d), bool)
+            for _ in range(5):
+                dk = d[keep] - A[keep, 0] * p[0]
+                sol = np.linalg.lstsq(A[keep][:, rest_cols], dk, rcond=None)[0]
+                p[rest_cols] = sol
+                r = d - A @ p
+                mad = 1.4826 * np.median(np.abs(r[keep] - np.median(r[keep])))
+                keep = np.abs(r) <= max(3 * mad, 0.01)
     r = d - A @ p
+    # the along-road offset part by part (walls facing along the road): a calibration error is the same everywhere
+    segs = []
+    if seen[0]:
+        wa = np.abs(A[:, 0]) > 0.4
+        if wa.sum() >= SEGMENTS * MIN_SEGMENT_WALLS:
+            t_a = np.asarray(ta, float)[ok]
+            q = np.quantile(t_a[wa], np.linspace(0, 1, SEGMENTS + 1))
+            est = (d - A[:, 1:] @ p[1:]) / np.where(wa, A[:, 0], 1.0)
+            for k in range(SEGMENTS):
+                m = wa & (t_a >= q[k]) & (t_a <= q[k + 1])
+                if m.sum() >= MIN_SEGMENT_WALLS:
+                    segs.append(float(np.median(est[m])))
     return {"relation": relation, "direction_dot": round(med, 3), "patches": int(len(d)),
+            "walls": int((np.abs(n[:, 2]) < STEEP).sum()), "along_parts": segs,
             "along": float(p[0]) if seen[0] else None, "cross": float(p[1]) if seen[1] else None,
             "up": float(p[2]) if seen[2] else None, "roll": float(p[3]) if seen[3] else None,
             "rest": float(np.median(np.abs(r))), "spread_m": float(np.std((cb - ca)[flat])) if flat.any() else 0.0}
@@ -116,7 +149,9 @@ def predict(model, n, xy, ta, tb, mot_a, mot_b, world_shift=None):
     n = np.asarray(n, float)
     out = np.zeros(len(n))
     ws = np.array([0.0 if (v is None or not np.isfinite(v)) else v for v in (world_shift or (0, 0, 0))])
-    out[:] = n @ ws
+    nh = n.copy()
+    nh[np.abs(nh[:, 2]) >= STEEP, :2] = 0.0
+    out[:] = nh @ ws
     if model is None or mot_a is None or mot_b is None:
         return out
     ua, ub, la, ca, cb = _geometry(np.asarray(xy, float), ta, tb, mot_a, mot_b)
@@ -135,8 +170,14 @@ def findings(model, tol, names=("line a", "line b")):
     cm = lambda v: 100 * abs(v)                               # noqa: E731
     rel = model["relation"]
     al, cr, up, roll = model.get("along"), model.get("cross"), model.get("up"), model.get("roll")
+    parts = model.get("along_parts") or []
+    varies = len(parts) >= 2 and (max(parts) - min(parts)) > tol
+    if varies:
+        f.append(("trajectory", "The along-road offset changes along the line (%s cm in its %d parts): not a "
+                  "calibration error, which would be the same everywhere." % (
+                      " / ".join("%+.1f" % (100 * v) for v in parts), len(parts))))
     if rel == "opposite":
-        if al is not None and abs(al) > tol:
+        if al is not None and abs(al) > tol and not varies:
             f.append(("calibration", "%.1f cm along the road on each pass, reversing with the driving direction "
                       "(points placed %s the vehicle): timing latency, an along-track lever arm or pitch."
                       % (cm(al) / 2, "ahead of" if -al > 0 else "behind")))
