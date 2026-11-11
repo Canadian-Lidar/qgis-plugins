@@ -38,7 +38,7 @@ CERTUS = {"realtime": {"pos_h": 0.01, "pos_v": 0.015, "tilt_deg": 0.03, "heading
 
 def trajectory_sd(traj_info, smrmsg_path=None):
     """Median standard deviations of the trajectory used: from PosPro's SMRMSG when there is one."""
-    post = (traj_info or {}).get("source") == "pospro"
+    post = (traj_info or {}).get("source") in ("pospro", "strippro")
     out = dict(CERTUS["post" if post else "realtime"])
     if smrmsg_path:
         try:

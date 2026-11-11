@@ -128,6 +128,30 @@ used = [ln.name for ln in d.p.lines if ln.use]
 assert len(used) == 2 and d.p.cfg.get("aoi") and d.p.settings.get("use_aoi"), (used, bool(d.p.cfg.get("aoi")))
 assert d.p.P is not None and len(d.p.P) >= 6
 print("used: passes %s, area of interest set, %d patches" % (", ".join(used), len(d.p.P)))
+# 1.9.0: one calibration flow - auto calibrate, the three sets of angles, apply advised & finalize
+pc = d.pg_cal
+d.goto_page(4)
+idle()
+assert pc.b_run.text().startswith("1") and pc.b_adv.text().startswith("3")
+d.autopatch()
+idle()
+assert pc.ang["advised"][0].text() != "-", "no advised angles"
+st = pc.ang["advised"][3].text()
+assert st in ("not applied", "in use"), st
+assert pc.b_adv.isEnabled() == (st == "not applied")
+assert d.dv.b_auto.text().lower() == "auto calibrate" and "finalize" in d.dv.b_apply.text().lower()
+print("calibration page: advised %s %s %s (%s); in use %s (%s)" % (
+    pc.ang["advised"][0].text(), pc.ang["advised"][1].text(), pc.ang["advised"][2].text(), st,
+    pc.ang["applied"][0].text(), pc.ang["applied"][3].text()))
+if FIG:
+    harness.grab(d, os.path.join(FIG, "alignpro_calibration.png"))
+if pc.b_adv.isEnabled():
+    pc.b_adv.click()
+    idle()
+    assert pc.ang["advised"][3].text() == "in use" and pc.ang["applied"][3].text() == "finalized", (
+        pc.ang["advised"][3].text(), pc.ang["applied"][3].text())
+    assert not pc.b_adv.isEnabled() and not pc.b_pub.isVisible()
+    print("applied & finalized: advised in use, finalized")
 ap.unload()
 import shutil  # noqa: E402
 shutil.rmtree(tmp, ignore_errors=True)

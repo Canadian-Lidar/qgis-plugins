@@ -13,6 +13,7 @@ Styled like the Mobile Mapper dashboard (ui/theme.py).
 """
 import copy
 import datetime
+import json
 import os
 import time
 
@@ -1603,6 +1604,34 @@ class QualityPage(Page):
 
 
 # ---------------------------------------------------------------------------
+def recording_holes_of(project):
+    """The finalized trajectory's recording holes (trajectory.json, PosPro 2.3.0), else from the SBET; cached by
+    file time. None without a finalized trajectory."""
+    od = getattr(project, "out_dir", None)
+    if not od:
+        return None
+    tj = os.path.join(od, "trajectory.json")
+    sb = os.path.join(od, "trajectory_sbet.out")
+    try:
+        key = (os.path.getmtime(tj) if os.path.exists(tj) else 0, os.path.getmtime(sb) if os.path.exists(sb) else 0)
+    except OSError:
+        return None
+    c = getattr(project, "_holes_cache", None)
+    if c and c[0] == key:
+        return c[1]
+    rh = None
+    try:
+        with open(tj, "r", encoding="utf-8") as fh:
+            rh = json.load(fh).get("recording_holes")
+    except (OSError, ValueError):
+        pass
+    if rh is None and os.path.exists(sb):
+        from ..core import pipeline
+        rh = pipeline.recording_holes(sb)
+    project._holes_cache = (key, rh)
+    return rh
+
+
 class ReviewPage(Page):
     """Trajectory Review: find the parts of the trajectory that miss the
     quality limits and decide what to do with each (see core/review.py)."""
@@ -1873,6 +1902,15 @@ class ReviewPage(Page):
                  if cd["other"] == "earlier trajectory" else
                  ", measured on points not georeferenced with PosPro's trajectory")))
             if not cd["current"]:
+                self.pending.setStyleSheet("color: %s;" % theme.AMBER)
+        rh = recording_holes_of(p)
+        if rh is not None:
+            from dcs_core import sbet as dsbet
+            if dsbet.holes_matter(rh):
+                msg.insert(0, "Recording holes: the trajectory has no data for %.0f%% of its time (%d holes, longest "
+                              "%.1f s); the recording lost INS data there. StripPro fills them from the Lidar: no need to "
+                              "bridge them here." % (rh["missing_pct"], rh["count"],
+                                                                               rh["longest_s"]))
                 self.pending.setStyleSheet("color: %s;" % theme.AMBER)
         self.pending.setText(" ".join(msg))
         self.b_reproc.setVisible(review.exclusions_pending(p))

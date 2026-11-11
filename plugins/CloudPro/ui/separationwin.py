@@ -10,9 +10,10 @@ from . import theme
 from .planview import COVER_LOW, COVER_OK, COVER_POOR
 
 PAIR_COLS = ["Lines", "Patches", "Median", "95 %", "East", "North", "Up", "Rest"]
-AREA_COLS = ["#", "Line", "Easting", "Northing", "Size", "Median", "Max", "Time (UTC)", "GPS seconds of week"]
+AREA_COLS = ["#", "Line", "Easting", "Northing", "Size", "Median", "Max", "Hole", "Time (UTC)", "GPS seconds of week"]
 STEADY_COLS = ["Lines", "Driven", "Along", "Sideways", "Up", "Roll per 10 m", "Rest", "Points at"]
-UNITS = ["cm; size m². Line = the line at fault when the area shows against several lines, else the pair.",
+UNITS = ["cm; size m²; hole = the longest recording hole in its times. Line = the line at fault when the area shows "
+         "against several lines, else the pair.",
          "cm, second line against the first, in the first line's direction of travel.",
          "cm; shift of the second line against the first; rest = left after the steady offset.",
          "cm; median against the lines each one overlaps."]
@@ -63,6 +64,12 @@ class SeparationPanel(QtWidgets.QWidget):
         self.lines.itemSelectionChanged.connect(lambda: self._picked(self.lines))
 
         row = QtWidgets.QHBoxLayout()
+        # 2.4.0: trajectory problems (recording holes, local errors) are fixed in StripPro when it is installed
+        self.btn_strip = QtWidgets.QPushButton("Fix in StripPro")
+        self.btn_strip.setToolTip("StripPro corrects the trajectory from the point cloud: recording holes and local "
+                                  "trajectory errors, all lines at once")
+        self.btn_strip.clicked.connect(self.open_strippro)
+        row.addWidget(self.btn_strip)
         self.btn_pospro = QtWidgets.QPushButton("Open in PosPro")
         self.btn_pospro.setToolTip("PosPro's Trajectory Review, on the chosen problem area (C rows)")
         self.btn_pospro.clicked.connect(self.open_pospro)
@@ -117,7 +124,7 @@ class SeparationPanel(QtWidgets.QWidget):
         p = self.res.pairs[rows[0].row() if rows else 0]
         nm = self.res.data.get("names", {})
         lab = {"calibration": "Calibration (AlignPro)", "trajectory": "Trajectory (PosPro)",
-               "either": "Calibration or trajectory", "note": "Note"}
+               "either": "Calibration or trajectory", "note": "Note", "recording": "Recording holes"}
         fi = S.pair_findings(p, self.tolerance)
         self.lbl_findings.setText("<b>%s / %s</b><br>%s" % (
             nm.get(str(p["a"]), p["a"]), nm.get(str(p["b"]), p["b"]),
@@ -241,17 +248,20 @@ class SeparationPanel(QtWidgets.QWidget):
         for i, a in enumerate(areas):
             t0, t1 = a["t0"], a["t1"]
             vals = [str(a["id"]), S.area_lines_text(a, nm), "%.1f" % a["e"], "%.1f" % a["n"], "%.0f" % a["m2"],
-                    _cm(a["median"]), _cm(a["max"]),
+                    _cm(a["median"]), _cm(a["max"]), ("%.1f s" % a["hole_s"]) if a.get("hole_s") else "–",
                     S.area_times_text(a, nm), S.area_times_text(a, nm, gps=True)]
             for j, v in enumerate(vals):
                 it = QtWidgets.QTableWidgetItem(v)
                 if j == 0:
                     it.setData(Qt.ItemDataRole.UserRole, a["id"])
-                if j in (2, 3, 4, 5, 6):
+                if j in (2, 3, 4, 5, 6, 7):
                     it.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
                 if j in (5, 6):
                     it.setForeground(self._colour(a[("median", "max")[j - 5]]))
-                if j == 7 and t0 is not None:
+                if j == 7 and a.get("hole_s"):
+                    it.setForeground(QtGui.QColor(theme.AMBER))
+                    it.setToolTip("The longest recording hole (no trajectory data) in this area's times")
+                if j == 8 and t0 is not None:
                     it.setToolTip(S.time_text(t0, t1))
                 self.areas.setItem(i, j, it)
         self.areas.resizeColumnsToContents()
@@ -263,7 +273,8 @@ class SeparationPanel(QtWidgets.QWidget):
             m = p.get("model") or {}
             fi = S.pair_findings(p, self.tolerance)
             kinds = {k for k, _ in fi}
-            at = ("Calibration (AlignPro)" if "calibration" in kinds else
+            at = ("Recording holes" if "recording" in kinds else
+                  "Calibration (AlignPro)" if "calibration" in kinds else
                   "Trajectory (PosPro)" if "trajectory" in kinds else
                   "Calibration or trajectory" if "either" in kinds else "–")
             vals = ["%s / %s" % (nm.get(str(p["a"]), p["a"]), nm.get(str(p["b"]), p["b"])),
@@ -306,7 +317,7 @@ class SeparationPanel(QtWidgets.QWidget):
         aid = self._selected_area()
         if aid is not None:
             return {"kind": "cloud_area", "id": "C%d" % aid}
-        traj = any(self._kinds(p) & {"trajectory", "either"} for p in self.res.pairs)
+        traj = any(self._kinds(p) & {"trajectory", "either", "recording"} for p in self.res.pairs)
         if self.res.problem_areas(self.tolerance) or traj:
             return {"kind": "cloud_area"}
         return None
@@ -327,8 +338,19 @@ class SeparationPanel(QtWidgets.QWidget):
 
     def _handoff_state(self):
         ok = self.res is not None and self.current
+        try:
+            from dcs_core import registry
+            has_strip = registry.has("strippro")
+        except Exception:       # noqa: BLE001
+            has_strip = False
+        self.btn_strip.setVisible(has_strip)
+        self.btn_strip.setEnabled(ok and self.pospro_target() is not None)
         self.btn_pospro.setEnabled(ok and self.pospro_target() is not None)
         self.btn_alignpro.setEnabled(ok and self.alignpro_target() is not None)
+
+    def open_strippro(self):
+        if self.pospro_target() is not None:
+            self.mw.open_in("strippro", {"kind": "cloud_area"})
 
     def open_pospro(self):
         t = self.pospro_target()

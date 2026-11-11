@@ -8,7 +8,7 @@ import os
 from .qt import QAction, QtCore, QtGui, QtWidgets, Qt, Signal
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CORE_API = 12
+CORE_API = 14
 
 
 def _core():

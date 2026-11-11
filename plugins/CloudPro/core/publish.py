@@ -86,7 +86,7 @@ def used_frame(project, dcs=None):
         return td.get("to") or None, td.get("epoch") or (td.get("from") or {}).get("epoch")
     t = (project.data.get("inputs") or {}).get("trajectory") or {}
     fr = t.get("frame") or {}
-    if t.get("source") == "pospro" and fr:
+    if t.get("source") in ("pospro", "strippro") and fr:
         return fr.get("name"), fr.get("epoch")
     if t.get("source") == "realtime":
         return "Certus real-time solution (frame of the RTK corrections)", None
@@ -98,8 +98,14 @@ def used_stages(inp):
     """built_from.stages: the handover ids the points were georeferenced with. "ignored" for AlignPro when
     the project properties chose the recorded or entered mounting on purpose."""
     used = {}
-    if (inp.get("trajectory") or {}).get("handover_id"):
-        used["pospro"] = inp["trajectory"]["handover_id"]
+    tr = inp.get("trajectory") or {}
+    if tr.get("handover_id"):
+        if tr.get("source") == "strippro":        # StripPro's trajectory, made from this PosPro trajectory
+            used["strippro"] = tr["handover_id"]
+            if tr.get("pospro_id"):
+                used["pospro"] = tr["pospro_id"]
+        else:
+            used["pospro"] = tr["handover_id"]
     if (inp.get("alignment") or {}).get("handover_id"):
         used["alignpro"] = inp["alignment"]["handover_id"]
     elif (inp.get("override") or {}).get("source") in ("recorded", "entered"):

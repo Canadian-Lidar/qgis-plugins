@@ -91,6 +91,7 @@ def anomalies(project, extend=(0.0, 0.0)):
             aid = "C%d" % a.get("id", len(out) + 1) + ("abcdefghij"[k] if n_t > 1 and k < 10 else "")
             out.append({"id": aid, "kind": KIND, "t0": sp[0] - extend[0], "t1": sp[1] + extend[1],
                         "max": float(a.get("max_m") or 0.0), "median": float(a.get("median_m") or 0.0),
+                        "hole_s": float(a.get("recording_hole_s") or 0.0),
                         "line": t.get("line") or a.get("line"), "at_fault": a.get("line") is not None,
                         "lines": a.get("lines", []), "e": a.get("e"), "n": a.get("n"),
                         "area_m2": a.get("area_m2"), "current": doc["current"], "other": doc["other"]})
@@ -103,6 +104,8 @@ def describe(a):
     if not a.get("at_fault", True):
         who += " (or %s)" % " / ".join(x for x in a.get("lines", []) if x != a.get("line"))
     s = "%.0f cm, %s" % (100 * a.get("max", 0.0), who)
+    if a.get("hole_s"):
+        s += ", %.1f s recording hole" % a["hole_s"]
     if not a.get("current", True):
         s += ", " + (a.get("other") or "earlier trajectory")
     return s

@@ -105,6 +105,17 @@ class _Dcs:
 
 dcs_was, win.project.dcs = win.project.dcs, _Dcs()
 try:
+    # 2.4.0: Fix in StripPro shows only when StripPro is installed, and opens it on the job
+    w._handoff_state()
+    assert w.btn_strip.isHidden()
+    registry.register("strippro", lambda path: got.append(("open", "strippro", path)))
+    w._handoff_state()
+    assert not w.btn_strip.isHidden() and w.btn_strip.isEnabled()
+    w.btn_strip.click()
+    assert got == [("open", "strippro", _Dcs.path)], got
+    registry.unregister("strippro")
+    w._handoff_state()
+    del got[:]
     assert w.btn_pospro.isEnabled()
     w.btn_pospro.click()
     assert got == [("open", "pospro", _Dcs.path), ("focus", {"kind": "cloud_area", "id": "C%d" % loc["id"]})], got

@@ -155,12 +155,18 @@ class StepBar(Crumbs):
                 chain = None
         if chain is None:
             chain = [(k, label, "none", []) for k, _f, label, *_ in STAGES]
+        from .project import OPTIONAL
+        # an optional stage (StripPro) shows only when its plugin is installed or it has been run
+        chain = [c for c in chain if c[0] not in OPTIONAL or c[2] != "none" or registry.has(c[0])]
         self.set_items([(k, label, st, "\n".join("• " + r for r in reasons)) for k, label, st, reasons in chain])
 
     def tip_for(self, item):
         k, label, st, tip = item
         words = {"done": "results are current", "stale": "results are out of date", "running": "running now",
                  "failed": "the last run failed", "none": "not run yet"}.get(st, st)
+        from .project import OPTIONAL
+        if k in OPTIONAL and st == "none":
+            words = "optional, not run"
         s = "%s: %s" % (label, words) + ("\n" + tip if tip else "")
         if k != self.current:
             s += "\n\nClick to open %s on this project" % label if registry.has(k) else \

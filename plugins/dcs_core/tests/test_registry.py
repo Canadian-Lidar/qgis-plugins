@@ -28,4 +28,15 @@ assert registry.focus("alignpro", "/job/a.dcsproj", {"kind": "cloud_pair", "line
 registry.unregister("alignpro")
 registry.unregister("pospro")
 assert not registry.focus("alignpro", "/job/a.dcsproj", {}) and not registry.open("pospro", "/x")
+# 1.13.0: AlignPro continues in StripPro when StripPro is installed, else in CloudPro; StripPro in CloudPro
+try:
+    from dcs_core import stepnav
+except ImportError:          # no Qt here
+    stepnav = None
+if stepnav is not None:
+    assert stepnav.next_stage("alignpro") == "cloudpro" and stepnav.next_stage("pospro") == "alignpro"
+    registry.register("strippro", lambda p: None)
+    assert stepnav.next_stage("alignpro") == "strippro" and stepnav.next_stage("strippro") == "cloudpro"
+    registry.unregister("strippro")
+    print("next stage: AlignPro -> StripPro when installed, else CloudPro")
 print("OK")

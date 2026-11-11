@@ -986,9 +986,10 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             cal = (inp.get("alignment") or {}).get("calibration", "no calibration")
             src = (inp.get("trajectory") or {}).get("source", "")
-            txt = "%s trajectory · %s" % ({"pospro": "PosPro", "realtime": "Real-time"}.get(src, src or "?"),
+            txt = "%s trajectory · %s" % ({"pospro": "PosPro", "strippro": "StripPro", "realtime": "Real-time"}.get(
+                src, src or "?"),
                                           "AlignPro calibration" if cal == "applied" else cal)
-            lvl = "ok" if cal == "applied" and src == "pospro" else "warn"
+            lvl = "ok" if cal == "applied" and src in ("pospro", "strippro") else "warn"
         self.lbl_inputs.setText(txt)
         self.lbl_inputs.setToolTip(txt)
         self.lbl_inputs.setProperty("level", lvl)
@@ -2129,7 +2130,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ok = fn(stage, path, target) if fn is not None else registry.open(stage, path)
         if not ok:
             theme.msg_info(self, "CloudPro", "%s is not installed or not enabled in QGIS." % {
-                "pospro": "PosPro", "alignpro": "AlignPro"}.get(stage, stage))
+                "pospro": "PosPro", "alignpro": "AlignPro", "strippro": "StripPro"}.get(stage, stage))
         return ok
 
     @staticmethod
@@ -2497,7 +2498,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def _cursor(self, view, a, b):
         o = self._origin()
         if view is None or view.kind == "plan":
-            self.lbl_xyz.setText("E %.3f  N %.3f" % (a + o[0], b + o[1]))
+            txt = "E %.3f  N %.3f" % (a + o[0], b + o[1])
+            if self.plan.attr == "Span" and self.plan.has_underlay():
+                v = self.plan.value_at(a, b)          # 2.4.0: the cell's span under the cursor
+                if v is not None:
+                    txt += "  ·  span %s (%g m cell)" % ("%.0f cm" % (100 * v) if v < 1 else "%.2f m" % v,
+                                                      getattr(self.plan, "cell", 0.5))
+            self.lbl_xyz.setText(txt)
         elif view.kind == "profile" and self.box:
             self.lbl_xyz.setText("chainage %.3f  Z %.3f" % (a + self.box["length"] / 2, b + o[2]))
         else:
@@ -2773,7 +2780,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if p.dcs is not None:
             try:
                 from dcs_core import handover
-                doc = handover.read(p.dcs, "pospro", required=False)
+                src = ((p.data.get("inputs") or {}).get("trajectory") or {}).get("source")
+                doc = handover.read(p.dcs, "strippro" if src == "strippro" else "pospro", required=False)
                 smr = (doc or {}).get("paths", {}).get("smrmsg")
             except Exception:       # noqa: BLE001
                 smr = None

@@ -1,0 +1,81 @@
+<!--#contents-->
+
+<h1><span class="num">{N}</span>Introduction</h1>
+<p>StripPro corrects the trajectory with the Lidar itself. It is the optional stage between AlignPro and CloudPro: it reads the trajectory PosPro finalized, the calibration AlignPro finalized and the survey lines, and finalizes a corrected trajectory that CloudPro georeferences with instead of PosPro's.</p>
+<p>It does two things at once:</p>
+<ul>
+<li><b>Fills recording holes.</b> When the INS recording has holes (mapper 2.9.0 recordings lost about a third of the Certus data, in holes of 0.5–3 s), the trajectory is a straight line across each hole, and the points recorded in it are tilted and shifted wherever the vehicle rolled, pitched or turned. The Lidar kept recording. A surface it sees before, during and after a hole carries the vehicle's motion through the hole.</li>
+<li><b>Aligns the strips.</b> Where lines overlap, the same surfaces must coincide. StripPro moves each line's trajectory so they do.</li>
+</ul>
+<p>The correction belongs to the trajectory, not to the points: one shift and one small rotation of the vehicle per line, changing over time. It is pinned where the trajectory had data, free inside holes and smooth everywhere. Every point the Lidar recorded then follows from the corrected trajectory, also the ones StripPro did not look at.</p>
+<figure><img src="fig/xsec_area12.png"><figcaption><b>Figure {N}.1</b> Shirley, a 2 m slice across the road where Line 5 was inside a 3.1 s hole. Left: as recorded, Line 5's road surface tilts 1.5 m down over 15 m. Right: after StripPro it lies on Line 4.</figcaption></figure>
+<div class="note"><b>Note</b> StripPro never changes PosPro's trajectory, AlignPro's calibration or the recordings. It writes its own trajectory in <code>Processing/&lt;Name&gt;/02_StripPro/out/</code>.</div>
+
+<h1><span class="num">{N}</span>Installing and opening StripPro</h1>
+<h2>Requirements</h2>
+<ul>
+<li>QGIS 3.34 or later, including QGIS 4.</li>
+<li>DCS Core {CORE_VERSION} or later, and CloudPro 2.4.0 or later (to georeference with StripPro's trajectory).</li>
+<li>PosPro has finalized a trajectory for the job; AlignPro a calibration (without it, the mounting recorded in the capture is used and the window says so).</li>
+<li>Memory: about 3 GB for a job like Shirley (two lines of about 15 minutes).</li>
+</ul>
+<h2>Install</h2>
+<ol class="steps">
+<li>In QGIS open <span class="ui">Plugins › Manage and Install Plugins</span>. With the Canadian Lidar repository added, install or upgrade <b>DCS Core</b> first and <b>StripPro</b> after it.</li>
+<li>Restart QGIS.</li>
+</ol>
+<h2>Opening StripPro</h2>
+<ul>
+<li><span class="ui">Plugins › Canadian Lidar › Data Systems › StripPro</span>, the StripPro button on the Plugins toolbar, or <b>StripPro</b> in the chain of any DCS plugin's header (it appears there once StripPro is installed).</li>
+<li>Open the job with the project box (<span class="ui">Open a DCS project…</span>) or from the chain, which opens it on the same job.</li>
+</ul>
+
+<h1><span class="num">{N}</span>The StripPro window</h1>
+<figure><img src="fig/strippro_window.png"><figcaption><b>Figure {N}.1</b> StripPro on Shirley after Align strips.</figcaption></figure>
+<table>
+<tr><th>Part</th><th>What it shows</th></tr>
+<tr><td>Header</td><td>The chain (PosPro › AlignPro › StripPro › CloudPro) and StripPro's two steps, <span class="ui">Align strips</span> and <span class="ui">Finalize</span>, coloured by state. Click a step to do it.</td></tr>
+<tr><td>This job</td><td>The trajectory used (PosPro's, when it was finalized), its recording holes (share of the time with no data, number, longest), the calibration and the lines.</td></tr>
+<tr><td>Before and after</td><td>How far overlapping lines sit apart before and after (median and 95 %), between lines and within a line where it saw a surface twice; per line how far the correction moved its points (median, inside holes, 95 %).</td></tr>
+<tr><td>Correction over time</td><td>Per line, how far the correction moves a point 20 m from the vehicle, over the line's time; the holes are shaded. The large corrections should sit in the holes.</td></tr>
+</table>
+
+<h1><span class="num">{N}</span>Aligning the strips</h1>
+<ol class="steps">
+<li>Press <span class="ui">Align strips</span>. StripPro reads the lines (a sample of the Lidar returns while the vehicle moves, within 40 m), places them with PosPro's trajectory and AlignPro's calibration, and solves the correction. A progress bar shows the line being read and then each iteration; <span class="ui">Cancel</span> stops it and changes nothing.</li>
+<li>Look at the before and after. Between lines the separation should drop to about a centimetre; the correction should be large inside the holes and small elsewhere.</li>
+<li>Press <span class="ui">Finalize</span>. The corrected trajectory is written, with records put into the holes inside each line (every 5 ms), and finalized for CloudPro.</li>
+<li>Press <span class="ui">Continue in CloudPro</span> (or open CloudPro). Its points are out of date (<i>StripPro results were added</i>) and it georeferences with StripPro's trajectory, by itself when automatic updates are on. Check line separation again: the problem areas from the holes should be gone.</li>
+</ol>
+<h2>Where StripPro sits in the workflow</h2>
+<ol class="steps">
+<li><b>PosPro</b>: process the trajectory. Trajectory Review is optional; holes are left to StripPro.</li>
+<li><b>AlignPro</b>: <span class="ui">1 Auto calibrate</span> › <span class="ui">2 Check / fine tune</span> › <span class="ui">3 Apply advised &amp; finalize</span>, once per system. Its last step continues in StripPro.</li>
+<li><b>StripPro</b>: <span class="ui">Align strips</span> › <span class="ui">Finalize</span> › <span class="ui">Continue in CloudPro</span>.</li>
+<li><b>CloudPro</b>: georeferences with StripPro's trajectory, then <span class="ui">Check line separation</span> confirms it. Problem areas still left go back to StripPro (<span class="ui">Fix in StripPro</span>).</li>
+</ol>
+<p>Calibrate before aligning the strips. When PosPro or AlignPro finalize again, StripPro is out of date: align the strips again. CloudPro waits for that instead of georeferencing twice.</p>
+<h2>How the correction is solved</h2>
+<p>In every 1 m cube, the points of one line within half a second get a plane when they lie on one (ground, walls, roofs). The points of the same line seen again up to 20 s later (a tilted scanner sees a wall ahead and again behind) and the points of other lines are compared with that plane, each at its own firing time. The correction per line is linear between knots: every 0.2 s inside holes, every second elsewhere, with a knot on each hole edge so it never spills into good data. Priors keep it within 1 cm and 0.005° where the trajectory had data and allow up to about a metre and 3° inside holes; a smoothness prior keeps it physical. Six Gauss–Newton iterations with refitted planes and robust weights.</p>
+<figure><img src="fig/strippro_sim.png"><figcaption><b>Figure {N}.1</b> A simulated line with Shirley's holes: point errors as recorded (red) and after StripPro (green); orange bands are the holes. Inside holes the median error went from 10.9 to 2.1 cm.</figcaption></figure>
+<h2>Shirley, 3 November 2026</h2>
+<table>
+<tr><th>Separation (cm)</th><th>Before</th><th>After</th></tr>
+<tr><td>Line 4 / Line 5, median</td><td>6.7</td><td>0.5</td></tr>
+<tr><td>Line 4 / Line 5, 95 %</td><td>14.6</td><td>1.9</td></tr>
+<tr><td>Same line seen again, median</td><td>1.2</td><td>0.7</td></tr>
+</table>
+<p>The 3.7 cm height difference between the two passes (GNSS between the two times) is shared out: +1.8 cm on Line 4, −1.8 cm on Line 5, so the average stays where the GNSS put it.</p>
+
+<h1><span class="num">{N}</span>What StripPro hands to CloudPro</h1>
+<p><code>02_StripPro/out/trajectory.json</code> is a <code>dcs.trajectory/1</code> handover like PosPro's, with <code>trajectory_sbet.out</code> and <code>trajectory_smrmsg.out</code>, the same time, frame, lever arms and quality fields, and a <code>strip</code> section: the PosPro trajectory and AlignPro calibration it was made from, how many records were filled into holes, the before and after. Its <code>recording_holes</code> are the holes left (outside the lines, where the vehicle was standing).</p>
+<p>CloudPro uses StripPro's trajectory while it is current. When PosPro or AlignPro finalize again, StripPro is out of date and CloudPro goes back to PosPro's trajectory until StripPro runs again.</p>
+
+<h1><span class="num">{N}</span>Questions</h1>
+<table>
+<tr><th>Question</th><th>Answer</th></tr>
+<tr><td>Do I need StripPro on every job?</td><td>No. On a job without recording holes and with lines that already agree, it changes little. It is for jobs with holes, or lines that disagree locally.</td></tr>
+<tr><td>Does it replace AlignPro?</td><td>No. AlignPro finds the Lidar's mounting, one value for the system; StripPro corrects the trajectory, which changes over time. Calibrate first, then align the strips.</td></tr>
+<tr><td>Does it replace Trajectory Review in PosPro?</td><td>For holes and short trajectory errors that the point cloud shows, yes: you do not need to bridge or interpolate them by hand.</td></tr>
+<tr><td>A single line?</td><td>Works for holes (the line's own surfaces seen twice); with nothing to compare it against, the alignment between lines does nothing.</td></tr>
+</table>
