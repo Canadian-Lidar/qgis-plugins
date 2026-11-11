@@ -35,7 +35,7 @@ import numpy as np
 from . import pairmodel
 from .store import REJECTED, parse_key
 
-VERSION = 5
+VERSION = 6                     # 6: recording holes (2.4.0)
 PATCH = 1.0                       # cube side (m); must divide the tile size
 PATCHES = (0.5, 1.0, 2.0)
 MIN_POINTS = 12                   # points of one line in a cube
@@ -304,6 +304,10 @@ class Result:
         for (k, a, b) in self.pair_cells:
             self._by_tile.setdefault(k, []).append((a, b))
         self._pair = {(p["a"], p["b"]): p for p in data.get("pairs", [])}
+        for p in data.get("pairs", []):                 # pair_findings needs the trajectory's holes
+            p["recording"] = data.get("recording")
+        tb = float(data.get("t_base", 0.0))
+        self.hole_spans = np.asarray(data.get("holes") or [], float).reshape(-1, 2) + tb   # UTC s
 
     @property
     def n(self):
@@ -387,6 +391,37 @@ class Result:
         return float(cnt[edges[:-1] < tol - 1e-9].sum() / cnt.sum())
 
 
+def recording_holes(project):
+    """Where PosPro's trajectory has no records (the recording lost INS data): {"missing_pct", "count",
+    "longest_s", "spans": [[t0, t1] UTC s, ...]}, or None (no DCS project / no PosPro trajectory). From
+    trajectory.json's recording_holes (PosPro 2.3.0), else from the SBET itself."""
+    dcs = getattr(project, "dcs", None)
+    if dcs is None:
+        return None
+    try:
+        from dcs_core import handover
+        from dcs_core import sbet as dsbet
+        doc = handover.read(dcs, "pospro", required=False)
+    except Exception:       # noqa: BLE001
+        return None
+    if not doc:
+        return None
+    tm = doc.get("time") or {}
+    week = int(tm.get("week") or 0)
+    leap = float(tm.get("leap_seconds", 18))
+    rh = doc.get("recording_holes")
+    if rh and "spans" in rh and week:
+        ws = dsbet.week_start(week)
+        out = dict(rh)
+        out["spans"] = [[ws + a - leap, ws + b - leap] for a, b in rh["spans"]]
+        return out
+    try:
+        t, _a, _ws = dsbet.read(doc["paths"]["sbet"], leap, week=week or None)
+    except (OSError, ValueError, KeyError):
+        return None
+    return dsbet.holes_summary(t)
+
+
 def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
     """Measure the separation over the whole project; saves and returns a Result. Raises Cancelled."""
     st = project.store
@@ -460,6 +495,8 @@ def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
                             cur[kk] = cur[kk][keep]
     names = {int(l["id"]): l.get("name", "Line %s" % l["id"]) for l in project.lines}
     motions = motions_of(project)
+    holes = _holes_in_lines(recording_holes(project), project)
+    hs = np.asarray(holes["spans"], float).reshape(-1, 2) if holes else np.zeros((0, 2))
     pairs = []
     per_line = {}
     for (a, b), parts in sorted(pair_rows.items()):
@@ -479,6 +516,7 @@ def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
                "shift": [None if not np.isfinite(v) else float(v) for v in t], "horizontal": hor,
                "rest": model["rest"] if model else rest, "rest_world": rest, "model": model,
                "windows": _windows(parts["ta"] + tbase, parts["tb"] + tbase),
+               "in_holes": _share_in_holes(parts["ta"] + tbase, parts["tb"] + tbase, hs),
                "vertical_median": float(np.median(np.abs(d[up]))) if up.any() else None,
                "horizontal_median": float(np.median(np.abs(d[walls]))) if walls.any() else None}
         pairs.append(rec)
@@ -498,6 +536,8 @@ def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
             "tiles": len(keys), "tiles_with_overlap": len(grids), "patches": int(hist.sum()),
             "median": _hist_median(hist_edges, hist), "pairs": sorted(pairs, key=lambda p: -p["median"]),
             "lines": lines, "names": {str(k): v for k, v in names.items()},
+            "recording": {k: v for k, v in holes.items() if k != "spans"} if holes else None,
+            "holes": [[round(a - tbase, 3), round(b - tbase, 3)] for a, b in hs] if len(hs) else [],
             "hist": {"edges": hist_edges.tolist(), "counts": hist.astype(int).tolist()},
             "settings": {"min_points": MIN_POINTS, "max_thickness": MAX_THICKNESS, "max_angle": MAX_ANGLE,
                          "max_sep": MAX_SEP}}
@@ -506,6 +546,38 @@ def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
     save(project, res)
     res.stamp = stamp(project)
     return res
+
+
+def _holes_in_lines(rh, project):
+    """The recording holes while the lines were recorded (from their sensor tracks): the summary counts only those,
+    as a share of the lines' time."""
+    if not rh or not rh.get("spans"):
+        return rh
+    spans = np.asarray(rh["spans"], float).reshape(-1, 2)
+    ranges = []
+    for tr in project.tracks().values():
+        t = np.asarray(tr.get("t", []), float)
+        if len(t) > 1:
+            ranges.append((float(t[0]), float(t[-1])))
+    if not ranges:
+        return rh
+    keep, missing, total = [], 0.0, sum(b - a for a, b in ranges)
+    for a, b in spans:
+        cut = sum(max(0.0, min(b, r1) - max(a, r0)) for r0, r1 in ranges)
+        if cut > 0:
+            keep.append([float(a), float(b)])
+            missing += cut
+    dur = [min(b, max(r1 for _r0, r1 in ranges)) - a for a, b in keep]
+    return {"missing_pct": round(100.0 * missing / total, 2) if total > 0 else 0.0, "count": len(keep),
+            "longest_s": round(max(dur), 3) if dur else 0.0, "spans": keep}
+
+
+def _share_in_holes(ta, tb, hs):
+    """Share of a pair's patches measured while either line's trajectory had no record (a recording hole)."""
+    if not len(hs) or not len(ta):
+        return 0.0
+    from dcs_core import sbet as dsbet
+    return float(np.mean(dsbet.in_holes(ta, hs) | dsbet.in_holes(tb, hs)))
 
 
 # --------------------------------------------------------------------------------------------- problem areas
@@ -678,11 +750,20 @@ def problem_areas(res, tol=DEFAULT_TOLERANCE):
                     "bbox": (float(cx.min() * pt), float(cy.min() * pt), float((cx.max() + 1) * pt),
                              float((cy.max() + 1) * pt)), "boxes": boxes,
                     "m2": len(cells) * pt * pt, "median": float(np.median(v)), "max": float(v.max()),
-                    "spans": spans, "t0": first[0], "t1": first[1]})
+                    "spans": spans, "t0": first[0], "t1": first[1],
+                    "hole_s": _area_hole(spans, getattr(res, "hole_spans", None))})
     out.sort(key=lambda r: -r["m2"] * r["median"])
     for i, r in enumerate(out):
         r["id"] = i + 1
     return out
+
+
+def _area_hole(spans, hs):
+    """Longest recording hole (s) inside any of an area's line time spans (widened 0.5 s), 0 when none."""
+    if hs is None or not len(hs):
+        return 0.0
+    from dcs_core import sbet as dsbet
+    return round(max((dsbet.longest_hole_in(a - 0.5, b + 0.5, hs) for a, b in spans.values()), default=0.0), 2)
 
 
 def area_times_text(area, names, gps=False):
@@ -765,7 +846,8 @@ def feedback(project, res, tol=DEFAULT_TOLERANCE):
                "lines": [nm.get(str(l), str(l)) for l in a["lines"]],
                "pairs": [[nm.get(str(x), str(x)) for x in pr] for pr in a["pairs"]],
                "e": round(a["e"], 2), "n": round(a["n"], 2), "area_m2": round(a["m2"], 1),
-               "median_m": round(a["median"], 4), "max_m": round(a["max"], 4)}
+               "median_m": round(a["median"], 4), "max_m": round(a["max"], 4),
+               "recording_hole_s": a.get("hole_s", 0.0)}
         times = []
         for l, (t0, t1) in (a.get("spans") or {}).items():
             w0, s0 = gps_week_sow(t0)
@@ -781,7 +863,8 @@ def feedback(project, res, tol=DEFAULT_TOLERANCE):
             "patch_m": res.patch, "crs": project.crs, "leap_seconds": _leap(time.time()),
             "trajectory": {"source": tr.get("source"), "handover_id": tr.get("handover_id"),
                            "description": tr.get("description")},
-            "current": res.is_current(project), "summary": verdict(res, tol), "areas": areas}
+            "current": res.is_current(project), "summary": verdict(res, tol),
+            "recording_holes": res.data.get("recording"), "areas": areas}
 
 
 CALIBRATION_SCHEMA = "dcs.calibration_check/1"
@@ -826,10 +909,12 @@ def calibration_check(project, res, tol=DEFAULT_TOLERANCE):
             "rest_m": round(p["rest"], 4), "shift_enu_m": p["shift"],
             "findings": [{"kind": k, "text": t} for k, t in fi],
             "calibration": any(k == "calibration" for k, _ in fi),
+            "recording_holes_share": round(float(p.get("in_holes") or 0.0), 3),
             "windows": [tw(win.get("a", [])), tw(win.get("b", []))]})
     return {"schema": CALIBRATION_SCHEMA, "written_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "by": "CloudPro %s" % ver, "measured_utc": res.data.get("utc"), "tolerance_m": tol,
             "current": res.is_current(project), "summary": verdict(res, tol),
+            "recording_holes": res.data.get("recording"),
             "alignment": {"source": al.get("source"), "handover_id": al.get("handover_id"),
                           "calibration": al.get("calibration")},
             "trajectory": {"source": tr.get("source"), "handover_id": tr.get("handover_id")},
@@ -926,9 +1011,28 @@ def _cm(v, signed=False):
     return ("%+.1f" if signed else "%.1f") % v
 
 
+HOLES_PAIR_SHARE = 0.05         # a pair with this share of its patches measured in recording holes
+
+
 def pair_findings(rec, tol=DEFAULT_TOLERANCE):
-    """[(kind, sentence)] for one pair (from its steady relation)."""
-    return pairmodel.findings(rec.get("model"), tol)
+    """[(kind, sentence)] for one pair (from its steady relation). When the trajectory has recording holes that
+    touch the pair (CloudPro 2.4.0), the first finding is kind "recording" and the calibration / trajectory
+    findings become notes: offsets measured across holes follow the holes."""
+    f = pairmodel.findings(rec.get("model"), tol)
+    rh = rec.get("recording")
+    share = float(rec.get("in_holes") or 0.0)
+    if not rh:
+        return f
+    from dcs_core import sbet as dsbet
+    if not (dsbet.holes_matter(rh) and (share >= HOLES_PAIR_SHARE or "in_holes" not in rec)):
+        return f
+    head = ("recording", "The recording lost INS data: the trajectory has no data for %.0f %% of its time (%d holes, "
+                         "longest %.1f s)%s. Offsets measured here follow the holes, so they are not calibration or "
+                         "trajectory findings." % (
+                             rh["missing_pct"], rh["count"], rh["longest_s"],
+                             "; %.0f %% of this pair's patches were measured in a hole" % (100 * share)
+                             if "in_holes" in rec else ""))
+    return [head] + [("note" if k in ("calibration", "trajectory", "either") else k, t) for k, t in f]
 
 
 def calibration_pairs(res, tol=DEFAULT_TOLERANCE):
@@ -952,6 +1056,12 @@ def verdict(res, tol=DEFAULT_TOLERANCE):
                                                     + (" ..." if len(at) > 4 else ""))
     else:
         local = " No local problem areas."
+    rec = res.data.get("recording")
+    from dcs_core import sbet as dsbet
+    if rec and dsbet.holes_matter(rec):
+        local += (" Recording holes: the trajectory has no data for %.0f %% of the lines' time (%d holes, longest "
+                  "%.1f s); offsets follow the holes, so there is no calibration or trajectory finding."
+                  % (rec["missing_pct"], rec["count"], rec["longest_s"]))
     cal = calibration_pairs(res, tol)
     if cal:
         c = cal[0]
@@ -997,7 +1107,7 @@ def report_lines(res, tol=DEFAULT_TOLERANCE, project_name=""):
             _cm(m.get("rest")))]
         for kind, text in pair_findings(p, tol):
             L.append("  - %s: %s" % ({"calibration": "Calibration (AlignPro)", "trajectory": "Trajectory (PosPro)",
-                                      "either": "Calibration or trajectory", "note": "Note"}[kind], text))
+                                      "either": "Calibration or trajectory", "note": "Note", "recording": "Recording holes"}[kind], text))
     areas = res.problem_areas(tol)
     L += ["", "Problem areas (local, beyond %.0f cm; the line at fault when the area shows in several pairs):"
           % (200 * tol)]
@@ -1008,6 +1118,8 @@ def report_lines(res, tol=DEFAULT_TOLERANCE, project_name=""):
         L.append("  #%-3d %-22s E %.1f N %.1f  %5.0f m2  median %s cm, max %s cm  %s%s UTC  (GPS %s s of week)" % (
             a["id"], area_lines_text(a, nm)[:22], a["e"], a["n"], a["m2"], _cm(a["median"]), _cm(a["max"]),
             day, area_times_text(a, nm), area_times_text(a, nm, gps=True)))
+        if a.get("hole_s"):
+            L.append("        in a %.1f s recording hole" % a["hole_s"])
     L += ["", "Per line (median against the lines it overlaps, weighted by patches), cm:"]
     for l in res.lines:
         L.append("%-24s %7s  (%d pair%s)" % (l["name"][:24], _cm(l["median"]), l["pairs"], "" if l["pairs"] == 1 else "s"))

@@ -127,3 +127,63 @@ def write(path, t, lat, lon, h, roll, pitch, heading, leap=LEAP, start=None):
     a["heading"] = np.mod(np.asarray(heading, float) + np.pi, 2 * np.pi) - np.pi
     a.tofile(path)
     return ws
+
+
+# ----------------------------------------------------------------------------- recording holes (API 14)
+HOLE_S = 0.1                # s: a step between records longer than this is a hole (records are 5 ms apart at 200 Hz)
+HOLES_MATTER_PCT = 2.0      # % of the time missing from which the holes change what the data can say
+HOLES_MATTER_LONGEST_S = 1.0
+
+
+def holes(t, min_s=HOLE_S):
+    """Where a trajectory has no records: (n, 2) array of [last time before, first time after] for every step
+    between consecutive records longer than min_s (t in any one time base, sorted)."""
+    t = np.asarray(t, float)
+    if len(t) < 2:
+        return np.zeros((0, 2))
+    i = np.flatnonzero(np.diff(t) > min_s)
+    return np.column_stack([t[i], t[i + 1]])
+
+
+def holes_summary(t, min_s=HOLE_S, spans=True):
+    """{"missing_pct", "count", "longest_s", "spans": [[t0, t1], ...]} for a trajectory's record times t (the spans
+    in t's time base, rounded to 1 ms). missing_pct is the share of the time from the first to the last record."""
+    h = holes(t, min_s)
+    t = np.asarray(t, float)
+    total = float(t[-1] - t[0]) if len(t) > 1 else 0.0
+    dur = h[:, 1] - h[:, 0] if len(h) else np.zeros(0)
+    out = {"missing_pct": round(100.0 * float(dur.sum()) / total, 2) if total > 0 else 0.0,
+           "count": int(len(h)), "longest_s": round(float(dur.max()), 3) if len(dur) else 0.0}
+    if spans:
+        out["spans"] = [[round(float(a), 3), round(float(b), 3)] for a, b in h]
+    return out
+
+
+def holes_matter(summary):
+    """True when a trajectory's holes are large enough that offsets measured on its points follow the holes."""
+    if not summary:
+        return False
+    return (float(summary.get("missing_pct") or 0) >= HOLES_MATTER_PCT or
+            float(summary.get("longest_s") or 0) >= HOLES_MATTER_LONGEST_S)
+
+
+def in_holes(tq, spans):
+    """Boolean per time in tq: inside one of spans ((n, 2), same time base, sorted by start)."""
+    tq = np.asarray(tq, float)
+    s = np.asarray(spans, float).reshape(-1, 2)
+    if not len(s):
+        return np.zeros(tq.shape, bool)
+    j = np.searchsorted(s[:, 0], tq, side="right") - 1
+    ok = j >= 0
+    out = np.zeros(tq.shape, bool)
+    out[ok] = tq[ok] < s[j[ok], 1]
+    return out
+
+
+def longest_hole_in(t0, t1, spans):
+    """Longest hole (s) overlapping the time span [t0, t1] (same time base as spans), 0 when none."""
+    s = np.asarray(spans, float).reshape(-1, 2)
+    if not len(s):
+        return 0.0
+    m = (s[:, 1] > t0) & (s[:, 0] < t1)
+    return float((s[m, 1] - s[m, 0]).max()) if m.any() else 0.0

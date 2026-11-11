@@ -2497,7 +2497,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def _cursor(self, view, a, b):
         o = self._origin()
         if view is None or view.kind == "plan":
-            self.lbl_xyz.setText("E %.3f  N %.3f" % (a + o[0], b + o[1]))
+            txt = "E %.3f  N %.3f" % (a + o[0], b + o[1])
+            if self.plan.attr == "Span" and self.plan.has_underlay():
+                v = self.plan.value_at(a, b)          # 2.4.0: the cell's span under the cursor
+                if v is not None:
+                    txt += "  ·  span %s (%g m cell)" % ("%.0f cm" % (100 * v) if v < 1 else "%.2f m" % v,
+                                                      getattr(self.plan, "cell", 0.5))
+            self.lbl_xyz.setText(txt)
         elif view.kind == "profile" and self.box:
             self.lbl_xyz.setText("chainage %.3f  Z %.3f" % (a + self.box["length"] / 2, b + o[2]))
         else:

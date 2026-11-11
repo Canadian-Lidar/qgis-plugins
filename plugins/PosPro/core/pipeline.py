@@ -1223,6 +1223,7 @@ def publish_handover(project, ctx):
     if not project.dcs:
         return None
     from dcs_core import handover
+    from dcs_core import sbet as dsbet
     od = project.out_dir
     tmp = project.wpath("handover", "x")[:-2]
     for f in os.listdir(tmp):
@@ -1287,7 +1288,13 @@ def publish_handover(project, ctx):
                     "max_sd_v_m": max_v},
         "base_station": (project.base() or {}).get("name"),
         "review": review_summary(project),
+        "recording_holes": recording_holes(sbet),
     }
+    rh = fields["recording_holes"]
+    if rh and dsbet.holes_matter(rh):
+        ctx.log("warning", "the trajectory has no data for %.0f%% of its time (%d holes, longest %.1f s): the "
+                "recording lost INS data. Finalized with the holes marked." % (rh["missing_pct"], rh["count"],
+                                                                                rh["longest_s"]))
     if c["processing"].get("mode") == "gnss":
         fields["attitude"] = "not observed (GNSS only): roll and pitch 0, heading from the direction of travel"
     v_engine = ""
@@ -1299,3 +1306,17 @@ def publish_handover(project, ctx):
                            plugin_version(), v_engine)
     ctx.log("info", "trajectory finalized for AlignPro and CloudPro: %s" % os.path.join(od, "trajectory.json"))
     return {"id": doc["id"], "path": os.path.join(od, "trajectory.json")}
+
+
+def recording_holes(sbet_path):
+    """Where the finalized trajectory has no records (DCS Core API 14): {"missing_pct", "count", "longest_s",
+    "spans": [[t0, t1], ...] in GPS seconds of week}, or None when the SBET cannot be read."""
+    from dcs_core import sbet as dsbet
+    try:
+        import numpy as _np
+        a = _np.fromfile(sbet_path, dsbet.SBET)
+        if len(a) < 2:
+            return None
+        return dsbet.holes_summary(a["t"])
+    except (OSError, ValueError):
+        return None

@@ -247,6 +247,26 @@ class PlanView(CloudView2D):
         v[g["count"] == 0] = np.nan
         return v
 
+    def value_at(self, x, y):
+        """The grid attribute's value (aggregated to the display cell) at project coordinates x, y, else None."""
+        if self.store is None or self.attr in (SEPARATION, "None"):
+            return None
+        T = float(self.store.tile)
+        i, j = int(math.floor(x / T)), int(math.floor(y / T))
+        key = "%d_%d" % (i, j)
+        if key not in set(self.store.keys()):
+            return None
+        g = self._attr_grid(self.store.load_grid(key))
+        if g is None:
+            return None
+        cell = getattr(self, "cell", GRID_CELL)
+        n = g.shape[0]
+        cx, cy = int((x - i * T) // cell), int((y - j * T) // cell)
+        if not (0 <= cx < n and 0 <= cy < n):
+            return None
+        v = float(g[cy, cx])
+        return v if math.isfinite(v) else None
+
     def _compute_range(self):
         vals = []
         for k in self.store.keys()[:400]:
@@ -289,7 +309,7 @@ class PlanView(CloudView2D):
             aspect = np.arctan2(-gx, gy)
             sh = np.sin(alt) * np.cos(slope) + np.cos(alt) * np.sin(slope) * np.cos(az - aspect)
             rgb *= (0.55 + 0.45 * np.clip(sh, 0, 1))[..., None]
-        if self.attr != "Coverage":
+        if self.attr not in ("Coverage", "Span"):
             rgb *= 0.55                  # dimmed: the points of the Inspection Area stand out on top
         argb = render.pack(np.clip(rgb, 0, 255).astype(np.uint8))
         argb = np.where(ok, argb, np.uint32(0))
@@ -345,8 +365,8 @@ class PlanView(CloudView2D):
         self._draw_box(p)
         from .linked import paint_2d
         paint_2d(p, self)                        # the linked cursor on top of the drive lines and the area
-        if self._range and self.has_underlay() and self.attr == "Coverage":
-            self._legend(p)                      # 2.0.0: only the coverage key (one colour legend per view)
+        if self._range and self.has_underlay() and self.attr in ("Coverage", "Span"):
+            self._legend(p)                      # 2.0.0: only the coverage key; 2.4.0: and the Span scale
         elif self.has_underlay() and self.attr == SEPARATION and self.separation is not None:
             self._draw_problem_areas(p)
             self._separation_legend(p)
@@ -389,16 +409,21 @@ class PlanView(CloudView2D):
         lo, hi = self._range
         x, y, w, h = self.width() - 22, 34, 10, 110
         lut = render.LUTS[self.lut]
+        p.setFont(theme.mono(10))
+        off = self.b_offset_z if "height" in self.attr.lower() and self.attr != "Span" else 0
+        p.fillRect(QtCore.QRectF(x - 118, y - 10, 134, h + 36), QtGui.QColor(38, 41, 45, 215))
         for k in range(h):
             c = lut[int(255 * (1 - k / (h - 1)))]
             p.fillRect(QtCore.QRectF(x, y + k, w, 1), QtGui.QColor(int(c[0]), int(c[1]), int(c[2])))
         p.setPen(QtGui.QColor(theme.TEXT))
-        p.setFont(theme.mono(10))
-        off = self.b_offset_z if "height" in self.attr.lower() and self.attr != "Span" else 0
-        p.drawText(QtCore.QRectF(x - 66, y - 6, 62, 14), int(Qt.AlignmentFlag.AlignRight), "%.2f" % (hi + off))
-        p.drawText(QtCore.QRectF(x - 66, y + h - 8, 62, 14), int(Qt.AlignmentFlag.AlignRight), "%.2f" % (lo + off))
-        p.drawText(QtCore.QRectF(x - 110, y + h + 6, 120, 14), int(Qt.AlignmentFlag.AlignRight),
-                   "pts/m²" if self.attr == "Density" else self.attr)
+        fmt = (lambda v: "%.0f cm" % (100 * v) if v < 1 else "%.2f m" % v) if self.attr == "Span" else \
+            (lambda v: "%.2f" % v)
+        p.drawText(QtCore.QRectF(x - 66, y - 6, 62, 14), int(Qt.AlignmentFlag.AlignRight), fmt(hi + off))
+        p.drawText(QtCore.QRectF(x - 66, y + h - 8, 62, 14), int(Qt.AlignmentFlag.AlignRight), fmt(lo + off))
+        cell = getattr(self, "cell", GRID_CELL)
+        p.drawText(QtCore.QRectF(x - 114, y + h + 6, 124, 14), int(Qt.AlignmentFlag.AlignRight),
+                   "pts/m²" if self.attr == "Density" else
+                   ("Span, %g m cell" % cell) if self.attr == "Span" else self.attr)
 
     def _cover_legend(self, p):
         t = self.target_density

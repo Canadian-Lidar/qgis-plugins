@@ -548,8 +548,8 @@ class PairsPage(Page):
         for i, q in enumerate(pairs):
             st = q.get("steady_m") or {}
             kinds = {f["kind"] for f in q.get("findings", [])}
-            at = ("Calibration" if "calibration" in kinds else "Trajectory (PosPro)" if "trajectory" in kinds else
-                  "Either" if "either" in kinds else "–")
+            at = ("Recording holes" if "recording" in kinds else "Calibration" if "calibration" in kinds else
+                  "Trajectory (PosPro)" if "trajectory" in kinds else "Either" if "either" in kinds else "–")
             vals = [" / ".join(q.get("lines", [])), drv.get(q.get("relation"), "–"), cm(st.get("along")),
                     cm(st.get("cross")), cm(st.get("up")),
                     cm(None if q.get("roll_m_per_m") is None else 10 * q["roll_m_per_m"]),
@@ -581,7 +581,8 @@ class PairsPage(Page):
             self.b_cloud.setEnabled(False)
             return
         q = doc["pairs"][k]
-        lab = {"calibration": "Calibration", "trajectory": "Trajectory (PosPro)", "either": "Calibration or trajectory"}
+        lab = {"calibration": "Calibration", "trajectory": "Trajectory (PosPro)", "either": "Calibration or trajectory",
+               "note": "Note", "recording": "Recording holes"}
         self.cloud_why.setText("<br>".join("<b>%s:</b> %s" % (lab.get(f["kind"], f["kind"]), f["text"])
                                            for f in q.get("findings", [])) or "Nothing beyond the tolerance.")
         from ..core import cloudcheck
