@@ -1859,6 +1859,10 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.plan_pane.grid.currentText() == SEPARATION:
                 tm = m.addMenu("Tolerance  ·  %g cm" % (100 * self.plan.tolerance))
                 radio(tm, [("%g cm" % (100 * t), t) for t in SEP.TOLERANCES], self.plan.tolerance, self.set_tolerance)
+                act = m.addAction("Steady offsets removed")
+                act.setCheckable(True)
+                act.setChecked(self.plan.steady_off)
+                act.toggled.connect(self.plan.set_steady_off)
                 m.addAction("Line separation results…", self.show_separation)
                 m.addAction("Check line separation again", self.check_separation)
             cs = m.addMenu("Cell size  ·  %s" % self.cb_cell.currentText())
