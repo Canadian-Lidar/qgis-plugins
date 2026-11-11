@@ -49,7 +49,10 @@ class AlignProPlugin:
             self._why = why
             return
         from dcs_core import registry
-        registry.register("alignpro", self.open_project)
+        try:
+            registry.register("alignpro", self.open_project, self.focus)     # DCS Core API 13
+        except TypeError:
+            registry.register("alignpro", self.open_project)
 
     def unload(self):
         if self.help_action is not None:
@@ -99,6 +102,12 @@ class AlignProPlugin:
         """The user guide PDF for the installed version (Help > Plugins > AlignPro user guide)."""
         from .guide import open_guide
         return open_guide(self.iface, self.iface.mainWindow())
+
+    def focus(self, target):
+        """Go to target on the open project (DCS Core registry.focus, e.g. from CloudPro's line separation):
+        {"kind": "cloud_pair", "lines": [...], "line_numbers": [...]} = the Pairs page with that pair chosen."""
+        if self.dock is not None and (target or {}).get("kind") == "cloud_pair":
+            self.dock.focus_cloud_pair(target)
 
     def open_project(self, path):
         """Show AlignPro on a DCS project (called from another plugin's chain bar)."""

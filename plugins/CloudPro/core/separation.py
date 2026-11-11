@@ -997,7 +997,7 @@ def report_lines(res, tol=DEFAULT_TOLERANCE, project_name=""):
             _cm(m.get("rest")))]
         for kind, text in pair_findings(p, tol):
             L.append("  - %s: %s" % ({"calibration": "Calibration (AlignPro)", "trajectory": "Trajectory (PosPro)",
-                                      "either": "Calibration or trajectory"}[kind], text))
+                                      "either": "Calibration or trajectory", "note": "Note"}[kind], text))
     areas = res.problem_areas(tol)
     L += ["", "Problem areas (local, beyond %.0f cm; the line at fault when the area shows in several pairs):"
           % (200 * tol)]

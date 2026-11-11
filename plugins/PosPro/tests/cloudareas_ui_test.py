@@ -98,6 +98,18 @@ e = review.edit_for(p, c["t0"], c["t1"])
 assert e is not None and e["action"] == "poor" and e.get("source") == "cloud", e
 print("decided: C1 marked poor (source %s)" % e["source"])
 
+# 2.2.1: opened from CloudPro's line separation (DCS Core registry.focus): Trajectory Review, C rows, C1 chosen
+dock.goto_page(0)
+rp.show_filter.setCurrentIndex(0)
+rp.table.clearSelection()
+plugin.focus({"kind": "cloud_area", "id": "C1"})
+harness.settle(4)
+assert dock.stack.currentIndex() == dock.index_of("review") and rp.show_filter.currentData() == "cloud"
+sel = rp.table.selectionModel().selectedRows()
+assert sel and rp.items[sel[0].row()]["id"] == "C1", sel
+assert not dock.focus_cloud("C9")
+print("focus from CloudPro: Trajectory Review, point cloud rows, C1 chosen")
+
 # PosPro finalizes another trajectory: the area is from an earlier one and no longer counts as open
 ids["now"] = "sha256:newer"
 rp.refresh()

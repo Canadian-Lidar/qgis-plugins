@@ -3071,6 +3071,23 @@ class PosProDock(PluginWindow):
         self.set_project(p)
         return True
 
+    def focus_cloud(self, aid=None):
+        """Trajectory Review, showing the point cloud rows (C), with area aid (C3; or its C3a / C3b) chosen."""
+        if not self.project:
+            return False
+        self.goto_page("review")
+        pg = self.page["review"]
+        i = pg.show_filter.findData("cloud")
+        if i >= 0 and pg.show_filter.currentIndex() != i:
+            pg.show_filter.setCurrentIndex(i)        # fills the list again
+        for r, it in enumerate(getattr(pg, "items", [])):
+            iid = str(it["id"])
+            if aid is None or iid == aid or (iid.startswith(aid) and iid[len(aid):] in ("a", "b")):
+                pg.table.selectRow(r)
+                pg.table.scrollToItem(pg.table.item(r, 0))
+                return True
+        return False
+
     def reopen_last(self):
         last = QSettings().value("PosPro/last_project", "")
         if last and os.path.exists(last) and not self.project:

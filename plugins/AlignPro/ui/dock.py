@@ -674,6 +674,32 @@ class AlignProDock(PluginWindow):
             return out
         return work
 
+    def focus_cloud_pair(self, target):
+        """The Pairs page with CloudPro's pair (by line names, else line numbers) chosen in "From the point cloud".
+        While a job is stopping for a project change this waits until the project is open."""
+        if self.job is not None and self._pending:
+            self._pending.append(lambda: self.focus_cloud_pair(target))
+            return False
+        if self.p is None:
+            return False
+        k = self.pages.index(self.pg_pairs)
+        self.goto_page(k)
+        pg = self.pg_pairs
+        doc = pg._cloud_doc()
+        if doc is None:
+            return False
+
+        def same(a, b):
+            return [str(x).strip().lower() for x in a] == [str(x).strip().lower() for x in b]
+        want_n, want_l = target.get("lines") or [], target.get("line_numbers") or []
+        for i, q in enumerate(doc["pairs"]):
+            if (want_n and same(q.get("lines", []), want_n)) or \
+                    (want_l and None not in want_l and same(q.get("line_numbers", []), want_l)):
+                pg.cloud_tbl.selectRow(i)
+                pg.cloud_tbl.scrollToItem(pg.cloud_tbl.item(i, 0))
+                return True
+        return False
+
     def use_cloud_pair(self, k):
         """Use a pair CloudPro flagged as patch-test material: only its two lines, and an area of interest along the
         stretch they share (AlignPro 1.8.0)."""

@@ -20,7 +20,7 @@ plugins (PosPro, AlignPro, CloudPro, RemixPro).
   theme, widgets, stepbar, dialogs, registry   the shared look and UI
 
 The plugins import it as `dcs_core`; it has no window of its own."""
-__version__ = "1.11.0"
+__version__ = "1.12.0"
 # API 2 (1.1.0): adds clraw, hesai, anpp, sbet, las, mcap, zstd and widgets.align_flags.
 # API 3 (1.2.0): adds window.PluginWindow (the standard plugin window) and theme.FAINT, DISABLED, VIEW_BG, GRID.
 # API 4 (1.3.0): adds header.PluginHeader (the same header bar in every plugin).
@@ -49,7 +49,9 @@ __version__ = "1.11.0"
 #   plugin's steps: PluginHeader.set_steps, stepClicked, steps), the project box, then the plugin's tools
 #   (PluginHeader.add_tool) and "?"; no Window button and no docking (PluginWindow is always a window); StepNav
 #   shows its sentence as a tooltip; "Finalize" replaces "Publish" in what users read.
-API = 12
+# API 13 (1.12.0): registry.register(stage, open_fn, focus_fn) and registry.focus(stage, project_path, target) - open
+#   a plugin with one item shown (CloudPro's line separation tab opens PosPro on a problem area, AlignPro on a pair).
+API = 13
 
 
 def classFactory(iface):  # noqa: N802 - QGIS API

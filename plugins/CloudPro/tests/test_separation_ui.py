@@ -46,7 +46,11 @@ r = win.plan.separation
 assert r is not None and win.plan.attr == SEPARATION and win.plan.separation_current
 assert r.pairs, "no overlapping surfaces found between the two lines"
 w = win._sepwin
-assert w is not None and w.isVisible() and w.pairs.rowCount() == len(r.pairs)
+# 2.3.0: a tab in the bottom-right group (with the filters, lines and history), brought to the front after the check
+d = win.docks["separation"]
+assert d.widget() is w and not d.isFloating() and w.isVisible() and w.pairs.rowCount() == len(r.pairs)
+assert d in win.tabifiedDockWidgets(win.docks["history"])
+assert not any(b.text() == "Close" for b in w.findChildren(type(w.btn_all)))
 assert w.lines.rowCount() == len(r.lines) and w.lbl_verdict.text()
 print("check: %d pair(s), %s patches; %s" % (len(r.pairs), "{:,}".format(r.data["patches"]), w.lbl_verdict.text()))
 assert any("Line separation checked" in h.get("text", "") for h in win.project.data.get("history", []))
@@ -87,6 +91,40 @@ win.plan.repaint()
 assert os.path.exists(os.path.join(win.project.out_dir, "problem_areas.json"))
 print("problem areas: %d listed; #%d (Line 1) chosen: Inspection Area at E %.1f N %.1f" % (
     len(areas), loc["id"], win.box["cx"], win.box["cy"]))
+
+# 2.3.0: Open in PosPro / Open in AlignPro, through DCS Core's registry.focus
+from dcs_core import registry                                       # noqa: E402
+got = []
+registry.register("pospro", lambda path: got.append(("open", "pospro", path)), lambda t: got.append(("focus", t)))
+registry.register("alignpro", lambda path: got.append(("open", "alignpro", path)), lambda t: got.append(("focus", t)))
+
+
+class _Dcs:
+    path = "/job/Sep.dcsproj"
+
+
+dcs_was, win.project.dcs = win.project.dcs, _Dcs()
+try:
+    assert w.btn_pospro.isEnabled()
+    w.btn_pospro.click()
+    assert got == [("open", "pospro", _Dcs.path), ("focus", {"kind": "cloud_area", "id": "C%d" % loc["id"]})], got
+    assert not w.btn_alignpro.isEnabled()          # no calibration finding on this street (no drive lines)
+    w._kinds = lambda p: {"calibration"}
+    w.tabs.setCurrentIndex(1)
+    w.steady.selectRow(0)
+    assert w.btn_alignpro.isEnabled()
+    del got[:]
+    w.btn_alignpro.click()
+    t = got[1][1]
+    assert got[0] == ("open", "alignpro", _Dcs.path) and t["kind"] == "cloud_pair", got
+    assert t["lines"] == [r.data["names"][str(r.pairs[0]["a"])], r.data["names"][str(r.pairs[0]["b"])]], t
+    del w._kinds
+    w.tabs.setCurrentIndex(0)
+finally:
+    win.project.dcs = dcs_was
+    registry.unregister("pospro")
+    registry.unregister("alignpro")
+print("Open in PosPro: area C%d; Open in AlignPro: %s" % (loc["id"], " / ".join(t["lines"])))
 w.btn_all.click()
 
 # tolerance from the legend menu changes the key and the table colours
@@ -108,5 +146,8 @@ print("reloaded from the project; out of date after a georeferencing change")
 w.btn_again.click()
 wait_job()
 assert win.plan.separation_current
+# closing the project empties the tab; it stays docked
+win.close_project()
+assert w.res is None and w.areas.rowCount() == 0 and not w.btn_pospro.isEnabled()
 print("OK")
 plugin.unload()

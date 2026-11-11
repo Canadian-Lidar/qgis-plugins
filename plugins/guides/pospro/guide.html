@@ -502,6 +502,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <li>In the review list as <b>C</b> rows, found by <i>Point cloud</i>, widened by the same margins as the other windows. <i>Worst</i> gives the largest separation and the line, e.g. <i>17 cm, Line 3</i>. When CloudPro could not tell which of two lines is at fault, each line gets its own row (<i>C3a</i>, <i>C3b</i>) with the other line in brackets. <span class="ui">Show</span> › <i>Found in the point cloud (C)</i> lists only them.</li>
 <li>In the Trajectory editor as a pink stretch with its label on the plan, and a pink band in the profile (Figure {N}.2).</li>
 </ul>
+<p>From CloudPro, <span class="ui">Open in PosPro</span> in the LINE SEPARATION tab opens this page on the same job with <span class="ui">Show › Found in the point cloud (C)</span> and the chosen area selected.</p>
 <p>Decide on them like any other window: bridge with the IMU, mark poor, interpolate or accept. They are not stored in PosPro: they come from CloudPro's latest check. Once PosPro finalizes another trajectory, they are marked <i>earlier trajectory</i> (they no longer count as open in the Review step); CloudPro updates its points, and its next check shows whether the problem has gone.</p>
 
 <h2>The Trajectory editor</h2>
@@ -695,6 +696,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <h1 id="history"><span class="num">{N}</span>Version history</h1>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>2.2.1</b></td><td><b>Opened from CloudPro:</b> <span class="ui">Open in PosPro</span> in CloudPro's LINE SEPARATION tab brings up Trajectory Review with the point cloud rows shown and the chosen problem area selected. Needs DCS Core 1.12.0.</td></tr>
 <tr><td><b>2.2.0</b></td><td><b>Problem areas from the point cloud:</b> the places where CloudPro's line separation check found one line's points off the others are listed in Trajectory Review (C rows) and drawn in the Trajectory editor, with the line and the time, to decide on like any other window (<a href="#cloud">Problem areas from the point cloud</a>).</td></tr>
 <tr><td><b>2.1.0</b></td><td>The new DCS header: the chain and PosPro's phases (Prepare › Process › Finalize, formerly Finish) as breadcrumbs, with the guidance in their tooltips instead of a sentence between Back and Next. The window is always a window of its own (no docking); <span class="ui">Reset window</span> is in the project menu. Messages say <i>finalize</i> instead of <i>publish</i>. Needs DCS Core 1.11.0.</td></tr>
 <tr><td><b>2.0.5</b></td><td>The GNSS processing starts afresh after a break of more than 30&nbsp;s in the rover data, for example between two survey lines. Before, the forward pass could stay float for the whole of the next line. Quality adds a finding with the forward/backward agreement where both passes are fixed, and the share of the drive where only one pass is fixed (the combined result follows the fixed pass there, so the overall separation overstates the error).</td></tr>

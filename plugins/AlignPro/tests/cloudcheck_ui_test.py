@@ -107,6 +107,18 @@ pg.cloud_tbl.selectRow(row)
 harness.settle()
 assert "latency" in pg.cloud_why.text() and pg.b_cloud.isEnabled(), pg.cloud_why.text()
 print("Pairs page: %d pairs from the point cloud; row %d: %s" % (n, row, pg.cloud_tbl.item(row, 0).text()))
+# 1.8.1: opened from CloudPro's line separation (DCS Core registry.focus): Pairs page, that pair chosen
+from alignpro.core import cloudcheck  # noqa: E402
+q = cloudcheck.load(d.p)["pairs"][row]
+d.goto_page(0)
+pg.cloud_tbl.clearSelection()
+ap.focus({"kind": "cloud_pair", "lines": list(q["lines"]), "line_numbers": list(q["line_numbers"])})
+harness.settle()
+assert d.stack.currentIndex() == 3 and pg.cloud_tbl.selectionModel().selectedRows()[0].row() == row
+assert not d.focus_cloud_pair({"kind": "cloud_pair", "lines": ["Nope 1", "Nope 2"]})
+print("focus from CloudPro: Pairs page, %s chosen" % " / ".join(q["lines"]))
+pg.cloud_tbl.selectRow(row)
+harness.settle()
 if FIG:
     sa = d.stack.currentWidget()
     harness.grab(d, os.path.join(FIG, "alignpro_cloud.png"))

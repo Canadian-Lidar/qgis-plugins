@@ -111,8 +111,11 @@ def fit(n, d, xy, ta, tb, mot_a, mot_b):
     # along: the median of the walls facing along the road (the direct measurement; the least-squares value is
     # pulled by oblique walls and sideways terms), then the rest solved again with it fixed
     wa0 = np.abs(A[:, 0]) > 0.4
+    along_se, along_n = None, int(wa0.sum())
     if seen[0] and wa0.sum() >= 2 * MIN_SEGMENT_WALLS:
-        p[0] = float(np.median((d - A[:, 1:] @ p[1:])[wa0] / A[wa0, 0]))
+        e0 = (d - A[:, 1:] @ p[1:])[wa0] / A[wa0, 0]
+        p[0] = float(np.median(e0))
+        along_se = _se_median(e0)
         rest_cols = [k for k in cols if k != 0]
         if rest_cols:
             keep = np.ones(len(d), bool)
@@ -126,7 +129,7 @@ def fit(n, d, xy, ta, tb, mot_a, mot_b):
     r = d - A @ p
     # the along-road offset part by part (walls facing along the road): a calibration error is the same everywhere
     segs = []
-    if seen[0]:
+    if seen[0] and along_se is not None:
         wa = np.abs(A[:, 0]) > 0.4
         if wa.sum() >= SEGMENTS * MIN_SEGMENT_WALLS:
             t_a = np.asarray(ta, float)[ok]
@@ -135,12 +138,39 @@ def fit(n, d, xy, ta, tb, mot_a, mot_b):
             for k in range(SEGMENTS):
                 m = wa & (t_a >= q[k]) & (t_a <= q[k + 1])
                 if m.sum() >= MIN_SEGMENT_WALLS:
-                    segs.append(float(np.median(est[m])))
+                    segs.append([float(np.median(est[m])), _se_median(est[m]), int(m.sum())])
     return {"relation": relation, "direction_dot": round(med, 3), "patches": int(len(d)),
             "walls": int((np.abs(n[:, 2]) < STEEP).sum()), "along_parts": segs,
+            "along_se": along_se, "along_walls": along_n,
             "along": float(p[0]) if seen[0] else None, "cross": float(p[1]) if seen[1] else None,
             "up": float(p[2]) if seen[2] else None, "roll": float(p[3]) if seen[3] else None,
             "rest": float(np.median(np.abs(r))), "spread_m": float(np.std((cb - ca)[flat])) if flat.any() else 0.0}
+
+
+def _se_median(v):
+    """Standard error of a median (robust: from the MAD)."""
+    v = np.asarray(v, float)
+    if len(v) < 2:
+        return float("inf")
+    mad = 1.4826 * np.median(np.abs(v - np.median(v)))
+    return float(1.2533 * mad / math.sqrt(len(v)))
+
+
+def along_state(model, tol):
+    """("measured" | "not measurable" | None, parts that differ beyond their noise?)"""
+    if model is None or model.get("along") is None:
+        return None, False
+    se = model.get("along_se")
+    if se is None or not np.isfinite(se) or se > tol / 2:
+        return "not measurable", False
+    parts = [q for q in (model.get("along_parts") or []) if isinstance(q, (list, tuple)) and np.isfinite(q[1])]
+    varies = False
+    if len(parts) >= 2:
+        hi = max(parts, key=lambda q: q[0])
+        lo = min(parts, key=lambda q: q[0])
+        gap = hi[0] - lo[0]
+        varies = gap > tol and gap > 3 * math.hypot(hi[1], lo[1])
+    return "measured", varies
 
 
 def predict(model, n, xy, ta, tb, mot_a, mot_b, world_shift=None):
@@ -170,14 +200,20 @@ def findings(model, tol, names=("line a", "line b")):
     cm = lambda v: 100 * abs(v)                               # noqa: E731
     rel = model["relation"]
     al, cr, up, roll = model.get("along"), model.get("cross"), model.get("up"), model.get("roll")
-    parts = model.get("along_parts") or []
-    varies = len(parts) >= 2 and (max(parts) - min(parts)) > tol
+    state, varies = along_state(model, tol)
+    se = model.get("along_se")
+    if state == "not measurable":
+        f.append(("note", "Along the road: not measurable here (%d walls facing along the road; ±%.1f cm)."
+                  % (model.get("along_walls") or 0, 100 * se if se is not None and np.isfinite(se) else float("nan"))))
+    parts = [q for q in (model.get("along_parts") or []) if isinstance(q, (list, tuple))]
     if varies:
-        f.append(("trajectory", "The along-road offset changes along the line (%s cm in its %d parts): not a "
-                  "calibration error, which would be the same everywhere." % (
-                      " / ".join("%+.1f" % (100 * v) for v in parts), len(parts))))
+        f.append(("trajectory", "The along-road offset changes along the line (%s cm in its %d parts, each ± about "
+                  "%.1f): not a calibration error, which would be the same everywhere." % (
+                      " / ".join("%+.1f" % (100 * q[0]) for q in parts), len(parts),
+                      100 * max(q[1] for q in parts))))
     if rel == "opposite":
-        if al is not None and abs(al) > tol and not varies:
+        if (al is not None and state == "measured" and abs(al) > tol and abs(al) > 3 * (se or 0)
+                and not varies):
             f.append(("calibration", "%.1f cm along the road on each pass, reversing with the driving direction "
                       "(points placed %s the vehicle): timing latency, an along-track lever arm or pitch."
                       % (cm(al) / 2, "ahead of" if -al > 0 else "behind")))

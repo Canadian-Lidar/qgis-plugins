@@ -1,4 +1,6 @@
-"""Line separation results (CloudPro 2.2.0): what the check found, per line pair and per line, with the report."""
+"""Line separation results (CloudPro 2.2.0): what the check found, per line pair and per line, with the report.
+From 2.3.0 a panel in the bottom-right tab group (LINE SEPARATION), showing the saved result, with Open in PosPro
+(a problem area, or a trajectory finding) and Open in AlignPro (a calibration finding)."""
 import os
 import time
 
@@ -6,7 +8,6 @@ from ..core import separation as S
 from ..qt import QtGui, QtWidgets, Qt
 from . import theme
 from .planview import COVER_LOW, COVER_OK, COVER_POOR
-from .props import _ToolWindow
 
 PAIR_COLS = ["Lines", "Patches", "Median", "95 %", "East", "North", "Up", "Rest"]
 AREA_COLS = ["#", "Line", "Easting", "Northing", "Size", "Median", "Max", "Time (UTC)", "GPS seconds of week"]
@@ -23,13 +24,14 @@ def _cm(v, signed=False):
     return S._cm(v, signed)
 
 
-class SeparationWindow(_ToolWindow):
+class SeparationPanel(QtWidgets.QWidget):
     def __init__(self, mw):
-        super().__init__(mw, "CloudPro - line separation", (900, 560))
+        super().__init__()
+        self.mw = mw
         self.res = None
         self.current = True
         lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(10, 10, 10, 10)
+        lay.setContentsMargins(8, 8, 8, 8)
         self.lbl_verdict = QtWidgets.QLabel("")
         self.lbl_verdict.setWordWrap(True)
         self.lbl_verdict.setFont(theme.ui_font(13))
@@ -61,6 +63,15 @@ class SeparationWindow(_ToolWindow):
         self.lines.itemSelectionChanged.connect(lambda: self._picked(self.lines))
 
         row = QtWidgets.QHBoxLayout()
+        self.btn_pospro = QtWidgets.QPushButton("Open in PosPro")
+        self.btn_pospro.setToolTip("PosPro's Trajectory Review, on the chosen problem area (C rows)")
+        self.btn_pospro.clicked.connect(self.open_pospro)
+        row.addWidget(self.btn_pospro)
+        self.btn_alignpro = QtWidgets.QPushButton("Open in AlignPro")
+        self.btn_alignpro.setToolTip("AlignPro's Pairs page, on the line pair with the calibration finding")
+        self.btn_alignpro.clicked.connect(self.open_alignpro)
+        row.addWidget(self.btn_alignpro)
+        row.addSpacing(12)
         self.btn_all = QtWidgets.QPushButton("All pairs on the Plan")
         self.btn_all.clicked.connect(self.show_all)
         row.addWidget(self.btn_all)
@@ -71,10 +82,11 @@ class SeparationWindow(_ToolWindow):
         row.addWidget(self.btn_again)
         row.addWidget(self.btn_save)
         row.addStretch(1)
-        b = QtWidgets.QPushButton("Close")
-        b.clicked.connect(self.close)
-        row.addWidget(b)
         lay.addLayout(row)
+        for t in (self.areas, self.steady, self.pairs):
+            t.itemSelectionChanged.connect(self._handoff_state)
+        self.tabs.currentChanged.connect(lambda *_: self._handoff_state())
+        self._handoff_state()
 
     @staticmethod
     def _title(t):
@@ -105,7 +117,7 @@ class SeparationWindow(_ToolWindow):
         p = self.res.pairs[rows[0].row() if rows else 0]
         nm = self.res.data.get("names", {})
         lab = {"calibration": "Calibration (AlignPro)", "trajectory": "Trajectory (PosPro)",
-               "either": "Calibration or trajectory"}
+               "either": "Calibration or trajectory", "note": "Note"}
         fi = S.pair_findings(p, self.tolerance)
         self.lbl_findings.setText("<b>%s / %s</b><br>%s" % (
             nm.get(str(p["a"]), p["a"]), nm.get(str(p["b"]), p["b"]),
@@ -174,7 +186,11 @@ class SeparationWindow(_ToolWindow):
             self.pairs.setRowCount(0)
             self.lines.setRowCount(0)
             self.areas.setRowCount(0)
+            self.steady.setRowCount(0)
+            self.tabs.setTabText(0, "PROBLEM AREAS")
             self.btn_save.setEnabled(False)
+            self.lbl_findings.setVisible(False)
+            self._handoff_state()
             return
         self.btn_save.setEnabled(True)
         self.lbl_verdict.setText(S.verdict(r, self.tolerance))
@@ -264,6 +280,65 @@ class SeparationWindow(_ToolWindow):
         self.steady.resizeColumnsToContents()
         self.steady.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
         self._units()
+        self._handoff_state()
+
+    # ------------------------------------------------------------------ hand-off (2.3.0)
+    def _selected_area(self):
+        rows = self.areas.selectionModel().selectedRows() if self.areas.selectionModel() else []
+        it = self.areas.item(rows[0].row(), 0) if rows else None
+        return it.data(Qt.ItemDataRole.UserRole) if it is not None else None
+
+    def _selected_pair(self):
+        """The pair chosen on STEADY OFFSETS or LINE PAIRS (same order as res.pairs), else None."""
+        for t in ((self.steady, self.pairs) if self.tabs.currentIndex() != 2 else (self.pairs, self.steady)):
+            rows = t.selectionModel().selectedRows() if t.selectionModel() else []
+            if rows and self.res is not None and rows[0].row() < len(self.res.pairs):
+                return self.res.pairs[rows[0].row()]
+        return None
+
+    def _kinds(self, p):
+        return {k for k, _ in S.pair_findings(p, self.tolerance)}
+
+    def pospro_target(self):
+        """What Open in PosPro shows: the chosen problem area (C<n>), else the point cloud rows."""
+        if self.res is None:
+            return None
+        aid = self._selected_area()
+        if aid is not None:
+            return {"kind": "cloud_area", "id": "C%d" % aid}
+        traj = any(self._kinds(p) & {"trajectory", "either"} for p in self.res.pairs)
+        if self.res.problem_areas(self.tolerance) or traj:
+            return {"kind": "cloud_area"}
+        return None
+
+    def alignpro_target(self):
+        """What Open in AlignPro shows: the chosen pair when it has a calibration finding, else the first such pair."""
+        if self.res is None:
+            return None
+        p = self._selected_pair()
+        if p is None or not self._kinds(p) & {"calibration", "either"}:
+            p = next((q for q in self.res.pairs if self._kinds(q) & {"calibration", "either"}), None)
+        if p is None:
+            return None
+        nm = self.res.data.get("names", {})
+        rec = {int(l["id"]): l for l in (self.mw.project.lines if self.mw.project is not None else [])}
+        return {"kind": "cloud_pair", "lines": [nm.get(str(p["a"]), str(p["a"])), nm.get(str(p["b"]), str(p["b"]))],
+                "line_numbers": [rec.get(p["a"], {}).get("line"), rec.get(p["b"], {}).get("line")]}
+
+    def _handoff_state(self):
+        ok = self.res is not None and self.current
+        self.btn_pospro.setEnabled(ok and self.pospro_target() is not None)
+        self.btn_alignpro.setEnabled(ok and self.alignpro_target() is not None)
+
+    def open_pospro(self):
+        t = self.pospro_target()
+        if t is not None:
+            self.mw.open_in("pospro", t)
+
+    def open_alignpro(self):
+        t = self.alignpro_target()
+        if t is not None:
+            self.mw.open_in("alignpro", t)
 
     def save_report(self):
         if self.res is None or self.mw.project is None:
@@ -276,3 +351,6 @@ class SeparationWindow(_ToolWindow):
         with open(p, "w", encoding="utf-8") as f:
             f.write("\n".join(S.report_lines(self.res, self.tolerance, self.mw.project.name)) + "\n")
         self.mw.status("Line separation report saved: %s" % p, 10000)
+
+
+SeparationWindow = SeparationPanel             # the name before 2.3.0
