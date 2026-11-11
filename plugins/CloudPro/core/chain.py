@@ -81,12 +81,24 @@ def resolve(dcs, use_alignpro=True, override=None):
     except Exception:          # noqa: BLE001
         pass
     inp.files = clraw_files(dcs)
-    # trajectory
-    try:
-        doc = handover.read(dcs, "pospro", required=False)
-    except handover.HandoverError as e:
-        doc = None
-        inp.warnings.append(str(e))
+    # trajectory: StripPro's when it is finalized and current (2.4.0: PosPro's, corrected from the point cloud)
+    doc, src = None, "pospro"
+    if traj_stage(dcs) == "strippro":
+        try:
+            doc = handover.read(dcs, "strippro", required=False)
+            src = "strippro"
+        except handover.HandoverError as e:
+            inp.warnings.append(str(e))
+    elif _state(dcs, "strippro") == "stale":
+        inp.warnings.append("StripPro's corrected trajectory is out of date (PosPro or AlignPro changed since): "
+                            "PosPro's trajectory is used until StripPro runs again")
+    if doc is None:
+        try:
+            doc = handover.read(dcs, "pospro", required=False)
+            src = "pospro"
+        except handover.HandoverError as e:
+            doc = None
+            inp.warnings.append(str(e))
     if doc is not None:
         tm = doc.get("time") or {}
         week = int(tm.get("week") or 0)
@@ -95,13 +107,17 @@ def resolve(dcs, use_alignpro=True, override=None):
         inp.traj = read_sbet(doc["paths"]["sbet"], week_start=ws, leap=leap, smrmsg=doc["paths"].get("smrmsg"))
         fr = doc.get("frame") or {}
         inp.source_crs = frame_to_crs(fr.get("name"))
-        st, why = dcs.state("pospro")
-        inp.traj_info = {"source": "pospro", "handover_id": doc.get("id"),
-                         "description": "PosPro trajectory (%s %s, %s)" % (fr.get("name") or "?", fr.get("epoch") or "",
-                                                                          (doc.get("quality") or {}).get("mode") or "?"),
+        st, why = dcs.state(src)
+        inp.traj_info = {"source": src, "handover_id": doc.get("id"),
+                         "description": "%s trajectory (%s %s, %s)" % (
+                             "StripPro" if src == "strippro" else "PosPro", fr.get("name") or "?",
+                             fr.get("epoch") or "", (doc.get("quality") or {}).get("mode") or "?"),
                          "frame": fr, "state": st}
+        if src == "strippro":
+            inp.traj_info["pospro_id"] = (doc.get("strip") or {}).get("from_trajectory")
         if st == "stale":
-            inp.warnings.append("PosPro results are out of date: " + "; ".join(why))
+            inp.warnings.append("%s results are out of date: " % ("StripPro" if src == "strippro" else "PosPro")
+                                + "; ".join(why))
     else:
         inp.traj_info = {"source": "realtime", "handover_id": None,
                          "description": "Certus real-time track (PosPro has not finalized a trajectory)"}
@@ -174,6 +190,19 @@ def _other_changes(project, used):
     return why
 
 
+def _state(dcs, key):
+    try:
+        return dcs.state(key)[0]
+    except Exception:          # noqa: BLE001  (DCS Core before 1.13.0 has no strippro stage)
+        return "none"
+
+
+def traj_stage(dcs):
+    """The stage whose trajectory CloudPro georeferences with: "strippro" when StripPro has finalized a
+    trajectory that is current, else "pospro"."""
+    return "strippro" if _state(dcs, "strippro") == "done" else "pospro"
+
+
 def georef_state(project, inp=None):
     """Reasons why the georeferenced points no longer match the chain's current inputs ([] = current)."""
     if project.dcs is None or not project.lines:
@@ -188,6 +217,8 @@ def georef_state(project, inp=None):
     if ut.get("handover_id") != inp.traj_info.get("handover_id"):
         if inp.traj_info.get("handover_id") and not ut.get("handover_id"):
             why.append("PosPro has finalized a trajectory since the points were georeferenced (real-time track used)")
+        elif inp.traj_info.get("source") == "strippro":
+            why.append("StripPro has finalized a corrected trajectory since the points were georeferenced")
         elif inp.traj_info.get("handover_id"):
             why.append("PosPro's trajectory changed since the points were georeferenced")
     ua = (used.get("alignment") or {})
@@ -224,10 +255,12 @@ def quick_state(project):
     if (used.get("override") or {}) != ov:
         why.append("the georeferencing values in Project properties changed")
     tid = (used.get("trajectory") or {}).get("handover_id")
-    cur = project.dcs.stage("pospro").get("handover_id") if project.dcs.stage("pospro").get("status") == "done" else None
+    ts = traj_stage(project.dcs)
+    cur = project.dcs.stage(ts).get("handover_id") if project.dcs.stage(ts).get("status") == "done" else None
     if cur and cur != tid:
-        why.append("PosPro has finalized a new trajectory since the points were georeferenced" if tid else
-                   "PosPro has finalized a trajectory (the points use the real-time track)")
+        why.append(("StripPro has finalized a corrected trajectory since the points were georeferenced"
+                    if ts == "strippro" else "PosPro has finalized a new trajectory since the points were georeferenced")
+                   if tid else "PosPro has finalized a trajectory (the points use the real-time track)")
     aid = (used.get("alignment") or {}).get("handover_id")
     s = project.dcs.stage("alignpro")
     cur = s.get("handover_id") if s.get("status") == "done" else None

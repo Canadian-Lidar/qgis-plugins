@@ -25,7 +25,8 @@ MIN_POINTS = 8
 MAX_THICKNESS = 0.03         # m: RMS distance from the plane
 MAX_ANGLE_DEG = 10.0
 MIN_DT_SAME_LINE = 0.75      # s: planes of the same line closer in time carry no information
-MAX_DT_SAME_LINE = 6.0       # s
+MAX_DT_SAME_LINE = 20.0      # s (a tilted scanner sees a wall ahead and again behind)
+MAX_OBS = 1_500_000          # observations per iteration
 INTER_PER_LINE = 4           # groups per line and voxel used for pairs between lines
 OBS_PER_GROUP = 4            # points of a group observed against a reference plane
 SIGMA_OBS = 0.01             # m
@@ -72,8 +73,10 @@ class Correction:
 
 
 def apply(p, s, d, th):
-    """p' = p + d + theta x (p - s) (small rotation, exact enough below 1 deg; see apply_exact)."""
-    return p + d + np.cross(th, p - s)
+    """p' = s + d + Rot(theta) (p - s): the point moves with its INS reference point and turns about it."""
+    from .frames import rodrigues
+    R = rodrigues(th)
+    return s + d + np.einsum("nij,nj->ni", R, p - s)
 
 
 def knots_for(t0, t1, step=KNOT_S, holes=None, outside=KNOT_OUT_S):
@@ -105,9 +108,17 @@ def planes(line, t, p, s, rng=None):
     vx = np.floor(p / VOXEL_M).astype(np.int64)
     vkey = (vx[:, 0] + 2 ** 20) * 2 ** 42 + (vx[:, 1] + 2 ** 20) * 2 ** 21 + (vx[:, 2] + 2 ** 20)
     tbin = np.floor(t / BIN_S).astype(np.int64)
-    key = np.stack([vkey, line.astype(np.int64), tbin], 1)
-    uk, inv, cnt = np.unique(key, axis=0, return_inverse=True, return_counts=True)
-    inv = inv.ravel()
+    ln = line.astype(np.int64)
+    o = np.lexsort((tbin, ln, vkey))               # one sort, no (n, 3) unique: fast and light on memory
+    vs, ls_, bs = vkey[o], ln[o], tbin[o]
+    new = np.r_[True, (vs[1:] != vs[:-1]) | (ls_[1:] != ls_[:-1]) | (bs[1:] != bs[:-1])]
+    gid = np.cumsum(new) - 1
+    first = np.flatnonzero(new)
+    uk = np.stack([vs[first], ls_[first], bs[first]], 1)
+    cnt = np.diff(np.r_[first, len(o)])
+    inv = np.empty(len(o), np.int64)
+    inv[o] = gid
+    del vs, ls_, bs, new, gid
     ok = cnt >= MIN_POINTS
     sel = np.flatnonzero(ok[inv])
     inv2 = np.full(len(uk), -1)
@@ -313,6 +324,14 @@ class Solver:
             if not len(P):
                 raise ValueError("no planar surfaces seen twice")
             q, ref, r = self._obs(pl, P, t, p2, s2)
+            if len(q) > MAX_OBS:                  # bounded memory: an even sample, every hole kept
+                rng = np.random.default_rng(it)
+                hole = _in_holes_pad(t[q], self.holes, 0.0) | _in_holes_pad(pl["tb"][ref], self.holes, 0.0)
+                frac = (MAX_OBS - hole.sum()) / max(1, (~hole).sum())
+                sel = hole | (rng.random(len(q)) < frac)
+                if sel.sum() > MAX_OBS:
+                    sel &= rng.random(len(q)) < MAX_OBS / sel.sum()
+                q, ref, r = q[sel], ref[sel], r[sel]
             keep = np.abs(r) <= max_r
             q, ref, r = q[keep], ref[keep], r[keep]
             sig = np.hypot(SIGMA_OBS, pl["thick"][ref])
@@ -335,6 +354,9 @@ class Solver:
             if progress:
                 progress((it + 1) / iterations, self.history[-1])
             max_r = max(0.15, max_r * 0.6)
+            del Ao, Ap, A, N, b, pl, P, q, ref, r, p2, s2       # the next iteration builds its own (memory)
+            import gc
+            gc.collect()
             if np.abs(dx).max() < 1e-4:
                 break
         return self.history

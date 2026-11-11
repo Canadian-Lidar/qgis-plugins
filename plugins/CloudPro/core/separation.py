@@ -401,7 +401,8 @@ def recording_holes(project):
     try:
         from dcs_core import handover
         from dcs_core import sbet as dsbet
-        doc = handover.read(dcs, "pospro", required=False)
+        src = ((project.data.get("inputs") or {}).get("trajectory") or {}).get("source")
+        doc = handover.read(dcs, "strippro" if src == "strippro" else "pospro", required=False)
     except Exception:       # noqa: BLE001
         return None
     if not doc:
@@ -861,7 +862,11 @@ def feedback(project, res, tol=DEFAULT_TOLERANCE):
     return {"schema": FEEDBACK_SCHEMA, "written_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "by": "CloudPro %s" % ver, "measured_utc": res.data.get("utc"), "tolerance_m": tol,
             "patch_m": res.patch, "crs": project.crs, "leap_seconds": _leap(time.time()),
-            "trajectory": {"source": tr.get("source"), "handover_id": tr.get("handover_id"),
+            # PosPro judges "current" by its own trajectory's id: with StripPro's trajectory, the PosPro one it
+            # was made from (StripPro's id beside it)
+            "trajectory": {"source": tr.get("source"),
+                           "handover_id": tr.get("pospro_id") if tr.get("source") == "strippro" else tr.get("handover_id"),
+                           "strippro_id": tr.get("handover_id") if tr.get("source") == "strippro" else None,
                            "description": tr.get("description")},
             "current": res.is_current(project), "summary": verdict(res, tol),
             "recording_holes": res.data.get("recording"), "areas": areas}

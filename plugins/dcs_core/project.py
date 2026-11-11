@@ -23,17 +23,22 @@ SUFFIX = ".dcsproj"
 STAGES = [
     ("pospro", "01_PosPro", "PosPro", "dcs.trajectory/1", "trajectory.json"),
     ("alignpro", "02_AlignPro", "AlignPro", "dcs.alignment/1", "alignment.json"),
+    # optional (DCS Core 1.13.0): the trajectory corrected from the point cloud; CloudPro uses it when finalized
+    ("strippro", "02_StripPro", "StripPro", "dcs.trajectory/1", "trajectory.json"),
     ("cloudpro", "03_CloudPro", "CloudPro", "dcs.cloud/1", "cloud.json"),
 ]
 STAGE = {s[0]: s for s in STAGES}
-UPSTREAM = {"pospro": [], "alignpro": ["pospro"], "cloudpro": ["pospro", "alignpro"]}
+UPSTREAM = {"pospro": [], "alignpro": ["pospro"], "strippro": ["pospro", "alignpro"],
+            "cloudpro": ["pospro", "alignpro", "strippro"]}
+OPTIONAL = ("strippro",)        # a stage a job can do without: the chain shows it, nothing waits for it
 # shared facts a stage's results depend on (an edit makes the stage stale)
 DEPENDS = {"pospro": ["crs", "base_station", "antennas"],
            "alignpro": ["crs", "lidar_mounting"],
+           "strippro": ["crs", "lidar_mounting"],
            "cloudpro": ["crs", "lidar_mounting"]}
 SHARED_KEYS = ("crs", "base_station", "antennas", "lidar_mounting", "vehicle", "hardware")
 # stages that read the job's survey-line .clraw themselves (built_from records them as "inputs", 1.8.0)
-READS_SURVEY = ("alignpro", "cloudpro")
+READS_SURVEY = ("alignpro", "strippro", "cloudpro")
 MODIFY_WAIT_S = 10.0            # how long modify() waits for another writer of the project file
 _RESERVED = {"CON", "PRN", "AUX", "NUL"} | {"COM%d" % i for i in range(1, 10)} | {"LPT%d" % i for i in range(1, 10)}
 

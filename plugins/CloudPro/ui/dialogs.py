@@ -421,7 +421,7 @@ class GeorefDialog(QtWidgets.QDialog):
         g = QtWidgets.QGroupBox("Inputs")
         f = QtWidgets.QFormLayout(g)
         ti = inp.traj_info
-        f.addRow(_k("Trajectory"), self._val(ti.get("description", "?"), "ok" if ti.get("source") == "pospro" else "warn"))
+        f.addRow(_k("Trajectory"), self._val(ti.get("description", "?"), "ok" if ti.get("source") in ("pospro", "strippro") else "warn"))
         if ti.get("handover_id"):
             f.addRow(_k("Trajectory id"), self._val(ti["handover_id"][:23]))
         if inp.align_info.get("calibration") == "applied":

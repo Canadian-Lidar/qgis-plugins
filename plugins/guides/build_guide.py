@@ -22,6 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 NAMES = {"pospro": ("PosPro", "GNSS/INS trajectory post-processing", "Stage 01"),
          "alignpro": ("AlignPro", "Lidar boresight calibration (patch test)", "Stage 02"),
          "cloudpro": ("CloudPro", "Point cloud georeferencing, cleaning, classification and delivery", "Stage 03"),
+         "strippro": ("StripPro", "Trajectory correction from the point cloud", "Optional stage"),
          "remixpro": ("RemixPro", "Files for BeamworX, Inertial Explorer and Qinertia", "Side tool")}
 
 

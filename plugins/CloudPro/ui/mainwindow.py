@@ -986,9 +986,10 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             cal = (inp.get("alignment") or {}).get("calibration", "no calibration")
             src = (inp.get("trajectory") or {}).get("source", "")
-            txt = "%s trajectory · %s" % ({"pospro": "PosPro", "realtime": "Real-time"}.get(src, src or "?"),
+            txt = "%s trajectory · %s" % ({"pospro": "PosPro", "strippro": "StripPro", "realtime": "Real-time"}.get(
+                src, src or "?"),
                                           "AlignPro calibration" if cal == "applied" else cal)
-            lvl = "ok" if cal == "applied" and src == "pospro" else "warn"
+            lvl = "ok" if cal == "applied" and src in ("pospro", "strippro") else "warn"
         self.lbl_inputs.setText(txt)
         self.lbl_inputs.setToolTip(txt)
         self.lbl_inputs.setProperty("level", lvl)
@@ -2779,7 +2780,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if p.dcs is not None:
             try:
                 from dcs_core import handover
-                doc = handover.read(p.dcs, "pospro", required=False)
+                src = ((p.data.get("inputs") or {}).get("trajectory") or {}).get("source")
+                doc = handover.read(p.dcs, "strippro" if src == "strippro" else "pospro", required=False)
                 smr = (doc or {}).get("paths", {}).get("smrmsg")
             except Exception:       # noqa: BLE001
                 smr = None
