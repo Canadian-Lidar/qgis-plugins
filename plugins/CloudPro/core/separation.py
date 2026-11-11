@@ -233,8 +233,9 @@ def _column_median(col, absd, n):
 def solve_shift(n, d):
     """Constant shift t (E, N, Up) of line b against line a with n . t ~ d (robust). Returns
     (t, horizontal_ok, rest) - rest = |d - n.t| median after the fit; E/N are NaN when the walls do not fix them."""
-    n = np.asarray(n, float)
+    n = np.asarray(n, float).copy()
     d = np.asarray(d, float)
+    n[np.abs(n[:, 2]) >= pairmodel.STEEP, :2] = 0.0      # E / N from walls only (2.2.2)
     keep = np.ones(len(d), bool)
     H = n[:, :2].T @ n[:, :2]
     hor = len(d) >= 3 and np.linalg.eigvalsh(H).min() >= MIN_WALLS

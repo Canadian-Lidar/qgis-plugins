@@ -26,13 +26,16 @@ L = 300.0
 AHEAD = 0.04                    # m each pass, forward along its travel (latency-like)
 ROLL = 0.002                    # m per m from the drive line, rising to the left
 BUMP = (120.0, 150.0, -0.12)    # Line 2 low between these x
+SLOPE = 0.003
+DZ_RAMP = 0.0
+DZ = 0.0                        # Line 2 higher by this (+ DZ_RAMP per 100 m): a GNSS height difference
 
 
 def street(rng):
     parts = []
     n = 500_000
     gx, gy = rng.uniform(0, L, n), rng.uniform(-14, 14, n)
-    parts.append(np.column_stack([gx, gy, 0.003 * gx]))
+    parts.append(np.column_stack([gx, gy, SLOPE * gx]))
     for x0 in np.arange(5, L - 25, 22.0):           # buildings both sides, walls in all four directions
         for side in (-1, 1):
             w, d, h = rng.uniform(10, 16), rng.uniform(7, 10), rng.uniform(5, 9)
@@ -66,6 +69,7 @@ def build(tmp):
         if not east:
             m = (x > BUMP[0]) & (x < BUMP[1])
             xyz[m, 2] += BUMP[2]
+            xyz[:, 2] += DZ + DZ_RAMP * x / 100.0
         xyz += rng.normal(0, 0.004, xyz.shape)
         r = np.zeros(len(xyz), REC)
         r["x"], r["y"], r["z"] = np.round(xyz * 1000).astype(np.int32).T
@@ -135,7 +139,29 @@ def main():
         w5[0]["utc"][0] - T0, w5[0]["utc"][1] - T0))
     txt = "\n".join(S.report_lines(r, 0.03, "street"))
     assert "driven in opposite directions" in txt and "Calibration (AlignPro):" in txt
+    shirley()
     print("OK")
+
+
+def shirley():
+    """Shirley 2.2.1: a road sloping 2 % and a height difference between the passes (4 cm, plus 1 cm per 100 m),
+    with no along-road error at all. 2.2.1 read the height difference on the slope as an along-road shift (8.4 cm
+    per pass reported); from 2.2.2 along / sideways come from walls only."""
+    global AHEAD, ROLL, SLOPE, DZ, DZ_RAMP
+    keep = (AHEAD, ROLL, SLOPE, DZ, DZ_RAMP)
+    AHEAD, ROLL, SLOPE, DZ, DZ_RAMP = 0.0, 0.0, 0.02, 0.04, 0.01
+    try:
+        p = build(tempfile.mkdtemp())
+        r = S.run(p)
+        m = r.pairs[0]["model"]
+        assert abs(m["along"]) < 0.01 and abs(m["cross"] or 0) < 0.01, m
+        assert abs((m["up"] or 0) - (DZ + DZ_RAMP * 1.5)) < 0.01, m
+        kinds = {k for k, _ in S.pair_findings(r.pairs[0], 0.03)}
+        assert "calibration" not in kinds, S.pair_findings(r.pairs[0], 0.03)
+        print("sloped road + height difference: along %+.1f cm (true 0), up %+.1f cm (mean true %+.1f); no "
+              "calibration finding" % (100 * m["along"], 100 * m["up"], 100 * (DZ + DZ_RAMP * 1.5)))
+    finally:
+        AHEAD, ROLL, SLOPE, DZ, DZ_RAMP = keep
 
 
 if __name__ == "__main__":
