@@ -492,6 +492,23 @@ class PairsPage(Page):
         self.tbl.setMinimumHeight(260)
         gl.addWidget(self.tbl)
         self.lay.addWidget(g)
+        gc, glc = _group("From the point cloud")
+        self.cloud_note = QLabel("")
+        self.cloud_note.setWordWrap(True)
+        glc.addWidget(self.cloud_note)
+        self.cloud_tbl = make_table(["Lines", "Driven", "Along", "Sideways", "Up", "Roll per 10 m", "Rest",
+                                     "Points at"])
+        self.cloud_tbl.setMinimumHeight(110)
+        glc.addWidget(self.cloud_tbl)
+        self.cloud_why = QLabel("")
+        self.cloud_why.setWordWrap(True)
+        glc.addWidget(self.cloud_why)
+        self.b_cloud = QPushButton("Use these lines and their overlap")
+        self.b_cloud.clicked.connect(self._use_cloud)
+        glc.addLayout(_row(self.b_cloud, None))
+        self.cloud_tbl.itemSelectionChanged.connect(self._cloud_why)
+        self.cloud_group = gc
+        self.lay.addWidget(gc)
         g2, gl2 = _group("Calibration area")
         gl2.addWidget(_hint("Automatic by default. For a single target (pole, building corner), "
                             "draw an area of interest on the map; only surfaces inside it are used."))
@@ -509,7 +526,74 @@ class PairsPage(Page):
         self.lay.addWidget(g2)
         self.lay.addStretch(1)
 
+    # ---- CloudPro's calibration findings (1.8.0)
+    def _cloud_doc(self):
+        from ..core import cloudcheck
+        return cloudcheck.load(self.p) if self.p is not None else None
+
+    def refresh_cloud(self):
+        doc = self._cloud_doc()
+        self.cloud_group.setVisible(doc is not None)
+        if doc is None:
+            return
+        def cm(v, signed=True):
+            if v is None:
+                return "–"
+            v = 100 * v
+            return "0.0" if abs(v) < 0.05 else ("%+.1f" if signed else "%.1f") % v
+        drv = {"opposite": "both ways", "same": "same way", "crossing": "crossing"}
+        pairs = doc["pairs"]
+        t = self.cloud_tbl
+        t.setRowCount(len(pairs))
+        for i, q in enumerate(pairs):
+            st = q.get("steady_m") or {}
+            kinds = {f["kind"] for f in q.get("findings", [])}
+            at = ("Calibration" if "calibration" in kinds else "Trajectory (PosPro)" if "trajectory" in kinds else
+                  "Either" if "either" in kinds else "–")
+            vals = [" / ".join(q.get("lines", [])), drv.get(q.get("relation"), "–"), cm(st.get("along")),
+                    cm(st.get("cross")), cm(st.get("up")),
+                    cm(None if q.get("roll_m_per_m") is None else 10 * q["roll_m_per_m"]),
+                    "%.1f" % (100 * q.get("rest_m", 0)), at]
+            for j, v in enumerate(vals):
+                t.setItem(i, j, cell(v, theme.AMBER if (j == 7 and at == "Calibration") else None, 2 <= j <= 6))
+        when = (doc.get("measured_utc") or "")[:16]
+        if doc["current"]:
+            self.cloud_note.setText("CloudPro, %s, with the current calibration (cm, second line against the first, "
+                                    "in the first line's direction of travel)." % when)
+            self.cloud_note.setStyleSheet("")
+        else:
+            self.cloud_note.setText("CloudPro, %s, with %s: check line separation in CloudPro again after it updates "
+                                    "the points." % (when, doc["other"]))
+            self.cloud_note.setStyleSheet("color: %s;" % theme.AMBER)
+        if pairs and not t.selectionModel().selectedRows():
+            t.selectRow(0)
+        self._cloud_why()
+
+    def _cloud_row(self):
+        rows = self.cloud_tbl.selectionModel().selectedRows() if self.cloud_tbl.selectionModel() else []
+        return rows[0].row() if rows else (0 if self.cloud_tbl.rowCount() else -1)
+
+    def _cloud_why(self):
+        doc = self._cloud_doc()
+        k = self._cloud_row()
+        if doc is None or k < 0 or k >= len(doc["pairs"]):
+            self.cloud_why.setText("")
+            self.b_cloud.setEnabled(False)
+            return
+        q = doc["pairs"][k]
+        lab = {"calibration": "Calibration", "trajectory": "Trajectory (PosPro)", "either": "Calibration or trajectory"}
+        self.cloud_why.setText("<br>".join("<b>%s:</b> %s" % (lab.get(f["kind"], f["kind"]), f["text"])
+                                           for f in q.get("findings", [])) or "Nothing beyond the tolerance.")
+        from ..core import cloudcheck
+        self.b_cloud.setEnabled(len(cloudcheck.lines_for(self.p, q)) >= 2)
+
+    def _use_cloud(self):
+        k = self._cloud_row()
+        if k >= 0:
+            self.dock.use_cloud_pair(k)
+
     def refresh(self):
+        self.refresh_cloud()
         p = self.p
         if p is None or p.P is None:
             return

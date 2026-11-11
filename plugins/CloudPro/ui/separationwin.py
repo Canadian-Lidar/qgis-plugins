@@ -10,8 +10,10 @@ from .props import _ToolWindow
 
 PAIR_COLS = ["Lines", "Patches", "Median", "95 %", "East", "North", "Up", "Rest"]
 AREA_COLS = ["#", "Line", "Easting", "Northing", "Size", "Median", "Max", "Time (UTC)", "GPS seconds of week"]
+STEADY_COLS = ["Lines", "Driven", "Along", "Sideways", "Up", "Roll per 10 m", "Rest", "Points at"]
 UNITS = ["cm; size m². Line = the line at fault when the area shows against several lines, else the pair.",
-         "cm; shift of the second line against the first; rest = left after that shift.",
+         "cm, second line against the first, in the first line's direction of travel.",
+         "cm; shift of the second line against the first; rest = left after the steady offset.",
          "cm; median against the lines each one overlaps."]
 
 
@@ -41,11 +43,17 @@ class SeparationWindow(_ToolWindow):
         self.areas = self._table(AREA_COLS)
         self.pairs = self._table(PAIR_COLS)
         self.lines = self._table(["Line", "Median", "Pairs", "Patches"])
-        for w, t in ((self.areas, "PROBLEM AREAS"), (self.pairs, "LINE PAIRS"), (self.lines, "LINES")):
+        self.steady = self._table(STEADY_COLS)
+        for w, t in ((self.areas, "PROBLEM AREAS"), (self.steady, "STEADY OFFSETS"), (self.pairs, "LINE PAIRS"),
+                     (self.lines, "LINES")):
             self.tabs.addTab(w, t)
         lay.addWidget(self.tabs, 1)
+        self.lbl_findings = QtWidgets.QLabel("")
+        self.lbl_findings.setWordWrap(True)
+        lay.addWidget(self.lbl_findings)
         self.lbl_units = self._title("")
         lay.addWidget(self.lbl_units)
+        self.steady.itemSelectionChanged.connect(self._steady_findings)
         self.tabs.currentChanged.connect(self._units)
 
         self.areas.itemSelectionChanged.connect(self._area_picked)
@@ -86,6 +94,23 @@ class SeparationWindow(_ToolWindow):
 
     def _units(self, i=None):
         self.lbl_units.setText(UNITS[self.tabs.currentIndex()])
+        self._steady_findings()
+
+    def _steady_findings(self):
+        """On the STEADY OFFSETS tab: what the chosen (else the first) pair's steady offset means."""
+        if self.res is None or self.tabs.currentIndex() != 1 or not self.res.pairs:
+            self.lbl_findings.setVisible(False)
+            return
+        rows = self.steady.selectionModel().selectedRows() if self.steady.selectionModel() else []
+        p = self.res.pairs[rows[0].row() if rows else 0]
+        nm = self.res.data.get("names", {})
+        lab = {"calibration": "Calibration (AlignPro)", "trajectory": "Trajectory (PosPro)",
+               "either": "Calibration or trajectory"}
+        fi = S.pair_findings(p, self.tolerance)
+        self.lbl_findings.setText("<b>%s / %s</b><br>%s" % (
+            nm.get(str(p["a"]), p["a"]), nm.get(str(p["b"]), p["b"]),
+            "<br>".join("<b>%s:</b> %s" % (lab[k], t) for k, t in fi) or "Nothing beyond the tolerance."))
+        self.lbl_findings.setVisible(True)
 
     def _area_picked(self):
         """A problem area chosen: the Plan shows its line (or pair) and the Inspection Area goes there."""
@@ -216,6 +241,28 @@ class SeparationWindow(_ToolWindow):
         self.areas.resizeColumnsToContents()
         self.areas.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
         self.tabs.setTabText(0, "PROBLEM AREAS  %d" % len(areas))
+        self.steady.setRowCount(len(r.pairs))
+        drv = {"opposite": "both ways", "same": "same way", "crossing": "crossing"}
+        for i, p in enumerate(r.pairs):
+            m = p.get("model") or {}
+            fi = S.pair_findings(p, self.tolerance)
+            kinds = {k for k, _ in fi}
+            at = ("Calibration (AlignPro)" if "calibration" in kinds else
+                  "Trajectory (PosPro)" if "trajectory" in kinds else
+                  "Calibration or trajectory" if "either" in kinds else "–")
+            vals = ["%s / %s" % (nm.get(str(p["a"]), p["a"]), nm.get(str(p["b"]), p["b"])),
+                    drv.get(m.get("relation"), "–"), _cm(m.get("along"), True), _cm(m.get("cross"), True),
+                    _cm(m.get("up"), True), ("%.1f" % (1000 * m["roll"])) if m.get("roll") is not None else "–",
+                    _cm(m.get("rest")), at]
+            for j, v in enumerate(vals):
+                it = QtWidgets.QTableWidgetItem(v)
+                if 2 <= j <= 6:
+                    it.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+                if j == 7 and at != "–":
+                    it.setForeground(QtGui.QColor(theme.AMBER))
+                self.steady.setItem(i, j, it)
+        self.steady.resizeColumnsToContents()
+        self.steady.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
         self._units()
 
     def save_report(self):

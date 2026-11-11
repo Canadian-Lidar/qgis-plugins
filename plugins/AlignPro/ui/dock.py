@@ -674,6 +674,38 @@ class AlignProDock(PluginWindow):
             return out
         return work
 
+    def use_cloud_pair(self, k):
+        """Use a pair CloudPro flagged as patch-test material: only its two lines, and an area of interest along the
+        stretch they share (AlignPro 1.8.0)."""
+        from ..core import cloudcheck
+        p = self.p
+        doc = cloudcheck.load(p) if p is not None else None
+        if doc is None or not (0 <= k < len(doc["pairs"])):
+            return
+        pair = doc["pairs"][k]
+        idx = cloudcheck.lines_for(p, pair)
+        if len(idx) < 2:
+            self.toast("%s are not among this job's lines here" % " and ".join(pair.get("lines", [])), "warn")
+            return
+        ring = cloudcheck.corridor(p, pair)
+
+        def go():
+            if self.p is not p:
+                return
+            for i, ln in enumerate(p.lines):
+                ln.use = i in idx
+            if ring:
+                p.cfg["aoi"] = ring
+                p.settings["use_aoi"] = True
+            p.save()
+
+            def fn(prog, canc):
+                p.analyse()
+            self._run("Pairs and surfaces", fn, lambda _: (self.refresh_all(), self.dv.reload("aoi" if ring else None),
+                                                          self.toast("Using %s and the stretch they share"
+                                                                     % " / ".join(pair.get("lines", [])))))
+        self._when_free(go, "using the lines from the point cloud")
+
     def set_line_use(self, i, on):
         p = self.p
 

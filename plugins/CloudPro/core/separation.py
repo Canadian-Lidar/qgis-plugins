@@ -32,9 +32,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
+from . import pairmodel
 from .store import REJECTED, parse_key
 
-VERSION = 4
+VERSION = 5
 PATCH = 1.0                       # cube side (m); must divide the tile size
 PATCHES = (0.5, 1.0, 2.0)
 MIN_POINTS = 12                   # points of one line in a cube
@@ -47,6 +48,7 @@ TILE_POINTS = 2_000_000           # points used per tile at most (evenly thinned
 PAIR_SAMPLE = 60_000              # patches kept per pair for the statistics and the shift
 NOISE_CLASSES = (7, 18)
 DEFAULT_TOLERANCE = 0.03          # m
+WINDOW_GAP_S = 5.0                # s: overlap times of a line closer than this are one window
 TOLERANCES = (0.01, 0.02, 0.03, 0.05, 0.10)
 MIN_WALLS = 30.0                  # horizontal information (sum of nx^2+ny^2 per direction) needed for E/N
 
@@ -148,7 +150,7 @@ def _tile_patches(a, x0, y0, T, patch, tbase=0.0):
     cz = (czc + zbase + 0.5) * patch + mz[flat]
     cen = np.stack([cx, cy, cz], 1)
     # pairs: entries are sorted by cube, then line (key order); pair i with i+s inside the same cube
-    out_la, out_lb, out_n, out_d, out_col, out_ta, out_tb = [], [], [], [], [], [], []
+    out_la, out_lb, out_n, out_d, out_col, out_ta, out_tb, out_xy = [], [], [], [], [], [], [], []
     cos_max = math.cos(math.radians(MAX_ANGLE))
     for s_ in range(1, nl):
         if s_ >= len(cube):
@@ -174,13 +176,15 @@ def _tile_patches(a, x0, y0, T, patch, tbase=0.0):
         out_col.append(col[i][ok])
         out_ta.append(tm[i][ok])
         out_tb.append(tm[j][ok])
+        out_xy.append((0.5 * (cen[i, :2] + cen[j, :2]))[ok] + np.array([x0, y0]))
     if not out_la:
         return None
     return (np.concatenate(out_la), np.concatenate(out_lb), np.concatenate(out_n), np.concatenate(out_d),
-            np.concatenate(out_col), n, np.concatenate(out_ta), np.concatenate(out_tb))
+            np.concatenate(out_col), n, np.concatenate(out_ta), np.concatenate(out_tb), np.concatenate(out_xy))
 
 
-CELLS = np.dtype([("c", "<i4"), ("d", "<f4"), ("ta", "<f4"), ("tb", "<f4")])
+CELLS = np.dtype([("c", "<i4"), ("d", "<f4"), ("ta", "<f4"), ("tb", "<f4"), ("ds", "<f4"), ("nx", "<f4"),
+                  ("ny", "<f4"), ("nz", "<f4")])
 
 
 def _cell_medians(col, val):
@@ -194,13 +198,20 @@ def _cell_medians(col, val):
     return cs[starts], (0.5 * (vs[lo] + vs[hi])).astype(np.float32)
 
 
-def _pair_cells(col, absd, ta, tb):
-    """One pair in one tile, sparse (CELLS): cell, median |d|, median time of each line's points."""
-    c, d = _cell_medians(col, absd)
+def _pair_cells(col, d, nn, ta, tb):
+    """One pair in one tile, sparse (CELLS): cell, median |d|, median time of each line's points, median signed d
+    and the mean normal (to take the pair's steady relation off, 2.2.1)."""
+    c, ad = _cell_medians(col, np.abs(d))
     out = np.empty(len(c), CELLS)
-    out["c"], out["d"] = c, d
+    out["c"], out["d"] = c, ad
     out["ta"] = _cell_medians(col, ta)[1]
     out["tb"] = _cell_medians(col, tb)[1]
+    out["ds"] = _cell_medians(col, d)[1]
+    idx = np.searchsorted(c, col)
+    cnt = np.bincount(idx, minlength=len(c)).astype(float)
+    nm = np.stack([np.bincount(idx, weights=nn[:, k], minlength=len(c)) / cnt for k in range(3)], 1)
+    nm /= np.maximum(np.linalg.norm(nm, axis=1), 1e-9)[:, None]
+    out["nx"], out["ny"], out["nz"] = nm[:, 0], nm[:, 1], nm[:, 2]
     return out
 
 
@@ -251,24 +262,55 @@ def solve_shift(n, d):
     return t, bool(hor), rest
 
 
+def motions_of(project):
+    """Line id -> pairmodel.Motion from CloudPro's sensor tracks (missing tracks are left out)."""
+    out = {}
+    try:
+        for lid, tr in project.tracks().items():
+            if tr is not None and len(tr.get("t", ())) > 2:
+                out[int(lid)] = pairmodel.Motion(tr)
+    except Exception:                           # noqa: BLE001
+        pass
+    return out
+
+
+def _runs(t, gap=WINDOW_GAP_S):
+    t = np.sort(np.asarray(t, float))
+    t = t[np.isfinite(t)]
+    if not len(t):
+        return []
+    br = np.flatnonzero(np.diff(t) > gap)
+    starts = np.r_[0, br + 1]
+    ends = np.r_[br, len(t) - 1]
+    return [[round(float(t[i]), 2), round(float(t[j]), 2)] for i, j in zip(starts, ends)]
+
+
+def _windows(ta, tb):
+    """When each line of a pair was over the shared surfaces: {"a": [[t0, t1], ...], "b": [...]} (UTC s)."""
+    return {"a": _runs(ta), "b": _runs(tb)}
+
+
 class Result:
     def __init__(self, data, grids, pair_cells=None):
         self.data = data                  # json-able dict
         self.grids = grids                # tile key -> n x n float32 median |d| (m), every pair
         self.pair_cells = pair_cells or {}    # (tile key, a, b) -> CELLS: only the occupied cells of one pair
-        #                                       (median |d|, median time of a's and b's points, s after t_base)
+        #                                       (median |d|, times, signed median d, mean normal)
+        self.motions = {}                 # line id -> pairmodel.Motion (to take each pair's steady relation off)
         self._areas = {}
+        self._resid = {}
         self._by_tile = {}
         for (k, a, b) in self.pair_cells:
             self._by_tile.setdefault(k, []).append((a, b))
+        self._pair = {(p["a"], p["b"]): p for p in data.get("pairs", [])}
 
     @property
     def n(self):
         return int(round(float(self.data.get("tile", 50.0)) / self.patch))
 
-    def _dense(self, cells):
+    def _dense(self, cells, values=None):
         g = np.full(self.n * self.n, np.nan, np.float32)
-        g[cells["c"]] = cells["d"]
+        g[cells["c"]] = cells["d"] if values is None else values
         return g.reshape(self.n, self.n)
 
     @property
@@ -283,23 +325,44 @@ class Result:
     def lines(self):
         return self.data.get("lines", [])
 
-    def grid(self, key, pair=None, line=None):
+    def residual(self, key, a, b):
+        """|separation| per occupied cell of one pair in one tile once the pair's steady relation (the vehicle-frame
+        model, else the world shift) is taken off."""
+        k = (key, a, b)
+        if k not in self._resid:
+            cells = self.pair_cells[k]
+            rec = self._pair.get((a, b), {})
+            i, j = parse_key(key)
+            T, pt, n = float(self.data.get("tile", 50.0)), self.patch, self.n
+            xy = np.stack([i * T + (cells["c"] % n + 0.5) * pt, j * T + (cells["c"] // n + 0.5) * pt], 1)
+            nrm = np.stack([cells["nx"], cells["ny"], cells["nz"]], 1).astype(float)
+            tb0 = float(self.data.get("t_base", 0.0))
+            pred = pairmodel.predict(rec.get("model"), nrm, xy, cells["ta"].astype(float) + tb0,
+                                     cells["tb"].astype(float) + tb0, self.motions.get(a), self.motions.get(b),
+                                     rec.get("shift"))
+            self._resid[k] = np.abs(cells["ds"] - pred).astype(np.float32)
+        return self._resid[k]
+
+    def grid(self, key, pair=None, line=None, steady_off=False):
         """Median |d| per cell of a tile: every pair, one pair (a, b), or the pairs with one line (the median of
-        those pairs' cells)."""
+        those pairs' cells); steady_off: after each pair's steady relation is taken off."""
+        def one(a, b):
+            c = self.pair_cells[(key, a, b)]
+            return self._dense(c, self.residual(key, a, b) if steady_off else None)
         if pair is not None:
-            c = self.pair_cells.get((key, int(pair[0]), int(pair[1])))
-            return None if c is None else self._dense(c)
-        if line is not None:
-            gs = [self._dense(self.pair_cells[(key, a, b)]) for a, b in self._by_tile.get(key, ()) if line in (a, b)]
+            if (key, int(pair[0]), int(pair[1])) not in self.pair_cells:
+                return None
+            return one(int(pair[0]), int(pair[1]))
+        if line is not None or steady_off:
+            gs = [one(a, b) for a, b in self._by_tile.get(key, ()) if line is None or line in (a, b)]
             if not gs:
                 return None
             if len(gs) == 1:
                 return gs[0]
-            with np.errstate(all="ignore"):
-                import warnings
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", RuntimeWarning)
-                    return np.nanmedian(np.stack(gs), axis=0).astype(np.float32)
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                return np.nanmedian(np.stack(gs), axis=0).astype(np.float32)
         return self.grids.get(key)
 
     def tiles(self):
@@ -368,7 +431,7 @@ def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
                 progress(done[0] / max(1, len(keys)), "Line separation: tile %d of %d" % (done[0], len(keys)))
             if res is None:
                 continue
-            la, lb, nn, d, col, n, ta, tb = res
+            la, lb, nn, d, col, n, ta, tb, pxy = res
             ad = np.abs(d)
             grids[k] = _column_median(col, ad, n)
             hist += np.histogram(ad, hist_edges)[0]
@@ -376,38 +439,45 @@ def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
             for p in np.unique(pk):
                 sel = np.flatnonzero(pk == p)
                 ab = (int(p // 65536), int(p % 65536))
-                pair_cells[(k,) + ab] = _pair_cells(col[sel], ad[sel], ta[sel], tb[sel])
+                pair_cells[(k,) + ab] = _pair_cells(col[sel], d[sel], nn[sel], ta[sel], tb[sel])
                 pair_count[ab] = pair_count.get(ab, 0) + len(sel)
                 # an even sample over the whole project, bounded in memory: each tile adds its share, and the
                 # pair's sample is thinned back to PAIR_SAMPLE whenever it passes twice that
                 if len(sel) > PAIR_SAMPLE // 4:
                     sel = rng.choice(sel, PAIR_SAMPLE // 4, replace=False)
                 cur = pair_rows.get(ab)
-                nn_s, d_s = nn[sel].astype(np.float32), d[sel].astype(np.float32)
+                new = {"n": nn[sel].astype(np.float32), "d": d[sel].astype(np.float32), "xy": pxy[sel],
+                       "ta": ta[sel].astype(np.float64), "tb": tb[sel].astype(np.float64)}
                 if cur is None:
-                    pair_rows[ab] = [nn_s, d_s]
+                    pair_rows[ab] = new
                 else:
-                    cur[0] = np.concatenate([cur[0], nn_s])
-                    cur[1] = np.concatenate([cur[1], d_s])
-                    if len(cur[1]) > 2 * PAIR_SAMPLE:
-                        keep = rng.choice(len(cur[1]), PAIR_SAMPLE, replace=False)
-                        cur[0], cur[1] = cur[0][keep], cur[1][keep]
+                    for kk in cur:
+                        cur[kk] = np.concatenate([cur[kk], new[kk]])
+                    if len(cur["d"]) > 2 * PAIR_SAMPLE:
+                        keep = rng.choice(len(cur["d"]), PAIR_SAMPLE, replace=False)
+                        for kk in cur:
+                            cur[kk] = cur[kk][keep]
     names = {int(l["id"]): l.get("name", "Line %s" % l["id"]) for l in project.lines}
+    motions = motions_of(project)
     pairs = []
     per_line = {}
     for (a, b), parts in sorted(pair_rows.items()):
-        nn = parts[0].astype(float)
-        d = parts[1].astype(float)
-        if len(d) > PAIR_SAMPLE:
-            s = rng.choice(len(d), PAIR_SAMPLE, replace=False)
-            nn, d = nn[s], d[s]
+        if len(parts["d"]) > PAIR_SAMPLE:
+            s = rng.choice(len(parts["d"]), PAIR_SAMPLE, replace=False)
+            parts = {kk: v[s] for kk, v in parts.items()}
+        nn = parts["n"].astype(float)
+        d = parts["d"].astype(float)
         ad = np.abs(d)
         t, hor, rest = solve_shift(nn, d)
+        model = pairmodel.fit(nn, d, parts["xy"], parts["ta"] + tbase, parts["tb"] + tbase,
+                              motions.get(a), motions.get(b))
         up = np.abs(nn[:, 2]) > 0.9
         walls = np.abs(nn[:, 2]) < 0.3
         rec = {"a": a, "b": b, "patches": int(pair_count[(a, b)]), "median": float(np.median(ad)),
                "p95": float(np.percentile(ad, 95)), "flat": int(up.sum()), "walls": int(walls.sum()),
-               "shift": [None if not np.isfinite(v) else float(v) for v in t], "horizontal": hor, "rest": rest,
+               "shift": [None if not np.isfinite(v) else float(v) for v in t], "horizontal": hor,
+               "rest": model["rest"] if model else rest, "rest_world": rest, "model": model,
+               "windows": _windows(parts["ta"] + tbase, parts["tb"] + tbase),
                "vertical_median": float(np.median(np.abs(d[up]))) if up.any() else None,
                "horizontal_median": float(np.median(np.abs(d[walls]))) if walls.any() else None}
         pairs.append(rec)
@@ -431,14 +501,15 @@ def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
             "settings": {"min_points": MIN_POINTS, "max_thickness": MAX_THICKNESS, "max_angle": MAX_ANGLE,
                          "max_sep": MAX_SEP}}
     res = Result(data, grids, pair_cells)
+    res.motions = motions
     save(project, res)
     res.stamp = stamp(project)
     return res
 
 
 # --------------------------------------------------------------------------------------------- problem areas
-AREA_MIN_M2 = 4.0                 # smallest problem area (m2 of cells beyond twice the tolerance)
-MERGE_GAP_S = 1.0                 # s: problem areas of the same line this close in time are one
+AREA_MIN_M2 = 10.0                # smallest problem area (m2 of cells beyond twice the tolerance)
+MERGE_GAP_S = 3.0                 # s: problem areas of the same line(s) this close in time are one
 AREA_MAX_SHARE = 0.5              # an area covering more of a pair's overlap is the whole pair, not a local area
 
 
@@ -470,7 +541,8 @@ def _clusters(gx, gy):
 
 
 def problem_areas(res, tol=DEFAULT_TOLERANCE):
-    """Local areas where two lines disagree by more than twice the tolerance: per pair, 8-connected clusters of
+    """Local areas where two lines disagree by more than twice the tolerance once the pair's steady relation is
+    taken off (2.2.1: a steady offset is reported per pair, as calibration or trajectory): per pair, 8-connected clusters of
     such cells of at least AREA_MIN_M2 that cover less than AREA_MAX_SHARE of the pair's overlap (a whole pair
     off is shown by the pair's median). Clusters of different pairs that share cells are one area; the line common
     to all its pairs is the one at fault ("line"), else None. Largest first:
@@ -488,13 +560,15 @@ def problem_areas(res, tol=DEFAULT_TOLERANCE):
         i, j = parse_key(k)
         rec = per_pair.setdefault((a, b), {"cells": 0, "gx": [], "gy": [], "v": [], "ta": [], "tb": []})
         rec["cells"] += len(cells)
-        bad = cells[cells["d"] > lim]
-        if not len(bad):
+        r = res.residual(k, a, b)
+        sel = r > lim
+        if not sel.any():
             continue
+        bad = cells[sel]
         iy, ix = bad["c"] // n, bad["c"] % n
         rec["gx"].append(i * n + ix)
         rec["gy"].append(j * n + iy)
-        rec["v"].append(bad["d"])
+        rec["v"].append(r[sel])
         rec["ta"].append(bad["ta"])
         rec["tb"].append(bad["tb"])
     raw = []
@@ -548,25 +622,36 @@ def problem_areas(res, tol=DEFAULT_TOLERANCE):
                     spans[l] = (min(lo, float(tv.min()) + tb), max(hi, float(tv.max()) + tb))
         blobs.append({"pairs": set(pairs), "line": line, "cells": cells, "v": [p["v"] for p in parts],
                       "spans": spans})
-    # one area per stretch of a line: blobs with the same line at fault whose times overlap or nearly touch
-    # (the line's footprint can cross several separate places in the same seconds)
-    blobs.sort(key=lambda r: (r["line"] is None, r["line"] if r["line"] is not None else 0,
-                              min((s[0] for s in r["spans"].values()), default=0)))
+    # one area per stretch: blobs of the same line at fault (or of the same pair when the line is not known) whose
+    # times are within MERGE_GAP_S on every line (a footprint crosses several places in the same seconds, and a
+    # long stretch breaks into pieces where a few cells stay under the limit)
+    def group(r):
+        return ("line", r["line"]) if r["line"] is not None else ("pair", tuple(sorted(r["pairs"])))
+
+    def near(m, bl):
+        if not bl["spans"] or set(bl["spans"]) != set(m["spans"]):
+            return False
+        for l, (b0, b1) in bl["spans"].items():
+            a0, a1 = m["spans"][l]
+            if max(0.0, b0 - a1, a0 - b1) > MERGE_GAP_S:
+                return False
+        return True
+    blobs.sort(key=lambda r: (str(group(r)), min((s[0] for s in r["spans"].values()), default=0)))
     merged = []
     for bl in blobs:
-        m = merged[-1] if merged else None
-        if (m is not None and bl["line"] is not None and m["line"] == bl["line"] and bl["spans"] and m["spans"]
-                and bl["spans"][bl["line"]][0] <= m["spans"][m["line"]][1] + MERGE_GAP_S):
-            m["pairs"] |= bl["pairs"]
-            m["boxes"].append(bl["cells"])
-            m["cells"] = m["cells"] | bl["cells"]
-            m["v"] += bl["v"]
-            a0, a1 = m["spans"][m["line"]]
-            b0, b1 = bl["spans"][bl["line"]]
-            m["spans"][m["line"]] = (min(a0, b0), max(a1, b1))
-            continue
         bl["boxes"] = [bl["cells"]]
-        merged.append(bl)
+        for m in merged:
+            if group(m) == group(bl) and near(m, bl):
+                m["pairs"] |= bl["pairs"]
+                m["boxes"].append(bl["cells"])
+                m["cells"] = m["cells"] | bl["cells"]
+                m["v"] += bl["v"]
+                for l, (b0, b1) in bl["spans"].items():
+                    a0, a1 = m["spans"][l]
+                    m["spans"][l] = (min(a0, b0), max(a1, b1))
+                break
+        else:
+            merged.append(bl)
     out = []
     for bl in merged:
         cells = bl["cells"]
@@ -698,18 +783,75 @@ def feedback(project, res, tol=DEFAULT_TOLERANCE):
             "current": res.is_current(project), "summary": verdict(res, tol), "areas": areas}
 
 
+CALIBRATION_SCHEMA = "dcs.calibration_check/1"
+CALIBRATION_NAME = "calibration_check.json"
+
+
+def calibration_check(project, res, tol=DEFAULT_TOLERANCE):
+    """What the line pairs say about the calibration, for AlignPro (dcs.calibration_check/1): per pair the steady
+    relation in the vehicle frame, the findings, the lines' recordings and when each line was over the shared
+    surfaces (AlignPro uses those times as patch-test material), and the calibration the points were made with."""
+    try:
+        from ..guide import installed_version
+        ver = installed_version()
+    except Exception:                           # noqa: BLE001
+        ver = ""
+    inp = project.data.get("inputs", {}) or {}
+    al = inp.get("alignment", {}) or {}
+    tr = inp.get("trajectory", {}) or {}
+    nm = res.data.get("names", {})
+    rec_of = {int(l["id"]): l for l in project.lines}
+    pairs = []
+    for p in res.pairs:
+        m = p.get("model")
+        fi = pair_findings(p, tol)
+        la, lb = rec_of.get(p["a"], {}), rec_of.get(p["b"], {})
+
+        def tw(ws):
+            out = []
+            for t0, t1 in ws:
+                w, s0 = gps_week_sow(t0)
+                out.append({"utc": [t0, t1], "gps_week": w, "gps_sow": [round(s0, 2), round(s0 + (t1 - t0), 2)]})
+            return out
+        win = p.get("windows") or {}
+        pairs.append({
+            "lines": [nm.get(str(p["a"]), str(p["a"])), nm.get(str(p["b"]), str(p["b"]))],
+            "line_numbers": [la.get("line"), lb.get("line")],
+            "files": [[os.path.basename(f) for f in la.get("files", [])], [os.path.basename(f) for f in lb.get("files", [])]],
+            "patches": p["patches"], "walls": p["walls"], "median_m": round(p["median"], 4),
+            "relation": m["relation"] if m else None,
+            "steady_m": {k: (round(m[k], 4) if m and m.get(k) is not None else None) for k in ("along", "cross", "up")},
+            "roll_m_per_m": (round(m["roll"], 6) if m and m.get("roll") is not None else None),
+            "rest_m": round(p["rest"], 4), "shift_enu_m": p["shift"],
+            "findings": [{"kind": k, "text": t} for k, t in fi],
+            "calibration": any(k == "calibration" for k, _ in fi),
+            "windows": [tw(win.get("a", [])), tw(win.get("b", []))]})
+    return {"schema": CALIBRATION_SCHEMA, "written_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "by": "CloudPro %s" % ver, "measured_utc": res.data.get("utc"), "tolerance_m": tol,
+            "current": res.is_current(project), "summary": verdict(res, tol),
+            "alignment": {"source": al.get("source"), "handover_id": al.get("handover_id"),
+                          "calibration": al.get("calibration")},
+            "trajectory": {"source": tr.get("source"), "handover_id": tr.get("handover_id")},
+            "pairs": pairs}
+
+
+def _atomic_json(path, obj):
+    tmp = path + ".part"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=1)
+    os.replace(tmp, path)
+
+
 def write_feedback(project, res, tol=DEFAULT_TOLERANCE):
-    """03_CloudPro/out/problem_areas.json (atomic). Not a handover: it does not finalize CloudPro or make any
-    stage stale; PosPro shows it in Review and the Trajectory editor. Returns the path or None."""
+    """03_CloudPro/out/problem_areas.json (for PosPro) and calibration_check.json (for AlignPro), atomic. Not
+    handovers: they finalize nothing and make no stage stale. Returns the problem-areas path or None."""
     if project is None or res is None:
         return None
     try:
         d = project.out_dir
         path = os.path.join(d, FEEDBACK_NAME)
-        tmp = path + ".part"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(feedback(project, res, tol), f, indent=1)
-        os.replace(tmp, path)
+        _atomic_json(path, feedback(project, res, tol))
+        _atomic_json(os.path.join(d, CALIBRATION_NAME), calibration_check(project, res, tol))
         return path
     except OSError:
         return None
@@ -766,6 +908,7 @@ def load(project):
                     i, j, a, b = k[1:].split("_")
                     pc[("%s_%s" % (i, j), int(a), int(b))] = z[k]
         res = Result(data, grids, pc)
+        res.motions = motions_of(project)
         res.stamp = stamp(project)
         return res
     except (OSError, ValueError, KeyError):
@@ -782,8 +925,18 @@ def _cm(v, signed=False):
     return ("%+.1f" if signed else "%.1f") % v
 
 
+def pair_findings(rec, tol=DEFAULT_TOLERANCE):
+    """[(kind, sentence)] for one pair (from its steady relation)."""
+    return pairmodel.findings(rec.get("model"), tol)
+
+
+def calibration_pairs(res, tol=DEFAULT_TOLERANCE):
+    """Pairs whose steady relation points at the calibration (AlignPro)."""
+    return [p for p in res.pairs if any(k == "calibration" for k, _ in pair_findings(p, tol))]
+
+
 def verdict(res, tol=DEFAULT_TOLERANCE):
-    """One line: what the numbers say."""
+    """One or two sentences: what the numbers say."""
     if not res.pairs:
         return "No overlapping flat surfaces between lines were found."
     nm = res.data.get("names", {})
@@ -797,19 +950,18 @@ def verdict(res, tol=DEFAULT_TOLERANCE):
         local = " %d local problem area%s (%s)." % (len(areas), "" if len(areas) == 1 else "s", ", ".join(at[:4])
                                                     + (" ..." if len(at) > 4 else ""))
     else:
-        local = ""
+        local = " No local problem areas."
+    cal = calibration_pairs(res, tol)
+    if cal:
+        c = cal[0]
+        first = next(t for k, t in pair_findings(c, tol) if k == "calibration")
+        calib = " Calibration (AlignPro), %s: %s" % (who(c), first[0].lower() + first[1:])
+    else:
+        calib = ""
     if worst["median"] <= tol:
-        if areas:
-            return ("Lines agree within %.0f cm (largest median %.1f cm, %s), except%s"
-                    % (100 * tol, 100 * worst["median"], who(worst), local))
-        return "Lines agree within %.0f cm (largest median %.1f cm, %s)." % (100 * tol, 100 * worst["median"], who(worst))
-    varying = [p for p in res.pairs if p["median"] > tol and p["rest"] > tol]
-    if varying:
-        v = max(varying, key=lambda p: p["rest"])
-        return ("Largest median %.1f cm (%s); %.1f cm remains after a constant shift (%s): the error changes along "
-                "the line.%s" % (100 * worst["median"], who(worst), 100 * v["rest"], who(v), local))
-    return ("Largest median %.1f cm (%s); a constant shift per line would bring every pair within %.0f cm.%s"
-            % (100 * worst["median"], who(worst), 100 * tol, local))
+        return ("Lines agree within %.0f cm (largest median %.1f cm, %s).%s%s"
+                % (100 * tol, 100 * worst["median"], who(worst), calib, local))
+    return ("Largest median %.1f cm (%s).%s%s" % (100 * worst["median"], who(worst), calib, local))
 
 
 def report_lines(res, tol=DEFAULT_TOLERANCE, project_name=""):
@@ -832,6 +984,19 @@ def report_lines(res, tol=DEFAULT_TOLERANCE, project_name=""):
             ("%s / %s" % (nm.get(str(p["a"]), p["a"]), nm.get(str(p["b"]), p["b"])))[:24],
             "{:,}".format(p["patches"]), _cm(p["median"]), _cm(p["p95"]), _cm(s[0], True), _cm(s[1], True),
             _cm(s[2], True), _cm(p["rest"]), p["walls"]))
+    for p in res.pairs:
+        m = p.get("model")
+        if not m:
+            continue
+        L += ["", "%s / %s - driven %s; in %s's frame (cm): along %s, sideways %s, up %s; roll %s; rest %s" % (
+            nm.get(str(p["a"]), p["a"]), nm.get(str(p["b"]), p["b"]),
+            {"opposite": "in opposite directions", "same": "the same way", "crossing": "crossing"}[m["relation"]],
+            nm.get(str(p["a"]), p["a"]), _cm(m.get("along"), True), _cm(m.get("cross"), True), _cm(m.get("up"), True),
+            ("%.1f cm per 10 m" % (100 * 10 * m["roll"])) if m.get("roll") is not None else "not seen",
+            _cm(m.get("rest")))]
+        for kind, text in pair_findings(p, tol):
+            L.append("  - %s: %s" % ({"calibration": "Calibration (AlignPro)", "trajectory": "Trajectory (PosPro)",
+                                      "either": "Calibration or trajectory"}[kind], text))
     areas = res.problem_areas(tol)
     L += ["", "Problem areas (local, beyond %.0f cm; the line at fault when the area shows in several pairs):"
           % (200 * tol)]

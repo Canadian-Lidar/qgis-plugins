@@ -42,6 +42,7 @@ class PlanView(CloudView2D):
         self.separation = None               # core.separation.Result (2.2.0)
         self.separation_current = True
         self.separation_filter = None        # None (every pair), ("pair", a, b) or ("line", l)
+        self.steady_off = False              # 2.2.1: show what is left after each pair's steady offset
         self._sep_stats = None
         self.tolerance = 0.03                # m: green within, amber within twice, red beyond
         self.lut = "Rainbow"
@@ -87,24 +88,32 @@ class PlanView(CloudView2D):
             if self.attr == SEPARATION:
                 self.invalidate()
 
+    def set_steady_off(self, on):
+        if bool(on) != self.steady_off:
+            self.steady_off = bool(on)
+            self._sep_stats = None
+            if self.attr == SEPARATION:
+                self.invalidate()
+
     def _sep_grid(self, key):
-        r, f = self.separation, self.separation_filter
+        r, f, so = self.separation, self.separation_filter, self.steady_off
         if r is None:
             return None
         if f is None:
-            return r.grid(key)
+            return r.grid(key, steady_off=so)
         if f[0] == "pair":
-            return r.grid(key, pair=(f[1], f[2]))
-        return r.grid(key, line=f[1])
+            return r.grid(key, pair=(f[1], f[2]), steady_off=so)
+        return r.grid(key, line=f[1], steady_off=so)
 
     def separation_title(self):
         r, f = self.separation, self.separation_filter
         nm = (r.data.get("names", {}) if r is not None else {})
+        tail = " · steady off" if self.steady_off else ""
         if f is None:
-            return "All line pairs"
+            return "All line pairs" + tail
         if f[0] == "pair":
-            return "%s / %s" % (nm.get(str(f[1]), f[1]), nm.get(str(f[2]), f[2]))
-        return "%s against the others" % nm.get(str(f[1]), f[1])
+            return "%s / %s" % (nm.get(str(f[1]), f[1]), nm.get(str(f[2]), f[2])) + tail
+        return "%s against the others" % nm.get(str(f[1]), f[1]) + tail
 
     def set_tolerance(self, tol):
         tol = max(0.001, float(tol))
