@@ -243,7 +243,8 @@ class MainWindow(QtWidgets.QMainWindow):
             pane.layout().removeWidget(pane.head)           # the pane's header becomes the dock's title bar
             self._make_dock(key, title, pane, pane.head, pane.hl)
         for key, title, w in (("filters", "AUTOMATIC FILTERS", self.filters),
-                              ("info", "LINES · CLASSES · INFO", self.infop), ("history", "HISTORY", self.history)):
+                              ("info", "LINES · CLASSES · INFO", self.infop), ("history", "HISTORY", self.history),
+                              ("separation", "LINE SEPARATION", self._sep_panel())):
             head = chrome.Strip()
             head.setFixedHeight(34)
             hl = QtWidgets.QHBoxLayout(head)
@@ -272,7 +273,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_tool()
 
     # ------------------------------------------------------------------ dock windows
-    LAYOUT_VERSION = 2                          # 2.0.0: views and panels never float
+    LAYOUT_VERSION = 3                          # 2.0.0: views and panels never float; 2.3.0: LINE SEPARATION tab
 
     def _make_dock(self, key, title, widget, head, head_layout):
         d = QtWidgets.QDockWidget(title, self)
@@ -301,7 +302,8 @@ class MainWindow(QtWidgets.QMainWindow):
         return d
 
     def _default_layout(self):
-        """Plan over Slice on the left; 3D over the tabbed panels (filters, lines, history) on the right."""
+        """Plan over Slice on the left; 3D over the tabbed panels (filters, lines, history, line separation) on the
+        right."""
         D = self.docks
         for d in D.values():
             d.setFloating(False)
@@ -312,6 +314,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.splitDockWidget(D["3d"], D["filters"], Qt.Orientation.Vertical)
         self.tabifyDockWidget(D["filters"], D["info"])
         self.tabifyDockWidget(D["info"], D["history"])
+        self.tabifyDockWidget(D["history"], D["separation"])
         D["filters"].raise_()
         self.resizeDocks([D["plan"], D["3d"]], [840, 840], Qt.Orientation.Horizontal)
         self.resizeDocks([D["plan"], D["slice"]], [500, 500], Qt.Orientation.Vertical)
@@ -428,7 +431,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _fill_windows(self, w):
         w.clear()
-        for k in ("plan", "slice", "3d", "filters", "info", "history"):
+        for k in ("plan", "slice", "3d", "filters", "info", "history", "separation"):
             w.addAction(self.docks[k].toggleViewAction())
         w.addSeparator()
         w.addAction("Reset the window layout", self.reset_layout)
@@ -895,7 +898,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plan.set_project(None, {}, {})
         self.plan.set_separation(None)
         if self._sepwin is not None:
-            self._sepwin.close()
+            self._sepwin.set_result(None)
         self.lines_w.clear()
         self.header.set_project_name("")
         self.header.set_steps([])
@@ -2104,16 +2107,30 @@ class MainWindow(QtWidgets.QMainWindow):
         self.set_box(b, load=True, fit=True)
         self.plan.zoom_box()
 
+    def _sep_panel(self):
+        from .separationwin import SeparationPanel
+        self._sepwin = SeparationPanel(self)
+        return self._sepwin
+
     def show_separation(self):
-        if self.project is None:
-            return
-        if self._sepwin is None:
-            from .separationwin import SeparationWindow
-            self._sepwin = SeparationWindow(self)
-        res = self.plan.separation
-        self._sepwin.set_result(res, self.plan.separation_current)
-        self._sepwin.show()
-        self._sepwin.raise_()
+        """The LINE SEPARATION tab (bottom right) brought to the front, with the saved result."""
+        self._sepwin.set_result(self.plan.separation, self.plan.separation_current)
+        self.show_dock("separation")
+
+    def open_in(self, stage, target):
+        """Open another DCS plugin on this project and show target there (DCS Core API 13; with an older DCS Core
+        the plugin opens on the project without going to the item)."""
+        if self.project is None or self.project.dcs is None:
+            theme.msg_info(self, "CloudPro", "This project is not part of a DCS project, so there is nothing to open.")
+            return False
+        from dcs_core import registry
+        path = self.project.dcs.path
+        fn = getattr(registry, "focus", None)
+        ok = fn(stage, path, target) if fn is not None else registry.open(stage, path)
+        if not ok:
+            theme.msg_info(self, "CloudPro", "%s is not installed or not enabled in QGIS." % {
+                "pospro": "PosPro", "alignpro": "AlignPro"}.get(stage, stage))
+        return ok
 
     @staticmethod
     def _saved_target():

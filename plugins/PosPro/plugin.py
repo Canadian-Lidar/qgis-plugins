@@ -54,7 +54,10 @@ class PosProPlugin:
         self.iface.addToolBarIcon(self.action)
         from dcs_core import menu, registry
         menu.add(self.iface, self.action)
-        registry.register("pospro", self.open_project)
+        try:
+            registry.register("pospro", self.open_project, self.focus)       # DCS Core API 13
+        except TypeError:
+            registry.register("pospro", self.open_project)
         self.help_action = QAction("PosPro user guide", self.iface.mainWindow())
         self.help_action.triggered.connect(open_guide)
         try:
@@ -101,6 +104,12 @@ class PosProPlugin:
         """Show PosPro on a DCS project (called from another plugin's chain bar)."""
         self.toggle(True)
         self.dock.open_path(path)
+
+    def focus(self, target):
+        """Go to target on the open project (called through DCS Core's registry.focus, e.g. from CloudPro's line
+        separation): {"kind": "cloud_area", "id": "C3"} = Trajectory Review with that point cloud area chosen."""
+        if self.dock is not None and (target or {}).get("kind") in ("cloud_area", "cloud_pair"):
+            self.dock.focus_cloud(target.get("id"))
 
     def show_editor(self):
         if self.editor is None:

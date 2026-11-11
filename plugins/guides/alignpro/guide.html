@@ -24,6 +24,7 @@
 <h2>What's new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>1.8.1</b></td><td><b>Opened from CloudPro:</b> <span class="ui">Open in AlignPro</span> in CloudPro's LINE SEPARATION tab brings up the Pairs page with that line pair selected under <i>From the point cloud</i>. Needs DCS Core 1.12.0.</td></tr>
 <tr><td><b>1.8.0</b></td><td><b>From the point cloud:</b> what CloudPro's line separation check says about the calibration, per line pair, on the Pairs page, and <span class="ui">Use these lines and their overlap</span> to calibrate on that material (<a href="#cloud">From the point cloud</a>). Needs CloudPro 2.2.1 for the findings.</td></tr>
 <tr><td><b>1.7.0</b></td><td>The new DCS header: the chain and AlignPro's phases (Prepare › Calibrate › Report) as breadcrumbs, with the guidance in their tooltips instead of a sentence under the page. The window and the Data View are always windows of their own (no docking); <span class="ui">Open the Data View</span> and <span class="ui">Reset window</span> are in the project menu. <i>Publish</i> is now <i>Finalize</i>. Needs DCS Core 1.11.0.</td></tr>
 <tr><td><b>1.6.2</b></td><td>Packets recorded while the vehicle is slower than the minimum pass speed (Settings, <i>Passes and pairs</i>) are left out while reading, so parking and waiting no longer use up the point budget of a line; the moving passes get those points instead. Lines are read again once.</td></tr>
@@ -228,6 +229,7 @@
 <tr><td>Points at</td><td><i>Calibration</i>, <i>Trajectory (PosPro)</i> or <i>Either</i>; the sentences under the table say why for the chosen pair.</td></tr>
 </table>
 <p>What the patterns mean: an offset along the road that reverses with the driving direction is a timing latency, an along-track lever arm or pitch; sideways, a cross-track lever arm or heading; a growing height difference, roll. Calibrate again on that material: <span class="ui">Use these lines and their overlap</span> keeps only the chosen pair's passes and sets an area of interest 25 m each side of the stretch they share, then the pairs and surfaces are found again. Auto calibrate and Apply as usual; CloudPro's points go out of date, and after it updates them its next check should show the steady offset gone. The note above the table turns amber when CloudPro measured points made with an earlier calibration (or none).</p>
+<p>From CloudPro, <span class="ui">Open in AlignPro</span> in the LINE SEPARATION tab opens this page on the same job with that pair selected. When CloudPro says <i>Along the road: not measurable here</i>, the walls facing along the road were too few or too scattered to give a number; the along column is then not a finding.</p>
 <figure><img src="fig/pairs_cloud.png" style="max-height:120mm"><figcaption><b>Figure {N}.2</b> The Pairs page with CloudPro's findings on a job where every pass put its points 4 cm ahead of the vehicle: every pair driven both ways shows −8.0 cm along and points at the calibration.</figcaption></figure>
 
 <h2>Calibration area</h2>
