@@ -146,11 +146,53 @@ def poles():
     print("poles: %s (as before the speed-up)" % ctx.messages[-1])
 
 
+def tiled_failure():
+    """2.5.1: a filter failing on one part leaves that part as it was, writes the others and reports the part
+    (Shirley, 12 Nov 2026: SMRF failed on one sliver after 49 min and the whole run was thrown away)."""
+    from CloudPro.core import chain, filters as F, importer as IM, runner
+    from CloudPro.core.edits import EditManager
+    from CloudPro.core.project import Project
+    dcs, p = _job.fresh_job("fail")
+    IM.import_chain(p, chain.resolve(dcs), IM.ImportOptions(decimate=2))
+    q = Project.from_dcs(dcs)
+    units = runner.plan_units(q.store, q.store.keys(), 5.0)
+    bad = units[len(units) // 2]
+
+    class Boom(F.Filter):
+        key, name, group, mod = "boom", "Boom", "Edit", "R"
+        params = []
+
+        def run(self, ctx, sel):
+            xs, ys = ctx.x[ctx.scope], ctx.y[ctx.scope]
+            if len(xs) and bad.x0 <= xs.min() < bad.x1 and bad.y0 <= ys.min() < bad.y1:     # the chosen part
+                raise ValueError("Shape of array too small to calculate a numerical gradient")
+            return {"reject": sel[::5]}
+    f0 = {k: np.asarray(q.store.tile_array(k)["flag"]).copy() for k in q.store.keys()}
+    st = {}
+    n = runner.run_group_tiled(q, F.FilterGroup("boom", [Boom()]), EditManager(q), buffer=5.0, stats=st)
+    assert len(st["failed"]) == 1 and st["failed"][0]["box"] == (bad.x0, bad.y0, bad.x1, bad.y1), st["failed"]
+    assert "numerical gradient" in st["failed"][0]["error"] and n > 0
+    changed_outside = unchanged_inside = 0
+    for k in q.store.keys():
+        a = q.store.tile_array(k)
+        x, y = a["x"] * 1e-3, a["y"] * 1e-3
+        inb = (x >= bad.x0) & (x < bad.x1) & (y >= bad.y0) & (y < bad.y1)
+        ch = np.asarray(a["flag"]) != f0[k]
+        assert not ch[inb].any()
+        changed_outside += int(ch[~inb].sum())
+        unchanged_inside += int(inb.sum())
+    assert changed_outside == n and unchanged_inside == bad.n
+    q.store.close()
+    print("tiled run with one failing part: %d of %d parts written (%d points changed), the failed part (%d points) "
+          "left as it was and reported" % (st["units"] - 1, st["units"], n, bad.n))
+
+
 def main():
     shift_clip()
     poles()
     tiled_order()
     tiled_parallel()
+    tiled_failure()
     print("test_core_misc: OK")
 
 

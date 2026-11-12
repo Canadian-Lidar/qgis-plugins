@@ -2967,6 +2967,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 except IM.Cancelled as e:
                     return e                    # not a failed run of the stage: nothing was written
                 project.record_filter(g.to_dict(), scope, n)
+                bad = st.get("failed") or []
+                if bad:
+                    o = project.store.origin
+                    lines_ = ["Filter '%s': %d of %d parts failed and were left as they were (%s points):" % (
+                        g.name, len(bad), st.get("units", 0), "{:,}".format(sum(b["points"] for b in bad)))]
+                    for b in bad:
+                        x0, y0, x1, y1 = b["box"]
+                        lines_.append("  E %.0f-%.0f  N %.0f-%.0f  (%s points): %s" % (
+                            x0 + o[0], x1 + o[0], y0 + o[1], y1 + o[1], "{:,}".format(b["points"]), b["error"]))
+                    project.log(lines_[0])
+                    project.run_log("filter failures", lines_ + ["", "Details:"] + [b["trace"] for b in bad])
+                    perflog.log(project, "filter", " | ".join(lines_))
                 perflog.log(project, "filter", "'%s' on %s: %s changed in %.1f s; %d parts, %d threads (%d at "
                             "once), %.0f GB memory allowed, %s of %s points loaded with buffers, %d parts with a "
                             "smaller buffer" % (g.name, "the selected lines" if lines else "the entire project",
@@ -2974,7 +2986,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                                 st.get("workers", 0), st.get("peak_running", 0),
                                                 st.get("memory_gb", 0), "{:,}".format(st.get("loaded", 0)),
                                                 "{:,}".format(st.get("points", 0)), st.get("reduced_buffer", 0)))
-                return n
+                return (n, st.get("failed") or [], st.get("units", 0))
             if project.dcs is not None:
                 with project.dcs.run("cloudpro", PLUGIN, VERSION):
                     res = inner()
@@ -3344,7 +3356,20 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                self.filters.cmb_scope.currentText().lower(), ttxt))
             self.after_edit()
         elif tag == "filter_tiled":
-            self.filters.set_status("%s points changed" % "{:,}".format(res))
+            res, bad, nunits = res
+            self.filters.set_status("%s points changed" % "{:,}".format(res) +
+                                    (" · %d parts left unchanged" % len(bad) if bad else ""))
+            if bad:
+                o = self.project.store.origin
+                theme.msg_warn(self, "CloudPro", "The filter ran on %d of %d parts. %d part%s failed and %s left as "
+                               "%s were (%s points):\n\n%s\n\nThe rest is written. Details are in the run log "
+                               "(filter failures); please send it." % (
+                                   nunits - len(bad), nunits, len(bad), "s" if len(bad) > 1 else "",
+                                   "were" if len(bad) > 1 else "was", "they" if len(bad) > 1 else "it",
+                                   "{:,}".format(sum(b["points"] for b in bad)),
+                                   "\n".join("E %.0f-%.0f, N %.0f-%.0f: %s" % (
+                                       b["box"][0] + o[0], b["box"][2] + o[0], b["box"][1] + o[1],
+                                       b["box"][3] + o[1], b["error"][:160]) for b in bad[:8])))
             self.edits.ps = self.ps
             self.plan.invalidate()                  # the worker rebuilt the changed grids
             self.load_box()
