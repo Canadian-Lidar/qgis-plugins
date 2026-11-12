@@ -360,7 +360,8 @@ class ExportDialog(QtWidgets.QDialog):
                ("xyz", "XYZ text (CSV)", ".csv", "CSV (*.csv *.txt)"),
                ("grid", "Grid surface (GeoTIFF)", ".tif", "GeoTIFF (*.tif)")]
 
-    def __init__(self, parent=None, lines=(), start="", class_counts=None, classes_chosen=None, fmt=None):
+    def __init__(self, parent=None, lines=(), start="", class_counts=None, classes_chosen=None, fmt=None,
+                 line_layers=(), sections=None):
         super().__init__(parent)
         self.setWindowTitle("CloudPro - export")
         self.resize(600, 540)
@@ -410,8 +411,42 @@ class ExportDialog(QtWidgets.QDialog):
         self.tile.addItem("One file (no tiles)", 0)
         for v in TILE_SIZES:
             self.tile.addItem("%d m tiles" % v, v)
+        self.tile.addItem("Sections along a line (chainage)", "sections")
         self.tile.setToolTip("Split the export into square tiles; each file is named by its tile's lower-left "
                              "corner (e.g. Shirley_231400_5080900.laz)")
+        # sections along a line (chainage): a survey line's trajectory, the centerline computed from the drive
+        # lines, or a line layer in QGIS; cut square to the line, numbered and named by their chainages
+        sv = dict(sections or {})
+        self.along = QtWidgets.QComboBox()
+        for ln in lines:
+            self.along.addItem("Line %d  %s  (trajectory)" % (ln["id"] + 1, ln.get("name", "")), "line:%d" % ln["id"])
+        self.along.addItem("Road centerline, computed from the drive lines", "centerline")
+        for name, lid in line_layers:
+            self.along.addItem("Centerline layer: %s" % name, "layer:%s" % lid)
+        self.along.setToolTip("The line the chainage is measured along. A centerline layer uses its selected line, "
+                              "else its only or longest line.")
+        i_al = self.along.findData(sv.get("along"))
+        self.along.setCurrentIndex(i_al if i_al >= 0 else 0)
+        self.sec_len = dspin(1, 100000, float(sv.get("length", 100.0)), 10, 1, " m")
+        self.sec_len.setToolTip("Length of each section along the line (one file each)")
+        self.sec_start = dspin(-1e7, 1e7, float(sv.get("start", 0.0)), 100, 1, " m")
+        self.sec_start.setToolTip("Chainage of the line's start (written in the file names, e.g. 1+200)")
+        self.sec_rev = QtWidgets.QCheckBox("Chainage from the other end of the line")
+        self.sec_rev.setChecked(bool(sv.get("reverse")))
+        self.sec_width = dspin(0, 10000, float(sv.get("width", 0.0)), 5, 1, " m")
+        self.sec_width.setSpecialValueText("All points")
+        self.sec_width.setToolTip("Width of the data kept, across the line (half on each side); All points keeps "
+                                  "every point, cut square to the line")
+        self.sec_name = QtWidgets.QLabel("")
+        self.sec_name.setObjectName("ppHint")
+        for w in (self.sec_len, self.sec_start, self.sec_width):
+            w.valueChanged.connect(self._sec_example)
+        self.sec_rev.toggled.connect(self._sec_example)
+        self.tile.currentIndexChanged.connect(self._kind)
+        if sv.get("on"):
+            self.tile.blockSignals(True)
+            self.tile.setCurrentIndex(self.tile.findData("sections"))
+            self.tile.blockSignals(False)
         self.cell = QtWidgets.QComboBox()
         for v in GRID_CELLS:
             self.cell.addItem("%g m" % v, v)
@@ -432,7 +467,13 @@ class ExportDialog(QtWidgets.QDialog):
         f.addRow("", self.per_line)
         f.addRow(_k("Thin to"), self.thin)
         f.addRow(_k("Thin in"), self.thin_mode)
-        f.addRow(_k("Tiles"), self.tile)
+        f.addRow(_k("Split into"), self.tile)
+        self._sec_rows = []
+        for lab, w in (("Along", self.along), ("Section length", self.sec_len), ("Start chainage", self.sec_start),
+                       ("", self.sec_rev), ("Width", self.sec_width), ("Files", self.sec_name)):
+            f.addRow(_k(lab) if lab else "", w)
+            self._sec_rows.append(w)
+        self._form = f
         f.addRow(_k("Grid cell"), self.cell)
         f.addRow(_k("Grid statistic"), self.stat)
         f.addRow(_k("Fill gaps up to"), self.fill)
@@ -447,6 +488,25 @@ class ExportDialog(QtWidgets.QDialog):
         f.addRow(bb)
         self._kind()
         theme.polish_dialog(self)
+
+    def sections_on(self):
+        return self.kind_index() in (0, 1) and self.tile.currentData() == "sections"
+
+    def section_settings(self):
+        return {"on": self.tile.currentData() == "sections", "along": self.along.currentData(),
+                "length": self.sec_len.value(), "start": self.sec_start.value(), "reverse": self.sec_rev.isChecked(),
+                "width": self.sec_width.value()}
+
+    def _sec_example(self, *_):
+        if not hasattr(self, "sec_name"):
+            return
+        from ..core.sections import chainage_text
+        base = os.path.splitext(os.path.basename(self.path.text()))[0] or "Job"
+        ext = self.FORMATS[self.kind.currentIndex()][2]
+        a, L = self.sec_start.value(), self.sec_len.value()
+        self.sec_name.setText("%s_001_%s-%s%s, %s_002_%s-%s%s, ..." % (
+            base, chainage_text(a), chainage_text(a + L), ext, base, chainage_text(a + L),
+            chainage_text(a + 2 * L), ext))
 
     def fmt(self):
         """laz, las, xyz or grid."""
@@ -464,6 +524,13 @@ class ExportDialog(QtWidgets.QDialog):
             w.setEnabled(k == 0)
         for w in (self.thin, self.tile):
             w.setEnabled(k in (0, 1))
+        on = k in (0, 1) and self.tile.currentData() == "sections"
+        for w in getattr(self, "_sec_rows", ()):
+            w.setVisible(on)
+            lab = self._form.labelForField(w)
+            if lab is not None:
+                lab.setVisible(on)
+        self._sec_example()
         self.thin_mode.setEnabled(k in (0, 1) and bool(self.thin.currentData()))
         ext = self.FORMATS[self.kind.currentIndex()][2]
         p = self.path.text()

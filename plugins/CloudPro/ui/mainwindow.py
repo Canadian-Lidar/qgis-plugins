@@ -2991,7 +2991,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         d = ExportDialog(self, self.project.lines, os.path.join(self.project.root, self.project.name + ".las"),
                          self.project.store.class_counts(), self.project.data.get("export_classes"),
-                         self.project.data.get("export_format"))
+                         self.project.data.get("export_format"), self._line_layers(),
+                         self.project.data.get("export_sections"))
         if exec_(d) != QtWidgets.QDialog.DialogCode.Accepted:
             return
         from ..core import export as EX
@@ -3003,13 +3004,23 @@ class MainWindow(QtWidgets.QMainWindow):
         inc, per_line = d.rejected.isChecked(), d.per_line.isChecked()
         cell, stat, fill = float(d.cell.currentData()), d.stat.currentText(), d.fill.value()
         spacing, thin_mode = float(d.thin.currentData() or 0) or None, d.thin_mode.currentData()
-        tile = int(d.tile.currentData() or 0) or None
+        self.project.data["export_sections"] = d.section_settings()
         add = d.add_qgis.isChecked()
         project = self.project
+        if d.sections_on():
+            try:
+                tile = self._sections(d.section_settings())
+            except Exception as ex:     # noqa: BLE001
+                theme.msg_warn(self, "CloudPro", "Sections along the line: %s" % ex)
+                return
+            self.status(tile.describe(), 10000)
+        else:
+            tile = int(d.tile.currentData() or 0) or None
         if tile and kind in (0, 1):
             nt = EX.plan(project, box, tile)
-            if nt > 400 and theme.msg_question(self, "CloudPro", "%d m tiles make up to %d files here.\n\nExport "
-                                               "anyway?" % (tile, nt)) != QtWidgets.QMessageBox.StandardButton.Yes:
+            what = "%d m tiles" % tile if isinstance(tile, int) else tile.describe()
+            if nt > 400 and theme.msg_question(self, "CloudPro", "%s make up to %d files here.\n\nExport "
+                                               "anyway?" % (what, nt)) != QtWidgets.QMessageBox.StandardButton.Yes:
                 return
         project.store.sync()
 
@@ -3023,6 +3034,42 @@ class MainWindow(QtWidgets.QMainWindow):
             p, n = EX.export_grid(project, path, cell, stat, box, lines, classes, fill, progress, cancel)
             return ("grid", p, n, add)
         self._run("export", job, "Exporting")
+
+    def _line_layers(self):
+        """(name, layer id) of the line layers open in QGIS (centerlines to measure chainage along)."""
+        try:
+            from qgis.core import QgsProject, QgsVectorLayer, QgsWkbTypes
+        except Exception:       # noqa: BLE001
+            return []
+        out = []
+        for lay in QgsProject.instance().mapLayers().values():
+            try:
+                if isinstance(lay, QgsVectorLayer) and lay.geometryType() == QgsWkbTypes.GeometryType.LineGeometry:
+                    out.append((lay.name(), lay.id()))
+            except Exception:   # noqa: BLE001
+                pass
+        return sorted(out)
+
+    def _sections(self, sv):
+        """The section plan for the dialog's settings."""
+        from ..core import sections as SC
+        p = self.project
+        al = sv.get("along") or ""
+        if al.startswith("line:"):
+            a = SC.track_alignment(p, int(al[5:]))
+        elif al == "centerline":
+            a = SC.centerline_from_lines(p)
+        elif al.startswith("layer:"):
+            from qgis.core import QgsProject
+            lay = QgsProject.instance().mapLayer(al[6:])
+            if lay is None:
+                raise ValueError("the centerline layer is no longer in the QGIS project")
+            a = SC.layer_alignment(lay, p.crs, p.store.origin)
+        else:
+            raise ValueError("choose a line to measure along")
+        if sv.get("reverse"):
+            a = a.reversed()
+        return SC.Sections(a, sv.get("length", 100.0), sv.get("start", 0.0), sv.get("width", 0.0))
 
     def pick_on_map(self):
         if self.map_pick is None or self.iface is None:
