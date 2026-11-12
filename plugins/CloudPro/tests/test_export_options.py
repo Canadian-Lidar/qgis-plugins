@@ -91,7 +91,7 @@ from CloudPro.ui.dialogs import ExportDialog, THIN_SPACINGS, TILE_SIZES, GRID_CE
 d = ExportDialog(None, p.lines, os.path.join(out, "x.las"))
 assert [d.thin.itemData(i) for i in range(d.thin.count())] == [0.0] + list(THIN_SPACINGS)
 assert d.thin.itemText(3) == "0.1 m  (100 pts/m²)", d.thin.itemText(3)
-assert [d.tile.itemData(i) for i in range(d.tile.count())] == [0] + list(TILE_SIZES)
+assert [d.tile.itemData(i) for i in range(d.tile.count())] == [0] + list(TILE_SIZES) + ["sections"]
 assert [d.cell.itemData(i) for i in range(d.cell.count())] == list(GRID_CELLS) and d.cell.currentData() == 0.25
 assert not d.thin_mode.isEnabled()
 d.thin.setCurrentIndex(3)
