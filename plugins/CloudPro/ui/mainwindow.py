@@ -1436,9 +1436,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if exec_(d) != QtWidgets.QDialog.DialogCode.Accepted:
             return
         from ..core import publish as PB
-        from ..core.spatial import parse_set
         las, cell = d.las.isChecked(), d.dem.value() if d.dem_on.isChecked() else 0.0
-        classes = parse_set(d.classes.text()) or None
+        classes = d.classes.selected()
+        p.data["finalize_classes"] = sorted(classes) if classes is not None else None
         inc = d.rejected.isChecked()
         add = d.add_qgis.isChecked()
         p.store.sync()
@@ -2986,14 +2986,15 @@ class MainWindow(QtWidgets.QMainWindow):
     def export(self):
         if self.project is None or self._guard("exporting"):
             return
-        d = ExportDialog(self, self.project.lines, os.path.join(self.project.root, self.project.name + ".las"))
+        d = ExportDialog(self, self.project.lines, os.path.join(self.project.root, self.project.name + ".las"),
+                         self.project.store.class_counts(), self.project.data.get("export_classes"))
         if exec_(d) != QtWidgets.QDialog.DialogCode.Accepted:
             return
         from ..core import export as EX
-        from ..core.spatial import parse_set
         path, kind = d.path.text().strip(), d.kind.currentIndex()
         box = self.box if d.scope.currentText() == "Inspection Area" else None
-        lines, classes = d.selected_lines(), parse_set(d.classes.text()) or None
+        lines, classes = d.selected_lines(), d.classes.selected()
+        self.project.data["export_classes"] = sorted(classes) if classes is not None else None
         inc, per_line = d.rejected.isChecked(), d.per_line.isChecked()
         cell, stat, fill = float(d.cell.currentData()), d.stat.currentText(), d.fill.value()
         spacing, thin_mode = float(d.thin.currentData() or 0) or None, d.thin_mode.currentData()
@@ -3014,8 +3015,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if kind == 1:
                 return ("xyz", path, EX.export_xyz(project, path, box, lines, inc, classes, progress, cancel,
                                                    spacing=spacing, thin_mode=thin_mode, tile=tile), add)
-            G, x0, yt = EX.grid_surface(project, cell, stat, box, lines, classes, fill, progress)
-            return ("grid", EX.write_grid(path, G, x0, yt, cell, project.crs), int(np.isfinite(G).sum()), add)
+            p, n = EX.export_grid(project, path, cell, stat, box, lines, classes, fill, progress, cancel)
+            return ("grid", p, n, add)
         self._run("export", job, "Exporting")
 
     def pick_on_map(self):

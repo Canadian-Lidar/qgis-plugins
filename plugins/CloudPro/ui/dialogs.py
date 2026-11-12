@@ -4,7 +4,7 @@ import json
 import os
 
 from ..core import clraw
-from ..qt import QtCore, QtWidgets, Qt
+from ..qt import QtCore, QtWidgets, Qt, Signal
 from . import theme
 from .navpanel import dspin
 
@@ -285,13 +285,67 @@ TILE_SIZES = (50, 100, 200, 250, 500, 1000)                           # m
 GRID_CELLS = (0.05, 0.1, 0.2, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0)          # m
 
 
+class ClassList(QtWidgets.QWidget):
+    """Checkable list of the ASPRS classes in the job with their point counts (accepted, and rejected when there
+    are any), with All / None. selected() -> None when every class is ticked (all classes, also ones added
+    later), else the set of ticked classes (empty when none)."""
+
+    def __init__(self, counts, chosen=None, parent=None):
+        super().__init__(parent)
+        from ..core.filters import ASPRS
+        lay = QtWidgets.QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self.list = QtWidgets.QListWidget()
+        acc, rej = counts if counts is not None else (None, None)
+        present = [] if acc is None else [k for k in range(256) if acc[k] or rej[k]]
+        chosen = None if chosen is None else {int(c) for c in chosen}
+        for k in present:
+            txt = "%3d  %s  (%s pts" % (k, ASPRS.get(k, "class %d" % k), "{:,}".format(int(acc[k])))
+            txt += ", %s rejected)" % "{:,}".format(int(rej[k])) if rej[k] else ")"
+            it = QtWidgets.QListWidgetItem(txt)
+            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            it.setCheckState(Qt.CheckState.Checked if chosen is None or k in chosen else Qt.CheckState.Unchecked)
+            it.setData(Qt.ItemDataRole.UserRole, k)
+            self.list.addItem(it)
+        rows = min(max(self.list.count(), 2), 6)
+        rh = self.list.sizeHintForRow(0) if self.list.count() else self.list.fontMetrics().height() + 6
+        self.list.setFixedHeight(rows * rh + 2 * self.list.frameWidth() + 8)
+        lay.addWidget(self.list, 1)
+        col = QtWidgets.QVBoxLayout()
+        for t, on in (("All", True), ("None", False)):
+            b = QtWidgets.QToolButton()
+            b.setText(t)
+            b.clicked.connect(lambda _=False, on=on: self.set_all(on))
+            col.addWidget(b)
+        col.addStretch(1)
+        lay.addLayout(col)
+        self.list.itemChanged.connect(lambda *_: self.changed.emit())
+
+    changed = Signal()
+
+    def set_all(self, on):
+        for i in range(self.list.count()):
+            self.list.item(i).setCheckState(Qt.CheckState.Checked if on else Qt.CheckState.Unchecked)
+
+    def set_checked(self, classes):
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            it.setCheckState(Qt.CheckState.Checked if it.data(Qt.ItemDataRole.UserRole) in classes
+                             else Qt.CheckState.Unchecked)
+
+    def selected(self):
+        on = {self.list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.list.count())
+              if self.list.item(i).checkState() == Qt.CheckState.Checked}
+        return None if len(on) == self.list.count() else on
+
+
 def _spacing_label(s):
     d = 1.0 / (s * s)
     return "%g m  (%s pts/m\u00b2)" % (s, ("%g" % d) if d >= 1 else ("%.2f" % d))
 
 
 class ExportDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None, lines=(), start=""):
+    def __init__(self, parent=None, lines=(), start="", class_counts=None, classes_chosen=None):
         super().__init__(parent)
         self.setWindowTitle("CloudPro - export")
         self.resize(600, 540)
@@ -317,8 +371,7 @@ class ExportDialog(QtWidgets.QDialog):
             it.setCheckState(Qt.CheckState.Checked)
             it.setData(Qt.ItemDataRole.UserRole, ln["id"])
             self.lines.addItem(it)
-        self.classes = QtWidgets.QLineEdit("")
-        self.classes.setPlaceholderText("all classes (or e.g. 2 for ground only)")
+        self.classes = ClassList(class_counts, classes_chosen)
         self.rejected = QtWidgets.QCheckBox("Include rejected points (LAS withheld flag)")
         self.per_line = QtWidgets.QCheckBox("One file per line")
         self.thin = QtWidgets.QComboBox()
@@ -365,6 +418,8 @@ class ExportDialog(QtWidgets.QDialog):
         bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok |
                                         QtWidgets.QDialogButtonBox.StandardButton.Cancel)
         bb.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).setText("Export")
+        self.b_ok = bb.button(QtWidgets.QDialogButtonBox.StandardButton.Ok)
+        self.classes.changed.connect(lambda: self.b_ok.setEnabled(self.classes.selected() != set()))
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         f.addRow(bb)
@@ -574,8 +629,8 @@ class PublishDialog(QtWidgets.QDialog):
         f = QtWidgets.QFormLayout()
         self.las = QtWidgets.QCheckBox("LAS 1.4 point cloud (%s.las)" % project.name)
         self.las.setChecked(True)
-        self.classes = QtWidgets.QLineEdit("")
-        self.classes.setPlaceholderText("all classes (or e.g. 2,6 for ground and buildings)")
+        self.classes = ClassList(project.store.class_counts(), project.data.get("finalize_classes"))
+        self.classes.changed.connect(self._can)
         self.rejected = QtWidgets.QCheckBox("Include rejected points (LAS withheld flag)")
         self.dem_on = QtWidgets.QCheckBox("Ground grid (mean of class 2, GeoTIFF)")
         self.dem = dspin(0.05, 50, 0.5, 0.05, 2, " m")
@@ -593,13 +648,22 @@ class PublishDialog(QtWidgets.QDialog):
                                         QtWidgets.QDialogButtonBox.StandardButton.Cancel)
         bb.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).setText("Finalize")
         bb.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).setObjectName("ppPrimary")
+        self.b_ok = bb.button(QtWidgets.QDialogButtonBox.StandardButton.Ok)
+        for w in (self.las, self.dem_on):
+            w.toggled.connect(self._can)
         bb.accepted.connect(self._ok)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
         theme.polish_dialog(self)
 
+        self._can()
+
+    def _can(self, *_):
+        self.classes.setEnabled(self.las.isChecked())
+        self.b_ok.setEnabled((self.las.isChecked() and self.classes.selected() != set()) or self.dem_on.isChecked())
+
     def _ok(self):
-        if not self.las.isChecked() and not self.dem_on.isChecked():
+        if not self.b_ok.isEnabled():
             return
         self.accept()
 
