@@ -30,6 +30,12 @@ import sys
 import time
 
 
+
+def _report_failed(st):
+    for b in st.get("failed") or []:
+        print("warning: a part failed and was left as it was (box %.0f %.0f %.0f %.0f local, %d points): %s"
+              % (*b["box"], b["points"], b["error"]), file=sys.stderr)
+
 def _progress(f, msg=None):
     sys.stdout.write("\r  %5.1f%%  %s        " % (100 * f, msg if isinstance(msg, str) else ""))
     sys.stdout.flush()
@@ -170,7 +176,9 @@ def main(argv=None):
         lines = [l - 1 for l in parse_set(a.lines)] or None
         ed = EditManager(prj)
         t = time.time()
-        k = run_group_tiled(prj, g, ed, lines=lines, progress=_progress)
+        st = {}
+        k = run_group_tiled(prj, g, ed, lines=lines, progress=_progress, stats=st)
+        _report_failed(st)
         from .core.importer import rebuild_grids
         rebuild_grids(prj, list(getattr(prj.store, "dirty_tiles", [])))
         prj.save()
@@ -235,7 +243,9 @@ def _dcs_cmd(a, prj):
                 print("no group %r; known: %s" % (a.group, ", ".join(x.name for x in groups)))
                 return 1
             lines = [l - 1 for l in parse_set(a.lines)] or None
-            k = run_group_tiled(prj, m[0], EditManager(prj), lines=lines, progress=_progress)
+            st = {}
+            k = run_group_tiled(prj, m[0], EditManager(prj), lines=lines, progress=_progress, stats=st)
+            _report_failed(st)
             prj.record_filter(m[0].to_dict(), "selected lines" if lines else "entire project", k)
             importer.rebuild_grids(prj, list(getattr(prj.store, "dirty_tiles", [])))
             prj.save()

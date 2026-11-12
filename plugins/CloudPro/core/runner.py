@@ -100,7 +100,10 @@ def run_group_tiled(project, group, edits, buffer=10.0, lines=None, polygon=None
     """Every unit is computed on the points as they were before the run (its buffer included), and the
     changes are written after the last unit, so the result does not depend on the order or the number of threads.
     Cancelling writes nothing (raises importer.Cancelled). The grids of the changed tiles are rebuilt here (in the
-    worker), not by the window. stats (dict) receives units, workers, reduced buffers, times."""
+    worker), not by the window. stats (dict) receives units, workers, reduced buffers, times, and "failed": the
+    parts a filter failed on, [{"box": (x0, y0, x1, y1) local, "points", "error"}]. A failed part is left as it
+    was and the others are written (a run of an hour is not thrown away for one piece); the caller reports it.
+    When every part fails, the error is raised."""
     from .importer import Cancelled
     from . import engine
     store = project.store
@@ -120,6 +123,7 @@ def run_group_tiled(project, group, edits, buffer=10.0, lines=None, polygon=None
     nw = max(1, min(nw, len(units) or 1))
     lock = threading.Lock()
     state = {"done_pts": 0, "part": {}, "changed": 0, "units": 0, "last": 0.0}
+    failed = []
 
     def report(force=False):
         if not progress:
@@ -190,7 +194,14 @@ def run_group_tiled(project, group, edits, buffer=10.0, lines=None, polygon=None
             for fut in done:
                 uid, u, need = pending.pop(fut)
                 inflight -= need
-                act, nl = fut.result()                      # a filter error stops the run (nothing written)
+                try:
+                    act, nl = fut.result()
+                except Exception as e:      # noqa: BLE001  - the part stays as it was; reported after the run
+                    import traceback
+                    failed.append({"box": (u.x0, u.y0, u.x1, u.y1), "points": u.n,
+                                   "error": "%s: %s" % (type(e).__name__, e), "trace": traceback.format_exc(),
+                                   "exc": e})
+                    act, nl = None, 0
                 loaded += nl
                 with lock:
                     state["part"].pop(uid, None)
@@ -206,6 +217,10 @@ def run_group_tiled(project, group, edits, buffer=10.0, lines=None, polygon=None
                 fut.cancel()
     if cancel():
         raise Cancelled("cancelled: nothing was written")
+    if stats is not None:
+        stats["failed"] = [{k: v for k, v in f.items() if k != "exc"} for f in failed]
+    if failed and len(failed) == len(units):
+        raise failed[0]["exc"]
     t_compute = time.time() - t_start
     total = sum(a.size for a in acts)
     # write (the cores of the units never overlap)

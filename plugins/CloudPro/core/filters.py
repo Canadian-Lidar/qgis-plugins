@@ -920,7 +920,11 @@ class GeometricFeatures(Filter):
     def run(self, ctx, sel):
         tr, acc = ctx.neighbours()
         k = int(self.v("k"))
+        if len(acc) < 3:                        # no shape to measure (a piece of a tiled run with 1-2 points)
+            return {}
+        k = min(k, len(acc))
         _, i = tr.query(ctx.xyz(sel), k=k, workers=-1)
+        i = np.asarray(i).reshape(len(sel), k)
         f = sp.eigen_features(ctx.xyz(acc), i)
         t = self.v("target")
         thr = self.v("thr")
@@ -1090,8 +1094,7 @@ class SMRF(Filter):
             lastsurf = opened
         ground_cells = np.where(obj | np.isnan(g), np.nan, zmin)
         dem = _interp_grid(ground_cells)
-        gy_, gx_ = np.gradient(dem, c)
-        slope = np.hypot(gx_, gy_)
+        slope = _slope(dem, c)
         gx = (x - x0) / c - 0.5
         gy = (y - y0) / c - 0.5
         zs = _bilinear(dem, gx, gy)
@@ -1099,6 +1102,15 @@ class SMRF(Filter):
         is_ground = (z - zs) <= self.v("thr") + self.v("scalar") * sl
         is_ground &= (zs - z) <= self.v("thr") + self.v("scalar") * sl
         return _ground_result(ctx, self, sel, is_ground)
+
+
+def _slope(dem, c):
+    """Slope (rise/run) of a DEM. A grid one cell wide in a direction (a sliver of a tiled run: a strip of points
+    at a tile edge) has no slope that way: it counts as flat instead of failing the whole run."""
+    ny, nx = dem.shape
+    gy = np.gradient(dem, c, axis=0) if ny >= 2 else np.zeros_like(dem)
+    gx = np.gradient(dem, c, axis=1) if nx >= 2 else np.zeros_like(dem)
+    return np.hypot(gx, gy)
 
 
 def _interp_grid(G):
