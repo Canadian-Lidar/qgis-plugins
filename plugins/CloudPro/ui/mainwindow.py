@@ -1437,6 +1437,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         from ..core import publish as PB
         las, cell = d.las.isChecked(), d.dem.value() if d.dem_on.isChecked() else 0.0
+        las_fmt = d.las_fmt.currentData()
+        if las:
+            p.data["finalize_format"] = las_fmt
         classes = d.classes.selected()
         p.data["finalize_classes"] = sorted(classes) if classes is not None else None
         inc = d.rejected.isChecked()
@@ -1446,7 +1449,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def job(progress, cancel):
             with p.dcs.run("cloudpro", PLUGIN, VERSION):
-                doc = PB.deliver(p, las=las, dem_cell=cell, include_rejected=inc, classes=classes,
+                doc = PB.deliver(p, las=las, dem_cell=cell, include_rejected=inc, classes=classes, las_format=las_fmt,
                                  progress=progress, cancel=cancel, version=VERSION)
             p.run_log("publish", ["cloud.json %s" % doc["id"], "calibration: %s" % doc["calibration"]] +
                       ["%s: %s" % (k, v) for k, v in doc["files"].items()] + doc.get("warnings", []))
@@ -2987,24 +2990,37 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.project is None or self._guard("exporting"):
             return
         d = ExportDialog(self, self.project.lines, os.path.join(self.project.root, self.project.name + ".las"),
-                         self.project.store.class_counts(), self.project.data.get("export_classes"))
+                         self.project.store.class_counts(), self.project.data.get("export_classes"),
+                         self.project.data.get("export_format"), self._line_layers(),
+                         self.project.data.get("export_sections"))
         if exec_(d) != QtWidgets.QDialog.DialogCode.Accepted:
             return
         from ..core import export as EX
-        path, kind = d.path.text().strip(), d.kind.currentIndex()
+        path, kind = d.path.text().strip(), d.kind_index()
+        self.project.data["export_format"] = d.fmt()
         box = self.box if d.scope.currentText() == "Inspection Area" else None
         lines, classes = d.selected_lines(), d.classes.selected()
         self.project.data["export_classes"] = sorted(classes) if classes is not None else None
         inc, per_line = d.rejected.isChecked(), d.per_line.isChecked()
         cell, stat, fill = float(d.cell.currentData()), d.stat.currentText(), d.fill.value()
         spacing, thin_mode = float(d.thin.currentData() or 0) or None, d.thin_mode.currentData()
-        tile = int(d.tile.currentData() or 0) or None
+        self.project.data["export_sections"] = d.section_settings()
         add = d.add_qgis.isChecked()
         project = self.project
+        if d.sections_on():
+            try:
+                tile = self._sections(d.section_settings())
+            except Exception as ex:     # noqa: BLE001
+                theme.msg_warn(self, "CloudPro", "Sections along the line: %s" % ex)
+                return
+            self.status(tile.describe(), 10000)
+        else:
+            tile = int(d.tile.currentData() or 0) or None
         if tile and kind in (0, 1):
             nt = EX.plan(project, box, tile)
-            if nt > 400 and theme.msg_question(self, "CloudPro", "%d m tiles make up to %d files here.\n\nExport "
-                                               "anyway?" % (tile, nt)) != QtWidgets.QMessageBox.StandardButton.Yes:
+            what = "%d m tiles" % tile if isinstance(tile, int) else tile.describe()
+            if nt > 400 and theme.msg_question(self, "CloudPro", "%s make up to %d files here.\n\nExport "
+                                               "anyway?" % (what, nt)) != QtWidgets.QMessageBox.StandardButton.Yes:
                 return
         project.store.sync()
 
@@ -3018,6 +3034,42 @@ class MainWindow(QtWidgets.QMainWindow):
             p, n = EX.export_grid(project, path, cell, stat, box, lines, classes, fill, progress, cancel)
             return ("grid", p, n, add)
         self._run("export", job, "Exporting")
+
+    def _line_layers(self):
+        """(name, layer id) of the line layers open in QGIS (centerlines to measure chainage along)."""
+        try:
+            from qgis.core import QgsProject, QgsVectorLayer, QgsWkbTypes
+        except Exception:       # noqa: BLE001
+            return []
+        out = []
+        for lay in QgsProject.instance().mapLayers().values():
+            try:
+                if isinstance(lay, QgsVectorLayer) and lay.geometryType() == QgsWkbTypes.GeometryType.LineGeometry:
+                    out.append((lay.name(), lay.id()))
+            except Exception:   # noqa: BLE001
+                pass
+        return sorted(out)
+
+    def _sections(self, sv):
+        """The section plan for the dialog's settings."""
+        from ..core import sections as SC
+        p = self.project
+        al = sv.get("along") or ""
+        if al.startswith("line:"):
+            a = SC.track_alignment(p, int(al[5:]))
+        elif al == "centerline":
+            a = SC.centerline_from_lines(p)
+        elif al.startswith("layer:"):
+            from qgis.core import QgsProject
+            lay = QgsProject.instance().mapLayer(al[6:])
+            if lay is None:
+                raise ValueError("the centerline layer is no longer in the QGIS project")
+            a = SC.layer_alignment(lay, p.crs, p.store.origin)
+        else:
+            raise ValueError("choose a line to measure along")
+        if sv.get("reverse"):
+            a = a.reversed()
+        return SC.Sections(a, sv.get("length", 100.0), sv.get("start", 0.0), sv.get("width", 0.0))
 
     def pick_on_map(self):
         if self.map_pick is None or self.iface is None:
@@ -3264,7 +3316,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 from . import qgis_layers
                 for k, f in doc["files"].items():
                     path = os.path.join(self.project.out_dir, f)
-                    kind = "las" if f.endswith(".las") else "grid" if f.endswith((".tif", ".asc")) else None
+                    kind = "las" if f.endswith((".las", ".laz")) else "grid" if f.endswith((".tif", ".asc")) else None
                     if kind:
                         qgis_layers.add_file(self.iface, path, kind)
             theme.msg_info(self, "CloudPro", "Finalized cloud.json for the job (%s).\n\n%s\n\nFolder: %s%s" % (

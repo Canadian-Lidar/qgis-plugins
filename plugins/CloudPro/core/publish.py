@@ -166,19 +166,23 @@ def publish(project, outputs, warnings=(), version=""):
 
 
 def deliver(project, las=True, per_line=False, dem_cell=0.0, include_rejected=False, classes=None,
-            progress=None, cancel=None, version=""):
-    """Write the standard deliverables to out/ (all or nothing: temporary names, then renamed) and publish."""
+            progress=None, cancel=None, version="", las_format="las"):
+    """Write the standard deliverables to out/ (all or nothing: temporary names, then renamed) and publish.
+    las_format "laz" writes the point cloud compressed (<Name>.laz), "las" uncompressed (<Name>.las); the other
+    one left in out/ by an earlier Finalize is removed, so out/ holds one point cloud."""
     od = project.out_dir
     base = project.name
     tmp_paths = {}
     outputs = {}
     try:
         if las:
-            p = os.path.join(od, ".tmp_%s.las" % base)
+            ext = ".laz" if las_format == "laz" else ".las"
+            p = os.path.join(od, ".tmp_%s%s" % (base, ext))
             n = EX.export_las(project, p, None, None, include_rejected, classes, False,
                               (lambda f, m: progress(0.7 * f, m)) if progress else None, cancel)
-            tmp_paths["las"] = (p, os.path.join(od, "%s.las" % base))
-            outputs["las"] = {"format": "LAS 1.4 PDRF 6", "points": n, "classes": sorted(classes) if classes else
+            tmp_paths["las"] = (p, os.path.join(od, base + ext))
+            outputs["las"] = {"format": "LAS 1.4 PDRF 6" + (", LAZ compressed" if ext == ".laz" else ""),
+                              "points": n, "classes": sorted(classes) if classes else
                               "all", "rejected": "withheld" if include_rejected else "excluded"}
         if dem_cell and dem_cell > 0:
             p, _n = EX.export_grid(project, os.path.join(od, ".tmp_%s_ground.tif" % base), dem_cell, "mean", None,
@@ -200,6 +204,12 @@ def deliver(project, las=True, per_line=False, dem_cell=0.0, include_rejected=Fa
         for k, (a, b) in tmp_paths.items():
             os.replace(a, b)
             outputs[k]["path"] = b
+        if "las" in tmp_paths:
+            other = os.path.join(od, base + (".las" if tmp_paths["las"][1].endswith(".laz") else ".laz"))
+            try:
+                os.unlink(other)
+            except OSError:
+                pass
     except BaseException:
         for a, _b in tmp_paths.values():
             try:

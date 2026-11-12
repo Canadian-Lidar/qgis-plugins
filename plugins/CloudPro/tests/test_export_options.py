@@ -91,15 +91,14 @@ from CloudPro.ui.dialogs import ExportDialog, THIN_SPACINGS, TILE_SIZES, GRID_CE
 d = ExportDialog(None, p.lines, os.path.join(out, "x.las"))
 assert [d.thin.itemData(i) for i in range(d.thin.count())] == [0.0] + list(THIN_SPACINGS)
 assert d.thin.itemText(3) == "0.1 m  (100 pts/m²)", d.thin.itemText(3)
-assert [d.tile.itemData(i) for i in range(d.tile.count())] == [0] + list(TILE_SIZES)
+assert [d.tile.itemData(i) for i in range(d.tile.count())] == [0] + list(TILE_SIZES) + ["sections"]
 assert [d.cell.itemData(i) for i in range(d.cell.count())] == list(GRID_CELLS) and d.cell.currentData() == 0.25
 assert not d.thin_mode.isEnabled()
 d.thin.setCurrentIndex(3)
 assert d.thin_mode.isEnabled()
-d.kind.setCurrentIndex(2)
+d.kind.setCurrentIndex(d.kind.findData("grid"))
 assert not d.thin.isEnabled() and not d.tile.isEnabled() and d.cell.isEnabled()
 print("dialog: spacing (with density), thin mode, tiles and grid cell are dropdowns: OK")
-p.store.close()
 print("test_export_options: OK")
 
 # grids written block by block (any size) equal the grid made in one piece, gap filling across block edges included
@@ -149,6 +148,8 @@ assert d.classes.selected() == set() and not d.b_ok.isEnabled()
 d = ExportDialog(None, p.lines, os.path.join(out, "x.las"), (acc, rej), [present[0]])
 assert d.classes.selected() == ({present[0]} if len(present) > 1 else None)
 from CloudPro.ui.dialogs import PublishDialog                     # noqa: E402
+d = ExportDialog(None, p.lines, os.path.join(out, "x.las"), (acc, rej), None)
+assert d.fmt() == "laz" and d.path.text().endswith(".laz") and d.kind_index() == 0 and d.per_line.isEnabled()
 p.data["finalize_classes"] = [present[0]]
 d = PublishDialog(None, p, [])
 assert d.classes.selected() == ({present[0]} if len(present) > 1 else None)
@@ -156,4 +157,66 @@ d.classes.set_all(False)
 assert not d.b_ok.isEnabled()
 d.dem_on.setChecked(True)
 assert d.b_ok.isEnabled()
+assert d.las_fmt.currentData() == "laz" and d.las_fmt.isEnabled()
+d.las.setChecked(False)
+assert not d.las_fmt.isEnabled()
 print("classes: checklists with point counts, remembered, Export / Finalize need something to write: OK")
+
+
+# LAZ: the same points as LAS, byte for byte, read back with the bundled decompressor; tiles and lines too
+from CloudPro.core import laz as LZ                               # noqa: E402
+import struct                                                     # noqa: E402
+assert LZ.available(), LZ.why()
+
+
+def laz_points(path):
+    with open(path, "rb") as f:
+        h = f.read(375)
+        off, nvlr = struct.unpack_from("<II", h, 96)
+        fmt, = struct.unpack_from("<B", h, 104)
+        n, = struct.unpack_from("<Q", h, 247)
+        f.seek(375)
+        rec = None
+        for _ in range(nvlr):
+            uid, rid, ln = struct.unpack("<2x16sHH32x", f.read(54))
+            data = f.read(ln)
+            if rid == 22204:
+                rec = data
+        assert fmt == 6 | 0x80 and rec is not None
+        f.seek(off)
+        buf = np.zeros(n * 30, np.uint8)
+        LZ.module().LasZipDecompressor(f, rec).decompress_many(buf)
+        return h, buf
+
+
+def las_points(path):
+    with open(path, "rb") as f:
+        h = f.read(375)
+        off, = struct.unpack_from("<I", h, 96)
+        n, = struct.unpack_from("<Q", h, 247)
+        f.seek(off)
+        return h, np.frombuffer(f.read(n * 30), np.uint8)
+
+
+EX.export_las(p, os.path.join(out, "z.las"), include_rejected=True)
+EX.export_las(p, os.path.join(out, "z.laz"), include_rejected=True)
+ha, A = las_points(os.path.join(out, "z.las"))
+hb, B = laz_points(os.path.join(out, "z.laz"))
+assert np.array_equal(A, B) and ha[131:375] == hb[131:375]        # points, scale/offset, extent, counts
+ratio = os.path.getsize(os.path.join(out, "z.las")) / os.path.getsize(os.path.join(out, "z.laz"))
+os.makedirs(os.path.join(out, "zt"))
+nz = EX.export_las(p, os.path.join(out, "zt", "S.laz"), per_line=True, tile=100)
+assert all(f.endswith(".laz") for f in p.last_export_files)
+assert sum(len(laz_points(f)[1]) // 30 for f in p.last_export_files) == nz
+print("LAZ: same points and header as LAS (%.1f x smaller), tiles per line (%d files): OK" % (
+    ratio, len(p.last_export_files)))
+
+# Finalize: <Name>.laz or <Name>.las, never both left in out/
+from CloudPro.core import publish as PB                           # noqa: E402
+PB.deliver(p, las=True, las_format="laz")
+od = p.out_dir
+assert os.path.exists(os.path.join(od, p.name + ".laz")) and not os.path.exists(os.path.join(od, p.name + ".las"))
+PB.deliver(p, las=True, las_format="las")
+assert os.path.exists(os.path.join(od, p.name + ".las")) and not os.path.exists(os.path.join(od, p.name + ".laz"))
+print("Finalize writes the chosen format and removes the other: OK")
+p.store.close()

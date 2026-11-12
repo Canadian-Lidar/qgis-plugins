@@ -32,16 +32,48 @@ v3, b = win.v3d, win.box
 
 # 3-D: the orbit centre is the area's centre
 assert np.allclose(v3.center[:2], [b["cx"], b["cy"]]), (v3.center, b)
-assert abs(v3.center[2] - v3._zmid()) < 1e-6
+assert abs(v3.center[2] - v3._zgeom()) < 1e-6 and np.allclose(v3.pivot(), v3.center)
 print("3D centre = Inspection Area centre (%.2f, %.2f, %.2f)" % tuple(v3.center))
 
-# arrows: 22.5 degrees per click
-y0, p0 = v3.yaw, v3.pitch
-v3.nav_rotate("right")
-assert abs(math.degrees(v3.yaw - y0) - 22.5) < 1e-9
-v3.nav_rotate("up")
-assert abs(math.degrees(p0 - v3.pitch) - 22.5) < 1e-9
-print("arrows: 22.5 degrees per click")
+# arrows: the cloud turns along the screen's own axes whatever the view's present turn and pan, about the
+# Inspection Area's geometric centre (which stays put on the screen), 22.5 degrees per click
+def scr(pt):
+    x, y, _z = v3.project(np.asarray(pt, float)[None, :])
+    return np.array([float(x[0]), float(y[0])])
+
+
+v3.ortho = True                     # straight lines on the screen (perspective bends off-centre moves a little)
+for prior in ((), ("cw", "up", "up", "right"), ("ccw", "down", "left", "left", "cw", "up")):
+    v3.preset("iso")
+    v3.center = v3._area_centre()
+    for k in prior:
+        v3.nav_rotate(k, 31.0)
+    v3.center = v3.center + 0.25 * v3.dist * (v3._basis()[2] * 0.6 - v3._basis()[3] * 0.4)    # panned
+    for key, along, sign in (("up", 1, -1), ("down", 1, 1), ("right", 0, 1), ("left", 0, -1)):
+        piv = v3.pivot()
+        eye_dir, fwd, right, up = v3._basis()
+        near = piv + eye_dir * (v3.dist * 0.3)                  # in front of the pivot, towards the viewer
+        s_piv, s_near = scr(piv), scr(near)
+        v3.nav_rotate(key)
+        d = scr(near) - s_near
+        assert np.allclose(scr(piv), s_piv, atol=1e-6), (key, prior)      # the pivot does not move
+        assert abs(d[1 - along]) < 1e-6 * v3.width() and d[along] * sign > 1, (key, prior, d)
+    for key, sign in (("cw", 1), ("ccw", -1)):
+        piv = v3.pivot()
+        eye_dir, fwd, right, up = v3._basis()
+        top = piv + up * (v3.dist * 0.1)                        # straight above the pivot on the screen
+        s_piv, s_top = scr(piv), scr(top)
+        v3.nav_rotate(key)
+        d = scr(top) - s_top
+        assert np.allclose(scr(piv), s_piv, atol=1e-6) and d[0] * sign > 1, (key, prior, d)
+    B0, c0 = v3._B.copy(), v3.center.copy()
+    for _ in range(16):
+        v3.nav_rotate("up")
+    assert np.allclose(v3._B, B0, atol=1e-9) and np.allclose(v3.center, c0, atol=1e-6)
+print("arrows: up/down straight into the screen, left/right, cw/ccw about the area's geometric centre, "
+      "whatever the present turn and pan; 16 clicks = one turn")
+v3.ortho = False
+v3.preset("iso")
 
 # pan away, then the button brings the centre back and frames the area
 v3.center = v3.center + [40.0, -25.0, 3.0]
@@ -81,9 +113,9 @@ print("slice: zoom to the area (%.1f m across)" % span)
 # dragging right (and the right arrow) moves the near side of the cloud right, as if holding it
 from CloudPro.qt import QtCore, QtGui, Qt                        # noqa: E402
 eye_dir, fwd, right, up = v3._basis()
-near = v3.center + eye_dir * (v3.dist * 0.3)                     # a point between the centre and the camera
+near = v3.pivot() + eye_dir * (v3.dist * 0.3)                    # a point between the centre and the camera
 x_before = float(v3.project(near[None, :])[0][0])
-v3._drag = ("orbit", QtCore.QPointF(100, 100), v3.yaw, v3.pitch)
+v3._drag = ["orbit", QtCore.QPointF(100, 100)]
 ev = QtGui.QMouseEvent(QtCore.QEvent.Type.MouseMove, QtCore.QPointF(160, 100), QtCore.QPointF(160, 100),
                        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
 v3.mouseMoveEvent(ev)

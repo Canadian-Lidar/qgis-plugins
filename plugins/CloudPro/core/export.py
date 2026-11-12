@@ -4,7 +4,7 @@ import os
 
 import numpy as np
 
-from .las import LasWriter
+from .las import writer_for
 from .pointset import PointSet, rect_corners, to_box_frame
 from .store import REJECTED, parse_key
 
@@ -84,16 +84,22 @@ def thin(a, spacing, mode, origin):
 
 
 def tile_name(base, ext, tx, ty, size, line=None):
-    """<base>[_L001]_<E>_<N><ext>: E, N the lower-left corner of the export tile (whole metres)."""
+    """<base>[_L001]_<E>_<N><ext>: E, N the lower-left corner of the export tile (whole metres); with a section
+    plan (size = sections.Sections) <base>[_L001]_<nnn>_<from>-<to><ext>."""
+    if hasattr(size, "name"):
+        return size.name(base, ext, tx, line)
     part = "" if line is None else "_L%03d" % (line + 1)
     return "%s%s_%d_%d%s" % (base, part, int(round(tx * size)), int(round(ty * size)), ext)
 
 
 def _split(a, origin, tile):
     """[(tx, ty, rows)] of the records by export tile (tile m, anchored at multiples of tile in project
-    coordinates), or [(None, None, a)] without tiling."""
+    coordinates), or [(None, None, a)] without tiling. tile may also be a sections.Sections plan:
+    [(section, None, rows)]."""
     if not tile:
         return [(None, None, a)]
+    if hasattr(tile, "split"):
+        return tile.split(a, origin)
     t_mm = int(round(tile * 1000))
     tx = np.floor_divide(a["x"].astype(np.int64) + int(round(origin[0] * 1000)), t_mm)
     ty = np.floor_divide(a["y"].astype(np.int64) + int(round(origin[1] * 1000)), t_mm)
@@ -109,6 +115,8 @@ def plan(project, box=None, tile=None):
     """Number of export tiles the area would make (for a warning before many files are written)."""
     if not tile:
         return 1
+    if hasattr(tile, "count"):
+        return tile.count
     store = project.store
     o = store.origin
     if box is not None:
@@ -175,7 +183,7 @@ def export_las(project, path, box=None, lines=None, include_rejected=False, clas
                             p = tile_name(base, ext, tx, ty, tile, lid)
                         else:
                             p = path if not per_line else "%s_L%03d%s" % (base, lid + 1, ext)
-                        writers[key] = LasWriter(_tmp(p), (np.floor(o[0]), np.floor(o[1]), np.floor(o[2])), wkt=wkt)
+                        writers[key] = writer_for(p)(_tmp(p), (np.floor(o[0]), np.floor(o[1]), np.floor(o[2])), wkt=wkt)
                         pairs.append((_tmp(p), p))
                     writers[key].write(r["x"] * 1e-3 + o[0], r["y"] * 1e-3 + o[1], r["z"] * 1e-3 + o[2], r["t"],
                                        r["i"], r["ret"], r["cls"], r["ch"], r["line"], r["flag"])
@@ -187,7 +195,7 @@ def export_las(project, path, box=None, lines=None, include_rejected=False, clas
                 cancelled = True
                 break
         if not writers and not per_line and not tile:   # nothing selected: still an (empty) valid file
-            writers[0] = LasWriter(_tmp(path), (np.floor(o[0]), np.floor(o[1]), np.floor(o[2])), wkt=wkt)
+            writers[0] = writer_for(path)(_tmp(path), (np.floor(o[0]), np.floor(o[1]), np.floor(o[2])), wkt=wkt)
             pairs.append((_tmp(path), path))
     finally:
         for w in writers.values():

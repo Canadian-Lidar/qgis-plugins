@@ -69,6 +69,10 @@ class CloudView3D(QtWidgets.QWidget):
         self.yaw = math.radians(30)        # camera azimuth (clockwise from north)
         self.pitch = math.radians(35)      # elevation above horizon
         self.roll = 0.0                    # rotation of the picture about the viewing direction
+        # free orientation (2.5.0): rows right, up, forward in world (Z-scaled) space once the arrows or a drag
+        # have turned the view; None = the angles above (presets). Turns are about the screen's own axes.
+        self._B = None
+        self._zr_key = None
         self.nav_step = 22.5               # degrees per click on the navigation arrows
         self.nav_hold_step = 2.5           # degrees per repeat (every 40 ms) while an arrow is held
         self.area = None                   # Inspection Area (cx, cy, length, width, bearing): the orbit centre
@@ -182,10 +186,23 @@ class CloudView3D(QtWidgets.QWidget):
             z = z[::len(z) // 200_000]
         return float(np.median(z))
 
+    def _zgeom(self):
+        """Middle of the height range of the points (2-98 %, so a stray point does not move it); cached per set."""
+        key = (id(self.P), len(self.P))
+        if self._zr_key != key:
+            lo, hi = self._zrange()
+            self._zr_key, self._zr_mid = key, (lo + hi) / 2
+        return self._zr_mid
+
     def _area_centre(self):
-        """The area's centre at the median height of its points (near street level, not mid-air)."""
+        """The geometric centre of the Inspection Area: its centre in plan, at the middle of its points' heights."""
         a = self.area
-        return np.array([a["cx"], a["cy"], self._zmid() if len(self.P) else float(self.center[2])])
+        return np.array([a["cx"], a["cy"], self._zgeom() if len(self.P) else float(self.center[2])])
+
+    def pivot(self):
+        """Centre of rotation: always the Inspection Area's geometric centre, wherever the view is panned or
+        turned (without an area, the centre of the view)."""
+        return self._area_centre() if self.area is not None else self.center.copy()
 
     def fit(self):
         """Zoom to the Inspection Area (to the points when there is no area): centre on it, whole area in view."""
@@ -215,6 +232,7 @@ class CloudView3D(QtWidgets.QWidget):
     def preset(self, name):
         b = math.radians(self.box_bearing)
         self.roll = 0.0
+        self._B = None
         if name == "top":
             self.pitch = math.radians(89.9)
             self.yaw = b + math.pi
@@ -233,6 +251,12 @@ class CloudView3D(QtWidgets.QWidget):
 
     # ------------------------------------------------------------ camera
     def _basis(self):
+        if self._B is not None:
+            right, up, fwd = self._B
+            return -fwd, fwd, right, up
+        return self._euler_basis()
+
+    def _euler_basis(self):
         cp, sp = math.cos(self.pitch), math.sin(self.pitch)
         cy, sy = math.cos(self.yaw), math.sin(self.yaw)
         # camera position relative to centre (E, N, U); yaw = azimuth of the camera from the centre
@@ -279,21 +303,43 @@ class CloudView3D(QtWidgets.QWidget):
                 return k
         return None
 
+    # the cloud's turn for each arrow, in screen axes (x right, y up, z into the screen), per radian sign:
+    # up: the near side rises (about x); right: the near side moves right (about y); cw: clockwise on screen
+    _TURNS = {"up": (0, 1), "down": (0, -1), "right": (1, -1), "left": (1, 1), "cw": (2, -1), "ccw": (2, 1)}
+
+    @staticmethod
+    def _screen_rot(axis, a):
+        c, s_ = math.cos(a), math.sin(a)
+        if axis == 0:
+            return np.array([[1, 0, 0], [0, c, -s_], [0, s_, c]])
+        if axis == 1:
+            return np.array([[c, 0, s_], [0, 1, 0], [-s_, 0, c]])
+        return np.array([[c, -s_, 0], [s_, c, 0], [0, 0, 1]])
+
+    def turn(self, Q):
+        """Turn the cloud by Q (a rotation in screen axes) about the pivot, whatever the view's present turn and
+        pan: the camera is carried round the pivot by the opposite turn."""
+        eye_dir, fwd, right, up = self._basis()
+        B = np.array([right, up, fwd])
+        zs = np.array([1.0, 1.0, self.zscale])
+        pv = self.pivot() * zs
+        eye = self.center * zs + eye_dir * self.dist
+        B2 = Q @ B
+        B2 /= np.linalg.norm(B2, axis=1)[:, None]                # keep it orthonormal over many small turns
+        B2[1] = np.cross(B2[0], B2[2])                           # up = right x forward (as _euler_basis)
+        B2[1] /= np.linalg.norm(B2[1])
+        B2[0] = np.cross(B2[2], B2[1])
+        eye2 = pv - B2.T @ (B @ (pv - eye))
+        self._B = B2
+        self.center = (eye2 + B2[2] * self.dist) / zs
+
     def nav_rotate(self, key, deg=None):
-        """Turn the cloud the way the arrow points: up / down (into the page), left / right, cw / ccw on screen."""
+        """Turn the cloud the way the arrow points, about the screen's axes whatever the view's present turn:
+        up / down (straight into the screen), left / right, cw / ccw on screen; about the Inspection Area's
+        geometric centre."""
         d = math.radians(self.nav_step if deg is None else deg)
-        if key == "up":
-            self.pitch = max(-math.radians(89.9), self.pitch - d)
-        elif key == "down":
-            self.pitch = min(math.radians(89.9), self.pitch + d)
-        elif key == "right":                       # the near side of the cloud moves right
-            self.yaw += d
-        elif key == "left":
-            self.yaw -= d
-        elif key == "cw":
-            self.roll += d
-        elif key == "ccw":
-            self.roll -= d
+        axis, sgn = self._TURNS[key]
+        self.turn(self._screen_rot(axis, sgn * d))
         self._changed()
 
     def _nav_repeat(self):
@@ -650,7 +696,7 @@ class CloudView3D(QtWidgets.QWidget):
         elif e.button() == Qt.MouseButton.MiddleButton or (e.button() == Qt.MouseButton.LeftButton and sh):
             self._drag = ("pan", pos, self.center.copy())
         elif e.button() == Qt.MouseButton.LeftButton:
-            self._drag = ("orbit", pos, self.yaw, self.pitch)
+            self._drag = ["orbit", pos]
 
     def mouseMoveEvent(self, e):
         pos = evpos(e)
@@ -668,9 +714,13 @@ class CloudView3D(QtWidgets.QWidget):
             return
         k = self._drag[0]
         if k == "orbit":
-            _, p0, y0, pt0 = self._drag
-            self.yaw = y0 + (pos.x() - p0.x()) * 0.008     # the cloud turns the way the mouse moves (as if held)
-            self.pitch = float(np.clip(pt0 + (pos.y() - p0.y()) * 0.008, -math.radians(89.9), math.radians(89.9)))
+            p0 = self._drag[1]                  # the cloud turns the way the mouse moves (as if held), like the
+            dx, dy = pos.x() - p0.x(), pos.y() - p0.y()      # arrows: screen axes, about the area's centre
+            self._drag[1] = pos
+            if dx:
+                self.turn(self._screen_rot(1, -dx * 0.008))
+            if dy:
+                self.turn(self._screen_rot(0, -dy * 0.008))
             self._changed()
         elif k == "pan":
             _, p0, c0 = self._drag
@@ -737,7 +787,7 @@ class CloudView3D(QtWidgets.QWidget):
         eye_dir, fwd, right, up = self._basis()
         f = np.array([fwd[0], fwd[1], 0])
         if np.linalg.norm(f) < 1e-6:
-            f = np.array([math.sin(self.yaw + math.pi), math.cos(self.yaw + math.pi), 0])
+            f = np.array([up[0], up[1], 0])           # looking straight down: forward is the screen's up
         f /= np.linalg.norm(f)
         r = np.array([right[0], right[1], 0])
         r /= max(np.linalg.norm(r), 1e-9)
