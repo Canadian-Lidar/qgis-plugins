@@ -307,9 +307,7 @@ class ClassList(QtWidgets.QWidget):
             it.setCheckState(Qt.CheckState.Checked if chosen is None or k in chosen else Qt.CheckState.Unchecked)
             it.setData(Qt.ItemDataRole.UserRole, k)
             self.list.addItem(it)
-        rows = min(max(self.list.count(), 2), 6)
-        rh = self.list.sizeHintForRow(0) if self.list.count() else self.list.fontMetrics().height() + 6
-        self.list.setFixedHeight(rows * rh + 2 * self.list.frameWidth() + 8)
+        self._fit()
         lay.addWidget(self.list, 1)
         col = QtWidgets.QVBoxLayout()
         for t, on in (("All", True), ("None", False)):
@@ -322,6 +320,18 @@ class ClassList(QtWidgets.QWidget):
         self.list.itemChanged.connect(lambda *_: self.changed.emit())
 
     changed = Signal()
+
+    def _fit(self):
+        """Height for up to 6 rows (at least 2), from the rows as drawn (styles change them after creation)."""
+        rows = min(max(self.list.count(), 2), 6)
+        rh = self.list.visualItemRect(self.list.item(0)).height() if self.list.count() else 0
+        if rh <= 0:
+            rh = self.list.fontMetrics().height() + 6
+        self.list.setFixedHeight(rows * rh + 2 * self.list.frameWidth() + 4)
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        self._fit()
 
     def set_all(self, on):
         for i in range(self.list.count()):
@@ -345,13 +355,25 @@ def _spacing_label(s):
 
 
 class ExportDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None, lines=(), start="", class_counts=None, classes_chosen=None):
+    FORMATS = [("laz", "LAZ 1.4 point cloud (compressed)", ".laz", "LAZ (*.laz)"),
+               ("las", "LAS 1.4 point cloud", ".las", "LAS (*.las)"),
+               ("xyz", "XYZ text (CSV)", ".csv", "CSV (*.csv *.txt)"),
+               ("grid", "Grid surface (GeoTIFF)", ".tif", "GeoTIFF (*.tif)")]
+
+    def __init__(self, parent=None, lines=(), start="", class_counts=None, classes_chosen=None, fmt=None):
         super().__init__(parent)
         self.setWindowTitle("CloudPro - export")
         self.resize(600, 540)
         f = QtWidgets.QFormLayout(self)
+        from ..core import laz
         self.kind = QtWidgets.QComboBox()
-        self.kind.addItems(["LAS 1.4 point cloud", "XYZ text (CSV)", "Grid surface (GeoTIFF)"])
+        for key, label, _e, _f in self.FORMATS:
+            self.kind.addItem(label, key)
+        if not laz.available():
+            self.kind.model().item(0).setEnabled(False)
+            self.kind.setItemData(0, laz.why(), Qt.ItemDataRole.ToolTipRole)
+            fmt = "las" if fmt in (None, "laz") else fmt
+        self.kind.setCurrentIndex(max(0, self.kind.findData(fmt or "laz")))
         self.kind.currentIndexChanged.connect(self._kind)
         self.path = QtWidgets.QLineEdit(start)
         b = QtWidgets.QToolButton()
@@ -389,7 +411,7 @@ class ExportDialog(QtWidgets.QDialog):
         for v in TILE_SIZES:
             self.tile.addItem("%d m tiles" % v, v)
         self.tile.setToolTip("Split the export into square tiles; each file is named by its tile's lower-left "
-                             "corner (e.g. Shirley_231400_5080900.las)")
+                             "corner (e.g. Shirley_231400_5080900.laz)")
         self.cell = QtWidgets.QComboBox()
         for v in GRID_CELLS:
             self.cell.addItem("%g m" % v, v)
@@ -426,8 +448,16 @@ class ExportDialog(QtWidgets.QDialog):
         self._kind()
         theme.polish_dialog(self)
 
+    def fmt(self):
+        """laz, las, xyz or grid."""
+        return self.kind.currentData()
+
+    def kind_index(self):
+        """0 point cloud (LAS or LAZ, by the file's extension), 1 XYZ, 2 grid."""
+        return {"laz": 0, "las": 0, "xyz": 1, "grid": 2}[self.fmt()]
+
     def _kind(self, *_):
-        k = self.kind.currentIndex()
+        k = self.kind_index()
         for w in (self.cell, self.stat, self.fill):
             w.setEnabled(k == 2)
         for w in (self.rejected, self.per_line):
@@ -435,13 +465,13 @@ class ExportDialog(QtWidgets.QDialog):
         for w in (self.thin, self.tile):
             w.setEnabled(k in (0, 1))
         self.thin_mode.setEnabled(k in (0, 1) and bool(self.thin.currentData()))
-        ext = [".las", ".csv", ".tif"][k]
+        ext = self.FORMATS[self.kind.currentIndex()][2]
         p = self.path.text()
         if p:
             self.path.setText(os.path.splitext(p)[0] + ext)
 
     def _pick(self):
-        flt = ["LAS (*.las)", "CSV (*.csv *.txt)", "GeoTIFF (*.tif)"][self.kind.currentIndex()]
+        flt = self.FORMATS[self.kind.currentIndex()][3]
         p, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export to", self.path.text(), flt)
         if p:
             self.path.setText(p)
@@ -627,8 +657,18 @@ class PublishDialog(QtWidgets.QDialog):
             w.setWordWrap(True)
             lay.addWidget(w)
         f = QtWidgets.QFormLayout()
-        self.las = QtWidgets.QCheckBox("LAS 1.4 point cloud (%s.las)" % project.name)
+        from ..core import laz
+        self.las = QtWidgets.QCheckBox("Point cloud (LAS 1.4)")
         self.las.setChecked(True)
+        self.las_fmt = QtWidgets.QComboBox()
+        self.las_fmt.addItem("LAZ, compressed (%s.laz)" % project.name, "laz")
+        self.las_fmt.addItem("LAS, uncompressed (%s.las)" % project.name, "las")
+        fmt = project.data.get("finalize_format") or "laz"
+        if not laz.available():
+            self.las_fmt.model().item(0).setEnabled(False)
+            self.las_fmt.setItemData(0, laz.why(), Qt.ItemDataRole.ToolTipRole)
+            fmt = "las"
+        self.las_fmt.setCurrentIndex(max(0, self.las_fmt.findData(fmt)))
         self.classes = ClassList(project.store.class_counts(), project.data.get("finalize_classes"))
         self.classes.changed.connect(self._can)
         self.rejected = QtWidgets.QCheckBox("Include rejected points (LAS withheld flag)")
@@ -637,6 +677,7 @@ class PublishDialog(QtWidgets.QDialog):
         self.add_qgis = QtWidgets.QCheckBox("Add the results to the QGIS map")
         self.add_qgis.setChecked(True)
         f.addRow("", self.las)
+        f.addRow(_k("File"), self.las_fmt)
         f.addRow(_k("Classes"), self.classes)
         f.addRow("", self.rejected)
         f.addRow("", self.dem_on)
@@ -660,6 +701,7 @@ class PublishDialog(QtWidgets.QDialog):
 
     def _can(self, *_):
         self.classes.setEnabled(self.las.isChecked())
+        self.las_fmt.setEnabled(self.las.isChecked())
         self.b_ok.setEnabled((self.las.isChecked() and self.classes.selected() != set()) or self.dem_on.isChecked())
 
     def _ok(self):

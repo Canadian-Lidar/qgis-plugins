@@ -4,7 +4,7 @@ import os
 
 import numpy as np
 
-from .las import LasWriter
+from .las import writer_for
 from .pointset import PointSet, rect_corners, to_box_frame
 from .store import REJECTED, parse_key
 
@@ -175,7 +175,7 @@ def export_las(project, path, box=None, lines=None, include_rejected=False, clas
                             p = tile_name(base, ext, tx, ty, tile, lid)
                         else:
                             p = path if not per_line else "%s_L%03d%s" % (base, lid + 1, ext)
-                        writers[key] = LasWriter(_tmp(p), (np.floor(o[0]), np.floor(o[1]), np.floor(o[2])), wkt=wkt)
+                        writers[key] = writer_for(p)(_tmp(p), (np.floor(o[0]), np.floor(o[1]), np.floor(o[2])), wkt=wkt)
                         pairs.append((_tmp(p), p))
                     writers[key].write(r["x"] * 1e-3 + o[0], r["y"] * 1e-3 + o[1], r["z"] * 1e-3 + o[2], r["t"],
                                        r["i"], r["ret"], r["cls"], r["ch"], r["line"], r["flag"])
@@ -187,7 +187,7 @@ def export_las(project, path, box=None, lines=None, include_rejected=False, clas
                 cancelled = True
                 break
         if not writers and not per_line and not tile:   # nothing selected: still an (empty) valid file
-            writers[0] = LasWriter(_tmp(path), (np.floor(o[0]), np.floor(o[1]), np.floor(o[2])), wkt=wkt)
+            writers[0] = writer_for(path)(_tmp(path), (np.floor(o[0]), np.floor(o[1]), np.floor(o[2])), wkt=wkt)
             pairs.append((_tmp(path), path))
     finally:
         for w in writers.values():

@@ -1437,6 +1437,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         from ..core import publish as PB
         las, cell = d.las.isChecked(), d.dem.value() if d.dem_on.isChecked() else 0.0
+        las_fmt = d.las_fmt.currentData()
+        if las:
+            p.data["finalize_format"] = las_fmt
         classes = d.classes.selected()
         p.data["finalize_classes"] = sorted(classes) if classes is not None else None
         inc = d.rejected.isChecked()
@@ -1446,7 +1449,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def job(progress, cancel):
             with p.dcs.run("cloudpro", PLUGIN, VERSION):
-                doc = PB.deliver(p, las=las, dem_cell=cell, include_rejected=inc, classes=classes,
+                doc = PB.deliver(p, las=las, dem_cell=cell, include_rejected=inc, classes=classes, las_format=las_fmt,
                                  progress=progress, cancel=cancel, version=VERSION)
             p.run_log("publish", ["cloud.json %s" % doc["id"], "calibration: %s" % doc["calibration"]] +
                       ["%s: %s" % (k, v) for k, v in doc["files"].items()] + doc.get("warnings", []))
@@ -2987,11 +2990,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.project is None or self._guard("exporting"):
             return
         d = ExportDialog(self, self.project.lines, os.path.join(self.project.root, self.project.name + ".las"),
-                         self.project.store.class_counts(), self.project.data.get("export_classes"))
+                         self.project.store.class_counts(), self.project.data.get("export_classes"),
+                         self.project.data.get("export_format"))
         if exec_(d) != QtWidgets.QDialog.DialogCode.Accepted:
             return
         from ..core import export as EX
-        path, kind = d.path.text().strip(), d.kind.currentIndex()
+        path, kind = d.path.text().strip(), d.kind_index()
+        self.project.data["export_format"] = d.fmt()
         box = self.box if d.scope.currentText() == "Inspection Area" else None
         lines, classes = d.selected_lines(), d.classes.selected()
         self.project.data["export_classes"] = sorted(classes) if classes is not None else None
@@ -3264,7 +3269,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 from . import qgis_layers
                 for k, f in doc["files"].items():
                     path = os.path.join(self.project.out_dir, f)
-                    kind = "las" if f.endswith(".las") else "grid" if f.endswith((".tif", ".asc")) else None
+                    kind = "las" if f.endswith((".las", ".laz")) else "grid" if f.endswith((".tif", ".asc")) else None
                     if kind:
                         qgis_layers.add_file(self.iface, path, kind)
             theme.msg_info(self, "CloudPro", "Finalized cloud.json for the job (%s).\n\n%s\n\nFolder: %s%s" % (

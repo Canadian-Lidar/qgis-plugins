@@ -36,6 +36,7 @@
 <div style="break-inside:avoid"><h2>What is new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>2.5.0</b></td><td><b>LAZ:</b> Finalize and Export write the point cloud as LAZ, the same points as LAS compressed without loss (about 5–10 times smaller). LAZ is the default; LAS stays one click away. Finalize keeps one point cloud in <code>out/</code>: writing LAZ removes an earlier <code>&lt;Name&gt;.las</code> and the other way round.</td></tr>
 <tr><td><b>2.4.1</b></td><td><b>Classes as a checklist</b> in Finalize and Export: every class in the job with its point count, ticked or not, with All and None; the choice is remembered per job. <b>Grids of any size:</b> the ground grid and exported grids are written block by block, so a 5 cm grid of a whole job no longer fails with <i>grid too large</i>.</td></tr>
 <tr><td><b>2.4.0</b></td><td><b>StripPro:</b> georeferences with StripPro's corrected trajectory when it is finalized. <b>Recording holes:</b> Line separation says when the trajectory has no data for part of the lines' time and gives no calibration or trajectory advice then; each problem area shows the longest hole in its times. <b>Span grid</b> with its own scale and the span of the cell under the cursor. Needs DCS Core 1.13.0.</td></tr>
 <tr><td><b>2.3.0</b></td><td><b>LINE SEPARATION tab</b> in the bottom-right panel, beside the filters, lines and history: the saved result is there as soon as the job opens. <b>Open in PosPro</b> and <b>Open in AlignPro</b> take a problem area or a calibration finding straight to the page that fixes it. The along-road offset has its uncertainty: <i>not measurable</i> when the walls facing along the road are too few or too scattered (<a href="#separation">Line separation</a>).</td></tr>
@@ -585,7 +586,7 @@
 <figure class="h50"><img src="fig/publish_dialog.png"><figcaption><b>Figure {N}.1</b> The Finalize dialog with the ground grid ticked. Out-of-date reasons and <i>no calibration</i> would be listed in amber above the options.</figcaption></figure>
 <table>
 <tr><th>Option</th><th>Effect</th></tr>
-<tr><td><span class="ui">LAS 1.4 point cloud (&lt;Name&gt;.las)</span></td><td>The whole cloud, all lines.</td></tr>
+<tr><td><span class="ui">Point cloud (LAS 1.4)</span>, <span class="ui">File</span></td><td>The whole cloud, all lines, as <i>LAZ, compressed</i> (<code>&lt;Name&gt;.laz</code>, the default) or <i>LAS, uncompressed</i> (<code>&lt;Name&gt;.las</code>). Both hold exactly the same points; LAZ is about 5–10 times smaller and takes longer to write. Deliver one of them, not both: LAZ unless the client asks for LAS. The choice is remembered for the job, and the other file left in <code>out/</code> by an earlier Finalize is removed.</td></tr>
 <tr><td><span class="ui">Classes</span></td><td>Every class in the job with its point count (and rejected count, if any). Tick the classes to write; <span class="ui">All</span> and <span class="ui">None</span> tick or untick them all. All ticked writes every class. The choice is remembered for the job.</td></tr>
 <tr><td><span class="ui">Include rejected points (LAS withheld flag)</span></td><td>Off: rejected points are left out. On: they are written with the withheld flag.</td></tr>
 <tr><td><span class="ui">Ground grid (mean of class 2, GeoTIFF)</span>, <span class="ui">Grid cell</span></td><td>A grid of the mean height of the accepted ground points (gaps of up to 2 cells filled), at the chosen cell (0.5 m). Any cell size works on any job: the grid is written block by block, and areas without ground take no space in the file.</td></tr>
@@ -595,7 +596,7 @@
 <figure class="h40"><img src="fig/publish_done.png"><figcaption><b>Figure {N}.2</b> The result: the calibration state, the files and the folder.</figcaption></figure>
 <table>
 <tr><th>File in <code>out/</code></th><th>Content</th></tr>
-<tr><td><code>&lt;Name&gt;.las</code></td><td>LAS 1.4, point data record format 6, with the CRS as WKT. User data holds the laser channel (0–31, the laser id minus one), point source id the line number, GPS time in adjusted standard time; the scan angle is 0.</td></tr>
+<tr><td><code>&lt;Name&gt;.laz</code> or <code>&lt;Name&gt;.las</code></td><td>LAS 1.4, point data record format 6 (compressed in the <code>.laz</code>), with the CRS as WKT. User data holds the laser channel (0–31, the laser id minus one), point source id the line number, GPS time in adjusted standard time; the scan angle is 0.</td></tr>
 <tr><td><code>&lt;Name&gt;_ground.tif</code></td><td>The ground grid (an ESRI ASCII <code>.asc</code> grid when GDAL is not available).</td></tr>
 <tr><td><code>cloud_report.txt</code></td><td>Readable report: inputs (trajectory, calibration, mounting, lever arm, latency, CRS, heights), lines, point and class counts, filters applied with their settings, outputs, warnings.</td></tr>
 <tr><td><code>cloud.json</code></td><td>Written last, through DCS Core: the calibration state, the trajectory and alignment results the points were really georeferenced with, the georeferencing values, CRS (frame, epoch, heights, geoid), lines and files, point and class counts (accepted, rejected manual and automatic), every filter run with its settings, the outputs and the warnings.</td></tr>
@@ -606,7 +607,7 @@
 <figure class="h56"><img src="fig/export_dialog.png"><figcaption><b>Figure {N}.3</b> The Export dialog.</figcaption></figure>
 <table>
 <tr><th>Setting</th><th>Choices</th></tr>
-<tr><td><span class="ui">Format</span></td><td><i>LAS 1.4 point cloud</i> (as finalized), <i>XYZ text (CSV)</i> with the columns E, N, Z, I (intensity), C (class), L (line), T (UTC time), or <i>Grid surface (GeoTIFF)</i>.</td></tr>
+<tr><td><span class="ui">Format</span></td><td><i>LAZ 1.4 point cloud (compressed)</i> or <i>LAS 1.4 point cloud</i> (as finalized; everything below that says LAS applies to both), <i>XYZ text (CSV)</i> with the columns E, N, Z, I (intensity), C (class), L (line), T (UTC time), or <i>Grid surface (GeoTIFF)</i>.</td></tr>
 <tr><td><span class="ui">File</span></td><td>Defaults to <code>03_CloudPro/&lt;Name&gt;.las</code>; the extension follows the format.</td></tr>
 <tr><td><span class="ui">Area</span></td><td><i>Entire project</i> or <i>Inspection Area</i>.</td></tr>
 <tr><td><span class="ui">Lines</span>, <span class="ui">Classes</span></td><td>Ticked lines and ticked classes (each class with its point count, <span class="ui">All</span> / <span class="ui">None</span>; remembered for the job). With no class ticked there is nothing to export.</td></tr>

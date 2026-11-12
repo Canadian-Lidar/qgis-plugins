@@ -64,7 +64,7 @@ def main(argv=None):
     f.add_argument("--lines", default="", help="1-based line list, e.g. 1,3-4")
     e = sub.add_parser("export")
     e.add_argument("project")
-    e.add_argument("--las")
+    e.add_argument("--las", help="point cloud file: .las, or .laz for compressed")
     e.add_argument("--xyz")
     e.add_argument("--grid")
     e.add_argument("--cell", type=float, default=0.5)
@@ -90,6 +90,7 @@ def main(argv=None):
     pb = sub.add_parser("publish")
     pb.add_argument("project")
     pb.add_argument("--dem", type=float, default=0.0, help="ground grid cell (m), 0 = none")
+    pb.add_argument("--laz", action="store_true", help="point cloud compressed as <Name>.laz (else <Name>.las)")
     pb.add_argument("--classes", default="")
     pb.add_argument("--include-rejected", action="store_true")
     a = ap.parse_args(argv)
@@ -243,7 +244,7 @@ def _dcs_cmd(a, prj):
         elif a.cmd == "publish":
             for w in chain.georef_state(prj):
                 print("! " + w)
-            doc = publish.deliver(prj, las=True, dem_cell=a.dem, include_rejected=a.include_rejected,
+            doc = publish.deliver(prj, las=True, las_format="laz" if a.laz else "las", dem_cell=a.dem, include_rejected=a.include_rejected,
                                   classes=parse_set(a.classes) or None, progress=_progress, version=V)
             prj.run_log("publish", ["cloud.json %s (%s)" % (doc["id"], doc["calibration"])] + doc.get("warnings", []))
             print("\rpublished cloud.json %s (%s): %s" % (doc["id"][:19], doc["calibration"],
