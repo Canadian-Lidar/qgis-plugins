@@ -257,6 +257,36 @@ class Store:
             self._mm[key] = mm
             return mm
 
+    def class_counts(self):
+        """Points per ASPRS class over the whole job, accepted and rejected separately ((256,) int64 arrays).
+        Cached per tile on its size and modification time, so a second call after no edits reads little."""
+        self.sync()
+        cache = self.__dict__.setdefault("_cls_cache", {})
+        acc = np.zeros(256, np.int64)
+        rej = np.zeros(256, np.int64)
+        for k in self.keys():
+            p = self.tile_path(k)
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue
+            sig = (st.st_size, st.st_mtime_ns)
+            hit = cache.get(k)
+            mm = self._mm.get(k)
+            if hit is None or hit[0] != sig or (mm is not None and mm.mode == "r+"):   # mapped edits may not
+                # change the modification time (Windows): a tile open for writing is always counted again
+                a = self.tile_array(k)
+                if len(a) == 0:
+                    hit = (sig, np.zeros(256, np.int64), np.zeros(256, np.int64))
+                else:
+                    r = (a["flag"] & REJECTED) != 0
+                    c = np.asarray(a["cls"])
+                    hit = (sig, np.bincount(c[~r], minlength=256), np.bincount(c[r], minlength=256))
+                cache[k] = hit
+            acc += hit[1]
+            rej += hit[2]
+        return acc, rej
+
     def tiles_in_bbox(self, x0, y0, x1, y1):
         """Tile keys (with data) intersecting a bbox in local metres."""
         t = self.tile

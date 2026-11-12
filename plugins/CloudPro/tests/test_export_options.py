@@ -101,3 +101,59 @@ assert not d.thin.isEnabled() and not d.tile.isEnabled() and d.cell.isEnabled()
 print("dialog: spacing (with density), thin mode, tiles and grid cell are dropdowns: OK")
 p.store.close()
 print("test_export_options: OK")
+
+# grids written block by block (any size) equal the grid made in one piece, gap filling across block edges included
+from osgeo import gdal                                            # noqa: E402
+for stat, fill in (("mean", 2), ("max", 0), ("count", 1)):
+    G, gx, gy = EX.grid_surface(p, 0.5, stat, None, None, None, fill)
+    keep = EX.GRID_BLOCK, EX.GRID_IN_MEMORY
+    EX.GRID_BLOCK, EX.GRID_IN_MEMORY = 97, 0
+    try:
+        path, nv = EX.export_grid(p, os.path.join(out, "g_%s.tif" % stat), 0.5, stat, None, None, None, fill)
+    finally:
+        EX.GRID_BLOCK, EX.GRID_IN_MEMORY = keep
+    ds = gdal.Open(path)
+    R = ds.GetRasterBand(1).ReadAsArray().astype(float)
+    R[R == -9999.0] = np.nan
+    assert R.shape == G.shape and ds.GetGeoTransform()[0] == gx and abs(ds.GetGeoTransform()[3] - gy) < 1e-9
+    assert np.isfinite(G).sum() > 1000
+    assert np.array_equal(np.isnan(R), np.isnan(G)) and np.nanmax(np.abs(R - G.astype(np.float32))) < 1e-3, stat
+    assert nv == int(np.isfinite(G).sum())
+    ds = None
+print("grids streamed in blocks = grids in one piece (mean + fill, max, count): OK")
+
+# a 5 cm grid over the whole job (failed with "grid too large" before 2.5.0)
+path, nv = EX.export_grid(p, os.path.join(out, "ground5.tif"), 0.05, "mean", None, None, None, 2)
+ds = gdal.Open(path)
+print("5 cm grid of the whole job: %d x %d cells, %s with a value, %.1f MB: OK" % (
+    ds.RasterXSize, ds.RasterYSize, "{:,}".format(nv), os.path.getsize(path) / 1e6))
+assert nv > 0
+ds = None
+
+# classes are a checklist with point counts; all ticked = all classes, none ticked = Export disabled
+acc0, _r = p.store.class_counts()
+k0 = p.store.keys()[0]
+n0 = len(p.store.tile_array(k0))
+p.store.write_fields(k0, np.arange(n0 // 2), cls=np.full(n0 // 2, 2, np.uint8))
+p.store.sync()
+acc, rej = p.store.class_counts()
+assert acc[2] == acc0[2] + n0 // 2, (acc[2], acc0[2], n0)          # the per tile cache sees the edit
+assert acc.sum() + rej.sum() == p.store.total
+d = ExportDialog(None, p.lines, os.path.join(out, "x.las"), (acc, rej), None)
+present = [k for k in range(256) if acc[k] or rej[k]]
+assert d.classes.list.count() == len(present) and d.classes.selected() is None
+d.classes.set_checked({present[0]})
+assert d.classes.selected() == {present[0]} and d.b_ok.isEnabled()
+d.classes.set_all(False)
+assert d.classes.selected() == set() and not d.b_ok.isEnabled()
+d = ExportDialog(None, p.lines, os.path.join(out, "x.las"), (acc, rej), [present[0]])
+assert d.classes.selected() == ({present[0]} if len(present) > 1 else None)
+from CloudPro.ui.dialogs import PublishDialog                     # noqa: E402
+p.data["finalize_classes"] = [present[0]]
+d = PublishDialog(None, p, [])
+assert d.classes.selected() == ({present[0]} if len(present) > 1 else None)
+d.classes.set_all(False)
+assert not d.b_ok.isEnabled()
+d.dem_on.setChecked(True)
+assert d.b_ok.isEnabled()
+print("classes: checklists with point counts, remembered, Export / Finalize need something to write: OK")

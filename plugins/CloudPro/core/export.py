@@ -9,9 +9,11 @@ from .pointset import PointSet, rect_corners, to_box_frame
 from .store import REJECTED, parse_key
 
 
-def _iter_tiles(project, box=None, lines=None, include_rejected=False, classes=None):
+def _iter_tiles(project, box=None, lines=None, include_rejected=False, classes=None, keys=None):
     store = project.store
-    if box is not None:
+    if keys is not None:
+        pass
+    elif box is not None:
         cor = rect_corners(box["cx"], box["cy"], box["length"], box["width"], box["bearing"])
         keys = store.tiles_in_bbox(cor[:, 0].min(), cor[:, 1].min(), cor[:, 0].max(), cor[:, 1].max())
     else:
@@ -240,63 +242,159 @@ def export_xyz(project, path, box=None, lines=None, include_rejected=False, clas
     return total
 
 
-def grid_surface(project, cell=0.5, stat="mean", box=None, lines=None, classes=None, fill=0, progress=None):
-    """Grid accepted points -> (array (ny, nx) with NaN, x0, y1 world of the top-left corner)."""
+GRID_BLOCK = 2048          # cells per side of one block of a streamed grid (about 130 MB of working arrays)
+GRID_IN_MEMORY = 25_000_000   # grids up to this many cells are made in one piece
+
+
+def _grid_extent(project, box):
+    if box is None:
+        return project.store.extent()
+    cor = rect_corners(box["cx"], box["cy"], box["length"], box["width"], box["bearing"])
+    return cor[:, 0].min(), cor[:, 1].min(), cor[:, 0].max(), cor[:, 1].max()
+
+
+def _grid_block(project, x0, y0, cell, gx0, gy0, gnx, gny, stat, box, lines, classes, fill):
+    """One block of the grid: cells gx0..gx0+gnx-1 (east), gy0..gy0+gny-1 (north) of the grid whose
+    south-west corner is (x0, y0) local. -> (gny, gnx) array, south row first, NaN where empty; None when
+    no point falls in it."""
     store = project.store
-    o = store.origin
-    ext = store.extent() if box is None else None
-    if box is not None:
-        cor = rect_corners(box["cx"], box["cy"], box["length"], box["width"], box["bearing"])
-        ext = (cor[:, 0].min(), cor[:, 1].min(), cor[:, 0].max(), cor[:, 1].max())
-    x0, y0, x1, y1 = ext
-    nx = int(np.ceil((x1 - x0) / cell))
-    ny = int(np.ceil((y1 - y0) / cell))
-    if nx * ny > 400_000_000:
-        raise ValueError("grid too large (%d x %d cells): use a larger cell or an area" % (nx, ny))
-    S = np.zeros(nx * ny)
-    C = np.zeros(nx * ny)
-    MX = np.full(nx * ny, -np.inf)
-    MN = np.full(nx * ny, np.inf)
-    for n, N, a in _iter_tiles(project, box, lines, False, classes):
-        x = a["x"] * 1e-3
-        y = a["y"] * 1e-3
-        z = a["z"] * 1e-3
-        ix = np.floor((x - x0) / cell).astype(np.int64)
-        iy = np.floor((y - y0) / cell).astype(np.int64)
-        ok = (ix >= 0) & (iy >= 0) & (ix < nx) & (iy < ny)
-        c = iy[ok] * nx + ix[ok]
-        if stat == "count":
-            np.add.at(C, c, 1)
-        elif stat == "intensity":
-            np.add.at(S, c, a["i"][ok].astype(float))
-            np.add.at(C, c, 1)
-        else:
-            np.add.at(S, c, z[ok])
-            np.add.at(C, c, 1)
-            np.maximum.at(MX, c, z[ok])
-            np.minimum.at(MN, c, z[ok])
-        if progress:
-            progress((n + 1) / N, None)
+    bx0, by0 = x0 + gx0 * cell, y0 + gy0 * cell
+    bx1, by1 = bx0 + gnx * cell, by0 + gny * cell
+    keys = store.tiles_in_bbox(bx0, by0, bx1, by1)
+    if not keys:
+        return None
+    N = gnx * gny
+    S = np.zeros(N)
+    C = np.zeros(N)
+    MX = MN = None
+    if stat == "max":
+        MX = np.full(N, -np.inf)
+    if stat == "min":
+        MN = np.full(N, np.inf)
+    hit = False
+    for _n, _N, a in _iter_tiles(project, box, lines, False, classes, keys=keys):
+        ix = np.floor((a["x"] * 1e-3 - bx0) / cell).astype(np.int64)
+        iy = np.floor((a["y"] * 1e-3 - by0) / cell).astype(np.int64)
+        ok = (ix >= 0) & (iy >= 0) & (ix < gnx) & (iy < gny)
+        if not ok.any():
+            continue
+        hit = True
+        c = iy[ok] * gnx + ix[ok]
+        C += np.bincount(c, minlength=N)
+        if stat == "intensity":
+            S += np.bincount(c, a["i"][ok].astype(float), minlength=N)
+        elif stat in ("mean", "max", "min"):
+            z = a["z"][ok] * 1e-3
+            if stat == "mean":
+                S += np.bincount(c, z, minlength=N)
+            elif stat == "max":
+                np.maximum.at(MX, c, z)
+            else:
+                np.minimum.at(MN, c, z)
+    if not hit:
+        return None
+    oz = project.store.origin[2]
     with np.errstate(invalid="ignore", divide="ignore"):
         if stat == "count":
             G = np.where(C > 0, C, np.nan)
         elif stat == "max":
-            G = np.where(C > 0, MX, np.nan) + o[2]
+            G = np.where(C > 0, MX, np.nan) + oz
         elif stat == "min":
-            G = np.where(C > 0, MN, np.nan) + o[2]
+            G = np.where(C > 0, MN, np.nan) + oz
         elif stat == "intensity":
             G = S / C
         else:
-            G = S / C + o[2]
-    G = G.reshape(ny, nx)[::-1]                 # north up
+            G = S / C + oz
+    G = G.reshape(gny, gnx)
     if fill > 0:
         from scipy import ndimage
         m = np.isnan(G)
-        idx = ndimage.distance_transform_edt(m, return_distances=True, return_indices=True)
-        dist, ind = idx
-        near = m & (dist <= fill)
-        G[near] = G[tuple(i[near] for i in ind)]
-    return G, x0 + o[0], y0 + ny * cell + o[1]
+        if m.any() and not m.all():
+            dist, ind = ndimage.distance_transform_edt(m, return_distances=True, return_indices=True)
+            near = m & (dist <= fill)
+            G[near] = G[tuple(i[near] for i in ind)]
+    return G
+
+
+def grid_surface(project, cell=0.5, stat="mean", box=None, lines=None, classes=None, fill=0, progress=None):
+    """Grid accepted points in one piece -> (array (ny, nx) with NaN, x0, y1 world of the top-left corner).
+    For a grid of any size written to a file use export_grid."""
+    o = project.store.origin
+    x0, y0, x1, y1 = _grid_extent(project, box)
+    nx = max(1, int(np.ceil((x1 - x0) / cell)))
+    ny = max(1, int(np.ceil((y1 - y0) / cell)))
+    if nx * ny > 400_000_000:
+        raise ValueError("grid too large (%d x %d cells): use a larger cell or an area" % (nx, ny))
+    G = _grid_block(project, x0, y0, cell, 0, 0, nx, ny, stat, box, lines, classes, fill)
+    if G is None:
+        G = np.full((ny, nx), np.nan)
+    if progress:
+        progress(1.0, None)
+    return G[::-1], x0 + o[0], y0 + ny * cell + o[1]
+
+
+def export_grid(project, path, cell=0.5, stat="mean", box=None, lines=None, classes=None, fill=0,
+                progress=None, cancel=None):
+    """Grid of accepted points written to a GeoTIFF, block by block, so its size is limited by the disk and
+    not by memory (BigTIFF when needed; empty blocks take no space). Without GDAL, or for a small grid, it is
+    made in one piece. Written under a temporary name and renamed. -> (path written, cells with a value)."""
+    o = project.store.origin
+    x0, y0, x1, y1 = _grid_extent(project, box)
+    nx = max(1, int(np.ceil((x1 - x0) / cell)))
+    ny = max(1, int(np.ceil((y1 - y0) / cell)))
+    try:
+        from osgeo import gdal
+    except ImportError:
+        gdal = None
+    if gdal is None or nx * ny <= GRID_IN_MEMORY:
+        G, gx, gy = grid_surface(project, cell, stat, box, lines, classes, fill, progress)
+        if cancel and cancel():
+            raise Cancelled("cancelled: nothing was written")
+        return write_grid(path, G, gx, gy, cell, project.crs), int(np.isfinite(G).sum())
+    tmp = _tmp(path)
+    drv = gdal.GetDriverByName("GTiff")
+    ds = drv.Create(tmp, nx, ny, 1, gdal.GDT_Float32, ["COMPRESS=DEFLATE", "TILED=YES", "BLOCKXSIZE=256",
+                                                         "BLOCKYSIZE=256", "BIGTIFF=IF_SAFER", "SPARSE_OK=TRUE"])
+    if ds is None:
+        raise ValueError("cannot create %s" % path)
+    ds.SetGeoTransform((x0 + o[0], cell, 0, y0 + ny * cell + o[1], 0, -cell))
+    wkt = crs_wkt(crs=project.crs)
+    if wkt:
+        ds.SetProjection(wkt)
+    band = ds.GetRasterBand(1)
+    band.SetNoDataValue(-9999.0)
+    B = GRID_BLOCK
+    m = int(np.ceil(fill)) if fill > 0 else 0
+    blocks = [(bx, by) for by in range(0, ny, B) for bx in range(0, nx, B)]
+    valid = 0
+    try:
+        for n, (bx, by) in enumerate(blocks):
+            if cancel and cancel():
+                raise Cancelled("cancelled: nothing was written")
+            ex, ey = min(nx, bx + B), min(ny, by + B)
+            gx0, gy0 = max(0, bx - m), max(0, by - m)          # a margin so gap filling sees across the edge
+            gx1, gy1 = min(nx, ex + m), min(ny, ey + m)
+            G = _grid_block(project, x0, y0, cell, gx0, gy0, gx1 - gx0, gy1 - gy0, stat, box, lines, classes,
+                            fill)
+            if G is not None:
+                G = G[by - gy0:by - gy0 + (ey - by), bx - gx0:bx - gx0 + (ex - bx)]
+                if np.isfinite(G).any():
+                    valid += int(np.isfinite(G).sum())
+                    band.WriteArray(np.where(np.isnan(G), -9999.0, G)[::-1].astype(np.float32), bx, ny - ey)
+            if progress:
+                progress((n + 1) / len(blocks), None)
+        band.FlushCache()
+        ds.FlushCache()
+        band = ds = None
+    except BaseException:
+        band = ds = None
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    os.replace(tmp, path)
+    return path, valid
 
 
 def write_grid(path, G, x0, ytop, cell, crs):

@@ -187,8 +187,7 @@ def main(argv=None):
                               spacing=a.spacing, thin_mode="2D" if a.thin_2d else "3D", tile=a.tile)
             print("\rXYZ: %s points -> %s" % ("{:,}".format(k), a.xyz))
         if a.grid:
-            G, x0, yt = EX.grid_surface(prj, a.cell, a.stat, None, lines, classes, 0, _progress)
-            p = EX.write_grid(a.grid, G, x0, yt, a.cell, prj.crs)
+            p, _n = EX.export_grid(prj, a.grid, a.cell, a.stat, None, lines, classes, 0, _progress)
             print("\rgrid -> %s" % p)
         return 0
 

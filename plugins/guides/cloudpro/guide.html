@@ -36,6 +36,7 @@
 <div style="break-inside:avoid"><h2>What is new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>2.4.1</b></td><td><b>Classes as a checklist</b> in Finalize and Export: every class in the job with its point count, ticked or not, with All and None; the choice is remembered per job. <b>Grids of any size:</b> the ground grid and exported grids are written block by block, so a 5 cm grid of a whole job no longer fails with <i>grid too large</i>.</td></tr>
 <tr><td><b>2.4.0</b></td><td><b>StripPro:</b> georeferences with StripPro's corrected trajectory when it is finalized. <b>Recording holes:</b> Line separation says when the trajectory has no data for part of the lines' time and gives no calibration or trajectory advice then; each problem area shows the longest hole in its times. <b>Span grid</b> with its own scale and the span of the cell under the cursor. Needs DCS Core 1.13.0.</td></tr>
 <tr><td><b>2.3.0</b></td><td><b>LINE SEPARATION tab</b> in the bottom-right panel, beside the filters, lines and history: the saved result is there as soon as the job opens. <b>Open in PosPro</b> and <b>Open in AlignPro</b> take a problem area or a calibration finding straight to the page that fixes it. The along-road offset has its uncertainty: <i>not measurable</i> when the walls facing along the road are too few or too scattered (<a href="#separation">Line separation</a>).</td></tr>
 <tr><td><b>2.2.2</b></td><td>Steady offsets: along the road and sideways from walls only, the along-road offset checked part by part (<a href="#steady">Steady offsets</a>). On Shirley 2.2.1 reported 8.4 cm per pass along the road; most of it was a height difference read on the slope.</td></tr>
@@ -585,12 +586,12 @@
 <table>
 <tr><th>Option</th><th>Effect</th></tr>
 <tr><td><span class="ui">LAS 1.4 point cloud (&lt;Name&gt;.las)</span></td><td>The whole cloud, all lines.</td></tr>
-<tr><td><span class="ui">Classes</span></td><td>Empty for all classes, or a list (e.g. <code>2,6</code>).</td></tr>
+<tr><td><span class="ui">Classes</span></td><td>Every class in the job with its point count (and rejected count, if any). Tick the classes to write; <span class="ui">All</span> and <span class="ui">None</span> tick or untick them all. All ticked writes every class. The choice is remembered for the job.</td></tr>
 <tr><td><span class="ui">Include rejected points (LAS withheld flag)</span></td><td>Off: rejected points are left out. On: they are written with the withheld flag.</td></tr>
-<tr><td><span class="ui">Ground grid (mean of class 2, GeoTIFF)</span>, <span class="ui">Grid cell</span></td><td>A grid of the mean height of the accepted ground points (gaps of up to 2 cells filled), at the chosen cell (0.5 m).</td></tr>
+<tr><td><span class="ui">Ground grid (mean of class 2, GeoTIFF)</span>, <span class="ui">Grid cell</span></td><td>A grid of the mean height of the accepted ground points (gaps of up to 2 cells filled), at the chosen cell (0.5 m). Any cell size works on any job: the grid is written block by block, and areas without ground take no space in the file.</td></tr>
 <tr><td><span class="ui">Add the results to the QGIS map</span></td><td>Adds the LAS and the grid to the CloudPro group of the QGIS project.</td></tr>
 </table>
-<p>At least one of the LAS and the ground grid must be ticked. Finalizing runs in the background and is all or nothing: the files are written under temporary names and renamed at the end.</p>
+<p><span class="ui">Finalize</span> needs something to write: the LAS with at least one class ticked, or the ground grid. Finalizing runs in the background and is all or nothing: the files are written under temporary names and renamed at the end.</p>
 <figure class="h40"><img src="fig/publish_done.png"><figcaption><b>Figure {N}.2</b> The result: the calibration state, the files and the folder.</figcaption></figure>
 <table>
 <tr><th>File in <code>out/</code></th><th>Content</th></tr>
@@ -608,7 +609,7 @@
 <tr><td><span class="ui">Format</span></td><td><i>LAS 1.4 point cloud</i> (as finalized), <i>XYZ text (CSV)</i> with the columns E, N, Z, I (intensity), C (class), L (line), T (UTC time), or <i>Grid surface (GeoTIFF)</i>.</td></tr>
 <tr><td><span class="ui">File</span></td><td>Defaults to <code>03_CloudPro/&lt;Name&gt;.las</code>; the extension follows the format.</td></tr>
 <tr><td><span class="ui">Area</span></td><td><i>Entire project</i> or <i>Inspection Area</i>.</td></tr>
-<tr><td><span class="ui">Lines</span>, <span class="ui">Classes</span></td><td>Ticked lines; empty for all classes, or a list.</td></tr>
+<tr><td><span class="ui">Lines</span>, <span class="ui">Classes</span></td><td>Ticked lines and ticked classes (each class with its point count, <span class="ui">All</span> / <span class="ui">None</span>; remembered for the job). With no class ticked there is nothing to export.</td></tr>
 <tr><td><span class="ui">Include rejected points</span>, <span class="ui">One file per line</span></td><td>LAS only. One file per line adds <code>_L001</code>, <code>_L002</code>… to the name.</td></tr>
 <tr><td><span class="ui">Thin to</span>, <span class="ui">Thin in</span></td><td>LAS and XYZ. Choose a grid spacing from the list (0.02 to 5 m; the point density it gives is shown beside it, e.g. <i>0.1 m (100 pts/m²)</i>), or <i>All points</i>. One real point is kept per cell, the one nearest the cell centre, so coordinates (3 decimals) and attributes are untouched. <i>3D cells</i> keeps walls, poles and trees; <i>2D plan cells</i> keeps one point per plan cell, for ground models. Cells line up with the project grid, so tiles and lines thin consistently.</td></tr>
 <tr><td><span class="ui">Tiles</span></td><td>LAS and XYZ. <i>One file</i>, or 50 to 1000 m tiles: each file is named by its tile's lower-left corner in whole metres, e.g. <code>Shirley_231400_5080900.las</code> (with one file per line: <code>Shirley_L001_231400_5080900.las</code>). Tiles without points make no file. Above 400 tiles CloudPro asks first; at most the first 50 are added to the QGIS map.</td></tr>

@@ -181,9 +181,10 @@ def deliver(project, las=True, per_line=False, dem_cell=0.0, include_rejected=Fa
             outputs["las"] = {"format": "LAS 1.4 PDRF 6", "points": n, "classes": sorted(classes) if classes else
                               "all", "rejected": "withheld" if include_rejected else "excluded"}
         if dem_cell and dem_cell > 0:
-            G, x0, yt = EX.grid_surface(project, dem_cell, "mean", None, None, {2}, 2,
-                                        (lambda f, m: progress(0.7 + 0.25 * f, "ground grid")) if progress else None)
-            p = EX.write_grid(os.path.join(od, ".tmp_%s_ground.tif" % base), G, x0, yt, dem_cell, project.crs)
+            p, _n = EX.export_grid(project, os.path.join(od, ".tmp_%s_ground.tif" % base), dem_cell, "mean", None,
+                                   None, {2}, 2,
+                                   (lambda f, m: progress(0.7 + 0.25 * f, "ground grid")) if progress else None,
+                                   cancel)
             ext = os.path.splitext(p)[1]
             tmp_paths["ground_grid"] = (p, os.path.join(od, "%s_ground%s" % (base, ext)))
             outputs["ground_grid"] = {"format": "GeoTIFF" if ext == ".tif" else "ESRI ASCII grid",
