@@ -1313,12 +1313,13 @@ class AlignProDock(PluginWindow):
                      for d, h in data["heads"].items()}
             res = marine.solve(data, latency=lat, progress=lambda f: prog(0.1 + 0.9 * f, "solving"),
                                cancelled=canc, log=p.log)
-            return res, names
+            return res, names, {str(d): h.get("side") for d, h in data["heads"].items()}
 
         def done(out):
-            res, names = out
+            res, names, looks = out
             m["result"] = res
             m["names"] = names
+            m["looks"] = looks
             m.pop("applied", None)
             p.save()
             self.marine_page.refresh()
@@ -1336,13 +1337,11 @@ class AlignProDock(PluginWindow):
         def fn(prog, canc):
             from dcs_core import handover
             doc = handover.read(p.dcs, "pospro")
-            heads = {int(d): {"nickname": (m.get("names") or {}).get(d), "side": None}
+            heads = {int(d): {"nickname": (m.get("names") or {}).get(d), "side": (m.get("looks") or {}).get(d)}
                      for d in m["result"]["heads"]}
             for k, s in (doc.get("sensors") or {}).items():
                 if k.startswith("sonar_") and int(k.split("_")[1]) in heads:
-                    lv = s.get("lever_m") or [0.0, 0.0, 0.0]
-                    heads[int(k.split("_")[1])].update(nickname=s.get("nickname"), side="starboard" if lv[1] > 0
-                                                       else "port" if lv[1] < 0 else "centre")
+                    heads[int(k.split("_")[1])]["nickname"] = s.get("nickname")
             return marine.publish(p.dcs, m["result"], {"heads": heads, "doc": doc}, applied=vals)
         self._run("Finalize", self._stage_run(fn, "publish"),
                   lambda _: (self.marine_page.refresh(), self.toast("Sonar corrections finalized for CloudPro")),

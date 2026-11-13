@@ -41,7 +41,7 @@ def is_marine(dcs):
 
 
 def load(dcs, every=2, power="medium", rmax=RMAX):
-    """{"traj": LocalTrajectory, "heads": {did: {"S": soundings, "lever", "nickname", "side"}}, "doc": the
+    """{"traj": LocalTrajectory, "heads": {did: {"S": soundings, "lever", "nickname", "side" (looks to)}}, "doc": the
     trajectory handover} from PosPro's finalized marine trajectory and the job's sonar recordings."""
     from dcs_core import clraw, handover, marine, sbet
     doc = handover.read(dcs, "pospro", required=False)
@@ -66,7 +66,8 @@ def load(dcs, every=2, power="medium", rmax=RMAX):
             if s is None:
                 continue
             e = heads.setdefault(did, {"parts": [], "lever": h.get("lever_m") or [0.0, 0.0, 0.0],
-                                       "nickname": h.get("nickname"), "side": h.get("side"), "recordings": []})
+                                       "nickname": h.get("nickname"), "side": h.get("looks") or h.get("side"),
+                                       "recordings": []})
             e["parts"].append(s)
             e["recordings"].append(rec.name)
     for did, e in heads.items():

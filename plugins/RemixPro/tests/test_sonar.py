@@ -160,7 +160,7 @@ class TestSonarClraw(unittest.TestCase):
         make_llh(os.path.join(cls.tmp, "rec", "reach.LLH"), T0 - 600, T0 + 600)
         make_rinex(os.path.join(cls.tmp, "rec", "reach.26O"), T0, T0 + 6)
         with open(os.path.join(cls.tmp, "rec", "sonar_offsets.json"), "w") as f:
-            json.dump({"1": [-0.40, -0.31, 0.65], "starboard": [-0.40, 0.31, 0.65]}, f)
+            json.dump({"1": [-0.40, 0.31, 0.65], "port": [-0.40, -0.31, 0.65]}, f)
 
     @classmethod
     def tearDownClass(cls):
@@ -186,9 +186,9 @@ class TestSonarClraw(unittest.TestCase):
         self.assertEqual(clraw.sonar_topics(cf), {1: "/sonar/1/ping", 2: "/sonar/2/ping"})
         hw = cf.attachment_json("hardware.json")
         s = {x["device_id"]: x for x in hw["sonars"]}
-        self.assertEqual(s[1]["acoustic_centre_m"], [-0.40, -0.31, 0.65])           # by device id
-        self.assertEqual(s[2]["acoustic_centre_m"], [-0.40, 0.31, 0.65])            # by side (SonarView Y < 0: starboard)
-        self.assertEqual((s[1]["side"], s[2]["side"]), ("port", "starboard"))
+        self.assertEqual(s[1]["acoustic_centre_m"], [-0.40, 0.31, 0.65])            # by device id
+        self.assertEqual(s[2]["acoustic_centre_m"], [-0.40, -0.31, 0.65])           # by side (SonarView Y < 0: port, FRD)
+        self.assertEqual((s[1]["side"], s[2]["side"]), ("starboard", "port"))
         self.assertEqual(s[2]["mount_deg_sonarview"]["yaw"], -90)
         self.assertEqual(s[1]["packet_ids"]["505"], 600)
         self.assertEqual(hw["reference_point"][:12], "GNSS antenna")
@@ -233,8 +233,9 @@ class TestSonarClraw(unittest.TestCase):
         files = [os.path.join(r[sources.CLRAW]["folder"], f) for f in r[sources.CLRAW]["files"]]
         rec = DM.SonarRecording(files)
         self.assertEqual(sorted(rec.heads), [1, 2])
-        self.assertEqual(rec.heads[1]["lever_m"], [-0.40, -0.31, 0.65])
-        self.assertEqual(rec.heads[1]["side"], "port")
+        self.assertEqual(rec.heads[1]["lever_m"], [-0.40, 0.31, 0.65])
+        self.assertEqual(rec.heads[1]["mount_side"], "starboard")
+        self.assertIn(rec.heads[1]["looks"], ("port", "starboard", "down"))
         t0, t1 = rec.span()
         self.assertGreater(t1 - t0, 4.0)
         pings = rec.pings(1)
@@ -273,7 +274,7 @@ class TestSonarClraw(unittest.TestCase):
         cf = clraw.ClrawFile(os.path.join(r[sources.CLRAW]["folder"], r[sources.CLRAW]["files"][0]))
         hw = cf.attachment_json("hardware.json")
         self.assertEqual(hw["tidalcal"]["sonar_latency_s"], 0.12)
-        self.assertEqual(hw["sonars"][0]["acoustic_centre_m"], [-0.122, -0.056, 0.564])     # SonarView Y is to port
+        self.assertEqual(hw["sonars"][0]["acoustic_centre_m"], [-0.122, 0.056, 0.564])      # SonarView Mount Offset is FRD
         self.assertTrue(hw["sonars"][0]["acoustic_centre_source"].startswith("SonarView"))     # SonarView first
         self.assertEqual(cf.attachments and len([t for t in topics_of([os.path.join(r[sources.CLRAW]["folder"], f)
                                                                        for f in r[sources.CLRAW]["files"]])["/gnss/llh"]]) > 0, True)
@@ -341,8 +342,8 @@ class TestSonarClraw(unittest.TestCase):
                                ("rover", "obs", "Reach_raw_20261007144006.26O")])
         self.assertIn("autopilot", sources.position_summary(it))
         offs = sources.offsets_summary(it)
-        self.assertEqual([(v, src) for _l, v, src in offs], [([-0.122, -0.056, 0.564], "SonarView"),
-                                                             ([-0.122, 0.056, 0.564], "SonarView")])
+        self.assertEqual([(v, src) for _l, v, src in offs], [([-0.122, 0.056, 0.564], "SonarView"),
+                                                             ([-0.122, -0.056, 0.564], "SonarView")])
         self.assertFalse(any("No sonar offsets" in n for n in it.notes))
         self.assertAlmostEqual(it.start, T0, delta=1.0)           # the recording's own UTC, not the file's date
         r = make.run(it, [sources.CLRAW], os.path.join(self.tmp, "out_lum"))[sources.CLRAW]

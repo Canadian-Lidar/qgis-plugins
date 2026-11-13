@@ -117,9 +117,11 @@ def _mm(a, b):
 # Hesai sensor axes (x right, y = azimuth 0, z = rotation axis up) in the
 # vehicle frame (Forward, Starboard, Down) when NavAQ's angles are all zero:
 # rotation axis forward, connector (opposite azimuth 0) down.
-NAVAQ_HESAI_ZERO = ((0, 0, 1),     # Forward   <- z
-                    (-1, 0, 0),    # Starboard <- -x
-                    (0, -1, 0))    # Down      <- -y
+# The zero comes from dcs_core.frames (adapter hesai_navaq/1); the arithmetic here stays the mapper's own, so
+# the files are byte for byte the mapper's (tests/test_same_as_mapper.py; tests/test_frames.py checks the match).
+from dcs_core import frames as _frames                                         # noqa: E402
+
+NAVAQ_HESAI_ZERO = tuple(tuple(int(v) for v in row) for row in _frames.HESAI_ZERO)
 
 
 def lidar_matrix_from_navaq(roll, pitch, heading):

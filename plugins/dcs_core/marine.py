@@ -13,8 +13,8 @@ Times are UTC seconds (float). MAVLink time_boot_ms is mapped to UTC with a stra
 log times the recording gave the messages (the sonar's NTP clock); the residual is reported.
 
 Geometry (verified on the Lumston recording, 13 Nov 2026; see dcs/marine-clraw.md): a sounding is a ray in the
-plane perpendicular to the sonar's x axis (forward): ray = range * (0, SIDE * sin(angle), -cos(angle)) in the
-frame of the attitude up vector, range = time of flight * sound speed / 2. `level_vectors` turns rays into
+plane perpendicular to the sonar's x axis (forward): ray = frames.cerulean_beam (device frame x forward, y port,
+z up; adapter cerulean_device/1) in the frame of the attitude up vector, range = time of flight * sound speed / 2. `level_vectors` turns rays into
 forward / left / up components in a level frame (no heading yet) from each ping's up vector.
 """
 import json
@@ -23,12 +23,11 @@ import re
 
 import numpy as np
 
-from . import clraw, ping
+from . import clraw, frames, ping
 
-# which side a positive beam angle looks to, in the attitude frame (see level_vectors); settled from reciprocal
-# lines (dcs/marine-clraw.md)
-SIDE = -1.0
-OLD_SV_SOURCE = "SonarView Mount Offset (X forward, Y starboard, Z down)"
+# which way a positive beam angle points along the device's y axis (adapter cerulean_device/1 in dcs_core.frames)
+SIDE = frames.CERULEAN_STARBOARD_Y
+SV_PREFIX = "SonarView Mount Offset"
 
 _IMU = np.dtype([("t", "<f8"), ("acc", "<f4", 3), ("gyro", "<f4", 3)])
 _ATT = np.dtype([("t", "<f8"), ("up", "<f4", 3), ("roll", "<f4"), ("pitch", "<f4")])
@@ -59,24 +58,54 @@ class SonarRecording:
         self.topics = clraw.sonar_topics(self.files[0])
         self.time_basis = self.metadata.get("time_basis", "")
         self._veh = None
+        self._heads = None
+        self._looks = {}
 
     # ---------------------------------------------------------------- what it holds
     @property
     def heads(self):
+        """{device id: {topic, nickname, lever_m [F, S, D] canonical, lever_source, mount_side (where the head is
+        mounted, from lever_m), looks (the side its fan looks to, from its beam angles), mount (SonarView's
+        recorded angles), product}}."""
+        if self._heads is not None:
+            return self._heads
         out = {}
         hw = {s.get("device_id"): s for s in self.hardware.get("sonars") or []}
         for did, topic in self.topics.items():
             s = hw.get(did, {})
-            lever, src, side = s.get("acoustic_centre_m"), s.get("acoustic_centre_source") or "", s.get("side")
-            if lever and src.startswith(OLD_SV_SOURCE):
-                # RemixPro 1.2.0 read SonarView's Y as starboard; it is port (13 Nov 2026)
-                lever = [lever[0], -lever[1], lever[2]]
-                src = "SonarView Mount Offset (X forward, Y port, Z down), as recorded (side corrected)"
+            lever, src = s.get("acoustic_centre_m"), s.get("acoustic_centre_source") or ""
+            if src.startswith(SV_PREFIX) and s.get("mount_m_sonarview"):
+                # always from SonarView's raw values with the current adapter (RemixPro 1.2.1 stored Y negated)
+                lever = frames.sonarview_mount_to_frd(s["mount_m_sonarview"]) or lever
+                src = frames.SONARVIEW_MOUNT_TEXT
+            side = None
+            if lever:
                 side = "starboard" if lever[1] > 0 else "port" if lever[1] < 0 else "centre"
             out[did] = {"topic": topic, "nickname": s.get("nickname") or str(did), "lever_m": lever,
-                        "lever_source": src, "mount": s.get("mount_deg_sonarview"), "side": side,
-                        "product": s.get("product_id")}
+                        "lever_source": src, "lever_adapter": "%s/%d" % frames.SONARVIEW_MOUNT
+                        if src == frames.SONARVIEW_MOUNT_TEXT else None,
+                        "mount_side": side, "side": side, "looks": self.looks(did),
+                        "mount": s.get("mount_deg_sonarview"), "product": s.get("product_id")}
+        self._heads = out
         return out
+
+    def looks(self, head, pings=40):
+        """The side the head's fan looks to ("port" / "starboard" / "down") from its first pings' beam angles."""
+        if head in self._looks:
+            return self._looks[head]
+        ang = []
+        n = 0
+        for _mid, _lt, pl in self._packets(head, (ping.OS3D_POINT_SET,)):
+            try:
+                d = ping.os3d_point_set(pl)
+            except (ping.PingError, _struct.error):
+                continue
+            ang.extend(p[0] for p in d["points"])
+            n += 1
+            if n >= pings:
+                break
+        self._looks[head] = frames.cerulean_looks(ang)
+        return self._looks[head]
 
     def span(self):
         a = [f.span() for f in self.files]
@@ -268,8 +297,7 @@ def rays(angle, tof, sos, sos_new=None, roll_bias_deg=0.0):
         s = np.clip(np.sin(angle) * sos_new / sos, -1, 1)
         angle = np.arcsin(s)
         r = r * sos_new / sos
-    a = angle + math.radians(roll_bias_deg) * SIDE
-    return np.stack([np.zeros_like(a), SIDE * np.sin(a), -np.cos(a)], 1) * r[:, None]
+    return frames.cerulean_beam(angle + math.radians(roll_bias_deg) * SIDE, r)
 
 
 def level_vectors(v, up, pitch_bias_deg=0.0):

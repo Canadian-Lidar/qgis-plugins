@@ -415,7 +415,8 @@ def process(project, ctx, atx=None):
         np.save(os.path.join(wdir, "sonar_%d_attitude.npy" % did), A)
         h["n"] = len(A)
     summary["heads"] = {str(d): {"nickname": h["info"].get("nickname"), "lever_m": h["info"].get("lever_m"),
-                                 "lever_source": h["info"].get("lever_source"), "attitudes": h["n"],
+                                 "lever_source": h["info"].get("lever_source"), "looks": h["info"].get("looks"),
+                                 "attitudes": h["n"],
                                  "check": h["checks"][0] if h["checks"] else {}} for d, h in heads.items()}
     summary["position_source"] = sorted({r["source"] for r in summary["recordings"]})
     summary["fixed_pct"] = round(100.0 * float((T["q"] == 1).mean()), 1)
@@ -492,7 +493,8 @@ def publish(project, ctx):
                                                "frame), roll, pitch (deg)",
                                      "source": "the sonar's own fused attitude (packet 504) at every ping",
                                      "nickname": h.get("nickname"), "lever_m": h.get("lever_m"),
-                                     "lever_source": h.get("lever_source"), "check": h.get("check")}
+                                     "lever_source": h.get("lever_source"), "looks": h.get("looks"),
+                                     "check": h.get("check")}
     recs = summ["recordings"]
     base = next((r["info"].get("base") for r in recs if r["source"] == "ppk"), None)
     frame = {"name": (base or {}).get("frame") or ("NAD83(CSRS)" if base else "as the GNSS receiver gave it"),

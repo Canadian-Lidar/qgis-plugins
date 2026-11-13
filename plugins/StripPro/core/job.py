@@ -17,9 +17,11 @@ from dcs_core import hesai
 from dcs_core import sbet as dsbet
 
 from . import strip as ST
+from dcs_core import frames as _frames
+
 from .frames import LocalFrame, rodrigues, zyx_from_rot
 
-Z0 = np.array([[0.0, 0.0, 1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]])
+Z0 = _frames.HESAI_ZERO               # the hesai_navaq adapter's zero (dcs_core.frames)
 KEEP_PACKET = 1               # every Lidar packet ...
 KEEP_RETURN = 0.025           # ... and 2.5 % of its strongest returns (Shirley: about 11 million points)
 RANGE = (1.0, 40.0)
@@ -30,13 +32,8 @@ SCHEMA_NOTE = "StripPro corrected trajectory"
 
 
 def lidar_matrix(roll, pitch, heading):
-    """Mapper mounting angles (deg, navaq_hesai) -> sensor-to-vehicle rotation (as CloudPro georef)."""
-    r, p, h = np.radians([roll, pitch, heading])
-    cr, sr, cp, sp, ch, sh = math.cos(r), math.sin(r), math.cos(p), math.sin(p), math.cos(h), math.sin(h)
-    Rz = np.array([[ch, -sh, 0], [sh, ch, 0], [0, 0, 1]])
-    Ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
-    Rxm = np.array([[1, 0, 0], [0, cr, sr], [0, -sr, cr]])          # Rx(-roll)
-    return Rz @ Ry @ Rxm @ Z0
+    """Mapper mounting angles (deg, hesai_navaq) -> sensor-to-vehicle rotation (dcs_core.frames)."""
+    return _frames.hesai_mount_matrix(roll, pitch, heading)
 
 
 # ----------------------------------------------------------------------------------------------- trajectory

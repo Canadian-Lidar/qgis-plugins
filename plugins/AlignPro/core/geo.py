@@ -15,7 +15,9 @@ A_WGS = 6378137.0
 F_WGS = 1 / 298.257223563
 E2 = F_WGS * (2 - F_WGS)
 
-Z0 = np.array([[0.0, 0.0, 1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]])
+from dcs_core import frames as _frames
+
+Z0 = _frames.HESAI_ZERO               # the hesai_navaq adapter's zero (dcs_core.frames)
 
 
 def rx(a):
@@ -35,8 +37,7 @@ def rz(a):
 
 def lidar_matrix(roll, pitch, heading):
     """Mounting angles (deg, navaq_hesai convention) -> 3x3 sensor-to-vehicle matrix."""
-    r, p, h = (math.radians(v) for v in (roll, pitch, heading))
-    return rz(h) @ ry(p) @ rx(-r) @ Z0
+    return _frames.hesai_mount_matrix(roll, pitch, heading)
 
 
 def navaq_from_lidar_matrix(m, near=None):

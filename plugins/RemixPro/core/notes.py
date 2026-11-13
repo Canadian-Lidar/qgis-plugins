@@ -27,8 +27,8 @@ QINERTIA_NOTE = "README_QINERTIA.txt"
 
 def lever_ie(lever_vehicle):
     """Vehicle frame (X fwd, Y right, Z down) -> Inertial Explorer frame (X right, Y forward, Z up)."""
-    x, y, z = lever_vehicle
-    return [y, x, -z]
+    from dcs_core import frames
+    return frames.frd_to_inertial_explorer(lever_vehicle)
 
 
 def _fmt3(v):

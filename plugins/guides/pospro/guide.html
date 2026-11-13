@@ -614,7 +614,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <figure><img src="fig/marine.png" style="max-height:110mm"><figcaption><b>Figure {N}.1</b> The Marine page after Process &amp; finalize on the Lumston survey: PPK against the base in the recording, 100 % fixed; each head's own attitude at every ping.</figcaption></figure>
 <h2>What the page shows</h2>
 <ul>
-<li><b>Recordings</b>, their start and length, and the <b>sonar heads</b> with their offsets from the GNSS antenna (forward, starboard, down) and where those came from (SonarView's Mount Offset, a <code>sonar_offsets.json</code>, the TidalCal project).</li>
+<li><b>Recordings</b>, their start and length, and the <b>sonar heads</b> with the side each looks to and their offsets from the GNSS antenna (forward, starboard, down) and where those came from (SonarView's Mount Offset, a <code>sonar_offsets.json</code>, the TidalCal project).</li>
 <li><b>Position in the recordings</b>: rover and base RINEX (PPK possible), the Reach real-time log (.LLH), the autopilot.</li>
 </ul>
 <h2>Settings</h2>
@@ -626,7 +626,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 </table>
 <h2>Process &amp; finalize</h2>
 <p>PosPro computes the boat's trajectory at the GNSS antenna (PPK in both directions, combined), its heading, and each head's attitude: the sonar's own fused attitude at every ping (packet 504), checked against its raw motion sensor (packet 505); the page shows how closely they agree. The trajectory and the attitudes are finalized for AlignPro and CloudPro. Then <span class="ui">Continue in AlignPro ›</span> for the sonar patch test.</p>
-<div class="note"><b>.clraw from RemixPro 1.2.0</b> RemixPro 1.2.0 read SonarView's Mount Offset Y as starboard; it is port. DCS Core 1.14.0 corrects those files when it reads them, so they need not be made again.</div>
+<div class="note"><b>Offsets and sides</b> SonarView's Mount Offset is read as Cerulean documents it: X forward, Y starboard, Z down, from the position source to the transducer. Each head also shows which side its fan <i>looks</i> to, from its own beam angles; a head can be mounted on one side and look to the other (on the Lumston boat, 30053 is mounted 5.6 cm to starboard and looks to port). Files made by RemixPro 1.2.1, which read Y the other way, are corrected when DCS Core 1.15.0 reads them.</div>
 
 <h1><span class="num">{N}</span>Troubleshooting</h1>
 <h2>Messages</h2>
@@ -718,6 +718,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <h1 id="history"><span class="num">{N}</span>Version history</h1>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>2.4.1</b></td><td>Marine page: each sonar head shows which side it looks to; SonarView's offsets are read as Cerulean documents them (X forward, Y starboard, Z down). Needs DCS Core 1.15.0.</td></tr>
 <tr><td><b>2.4.0</b></td><td><b>Marine jobs:</b> a job of sonar recordings (made by RemixPro) opens on a single Marine page: the boat's position by PPK, the Reach log or the autopilot, the heading from the course over ground, each sonar head's own attitude, and Process &amp; finalize for AlignPro and CloudPro (<a href="#marine">Marine jobs</a>). Needs DCS Core 1.14.0.</td></tr>
 <tr><td><b>2.3.0</b></td><td><b>Recording holes:</b> the finalized trajectory records where it has no data, and Trajectory Review says so at the top. Needs DCS Core 1.13.0.</td></tr>
 <tr><td><b>2.2.1</b></td><td><b>Opened from CloudPro:</b> <span class="ui">Open in PosPro</span> in CloudPro's LINE SEPARATION tab brings up Trajectory Review with the point cloud rows shown and the chosen problem area selected. Needs DCS Core 1.12.0.</td></tr>

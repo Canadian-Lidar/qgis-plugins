@@ -158,8 +158,9 @@ class MarinePage(QWidget):
                 ", ".join("%s: %s" % (r.get("recording"), r.get("source")) for r in mq.get("position", [])) or
                 "finalized", "" if st == "done" else " (out of date: process it again in PosPro)"))
             heads = (doc.get("sensors") or {})
-            self.v_heads.setText("\n".join("%s (id %s), offsets %s m F/S/D" % (
-                s.get("nickname"), k.split("_")[-1], ", ".join("%+.3f" % v for v in s.get("lever_m") or []) or "not entered")
+            self.v_heads.setText("\n".join("%s (id %s)%s, offsets %s m F/S/D" % (
+                s.get("nickname"), k.split("_")[-1], ", looks %s" % s["looks"] if s.get("looks") else "",
+                ", ".join("%+.3f" % v for v in s.get("lever_m") or []) or "not entered")
                 for k, s in sorted(heads.items()) if k.startswith("sonar_")) or "none")
         else:
             self.v_traj.setText("Not finalized: process the boat's trajectory in PosPro (Marine) first.")
