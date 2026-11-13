@@ -110,10 +110,10 @@ def main():
           w.out.text() == os.path.join(p.folder, "RemixPro"), w.out.text())
     check("DCS project: the job's four recordings", w.tree.topLevelItemCount() == 4, w.tree.topLevelItemCount())
     check("DCS project name in the header", "DECK_TEST" in w.header.project_btn.text(), w.header.project_btn.text())
-    # docked narrow
+    # 1.1.0: always a normal window, never docked (asking for a dock keeps it a window)
     w.dock_at("right")
     harness.settle()
-    check("docks on request", w.window_mode() == "right", w.window_mode())
+    check("never docks", w.window_mode() == "float", w.window_mode())
     w.float_window()
     harness.settle()
     plugin.unload()

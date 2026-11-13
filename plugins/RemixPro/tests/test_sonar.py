@@ -171,7 +171,8 @@ class TestSonarClraw(unittest.TestCase):
         self.assertEqual([(i.kind, i.name, i.outputs) for i in items],
                          [(sources.SONAR, "2026-09-21_survey", [sources.CLRAW])])
         it = items[0]
-        self.assertEqual([os.path.basename(p) for p in it.rinex + it.llh], ["reach.26O", "reach.LLH"])
+        self.assertEqual(sorted((g.role, g.name, g.type) for g in it.gnss),
+                         [("rover", "reach.26O", "obs"), ("rover", "reach.LLH", "llh")])
         out = os.path.join(self.tmp, "out")
         with open(self.src, "rb") as f:
             before = hashlib.sha256(f.read()).hexdigest()
@@ -210,7 +211,7 @@ class TestSonarClraw(unittest.TestCase):
         # GNSS side files: LLH lines within the recording +- 60 s; RINEX cut to +- 10 min
         llh = tops["/gnss/llh"]
         self.assertTrue(T0 - 61 <= llh[0][0] / 1e9 and llh[-1][0] / 1e9 <= T0 + 67)
-        rin = cf.attachments["gnss/reach.26O"].decode()
+        rin = cf.attachments["gnss/rover/reach.26O"].decode()
         self.assertTrue(10 <= rin.count("\n>") <= 25, rin.count("\n>"))
         self.assertIn("2026-09-21_survey.svlz", [x["file"] for x in json.loads(cf.attachments["sources.json"])])
         ev = [json.loads(b)["event"] for _l, _t, b in tops["/capture/events"]]
@@ -240,15 +241,100 @@ class TestSonarClraw(unittest.TestCase):
         items = sources.scan([p])
         self.assertEqual(len(items), 1)
         it = items[0]
-        self.assertEqual((it.project, it.offsets_source), ("Harbour", "TidalCal vessel table"))
+        self.assertEqual((it.project, it.fallback_source), ("Harbour", "TidalCal vessel table"))
         self.assertEqual([os.path.basename(x) for x in it.llh], ["reach.LLH"])
         r = make.run(it, [sources.CLRAW], os.path.join(self.tmp, "out_tc"))
         cf = clraw.ClrawFile(os.path.join(r[sources.CLRAW]["folder"], r[sources.CLRAW]["files"][0]))
         hw = cf.attachment_json("hardware.json")
         self.assertEqual(hw["tidalcal"]["sonar_latency_s"], 0.12)
         self.assertEqual(hw["sonars"][0]["acoustic_centre_m"], [-0.122, 0.056, 0.564])
+        self.assertTrue(hw["sonars"][0]["acoustic_centre_source"].startswith("SonarView"))     # SonarView first
+        self.assertEqual(cf.attachments and len([t for t in topics_of([os.path.join(r[sources.CLRAW]["folder"], f)
+                                                                       for f in r[sources.CLRAW]["files"]])["/gnss/llh"]]) > 0, True)
         self.assertIn("tidalcal/project_settings.json", cf.attachments)
         self.assertEqual(cf.metadata["project"], "Harbour")
+
+    def test_reach_zips_split_parts_offsets(self):
+        """1.2.0 (Lumston, 13 Nov 2026): the Reach files sit in Rover/ and Base/ beside the sonar folder and inside
+        Emlid's zips, whose member names hold a line break; a split recording's files are one recording; SonarView's
+        Mount Offset is used when no sonar_offsets.json; the base's own .LLH never becomes the boat's position."""
+        import zipfile
+        from RemixPro.core import gnssfiles
+        root = os.path.join(self.tmp, "Lumston")
+        son = os.path.join(root, "RAW", "Sonar")
+        os.makedirs(son)
+        # one SonarView recording split into two files (SonarView numbers the second -1)
+        a, b = os.path.join(son, "2026-10-07-16-04.svlz"), os.path.join(son, "2026-10-07-16-04-1.svlz")
+        make_svlz(a, seconds=3.0)
+        with gzip.open(a) as f:
+            raw = f.read()
+        k = raw.find(b"BR", len(raw) // 2)
+        while True:                                 # cut at a packet boundary
+            ln = struct.unpack_from("<H", raw, k + 2)[0]
+            if ping.checksum(raw[k:k + 8 + ln]) == struct.unpack_from("<H", raw, k + 8 + ln)[0]:
+                break
+            k = raw.find(b"BR", k + 1)
+        with gzip.open(a, "wb") as f:
+            f.write(raw[:k])
+        with gzip.open(b, "wb") as f:
+            f.write(raw[k:])
+        lone = os.path.join(son, "2026-10-07-17-19-1.svlz")      # a second part whose first part is missing
+        make_svlz(lone, seconds=1.0)
+        # Reach rover (unzipped, as Emlid downloads it) and base (zip, names with a line break)
+        rov = os.path.join(root, "RAW", "Rover", "Reach_Rover_20261007144006")
+        os.makedirs(rov)
+        make_llh(os.path.join(rov, "Reach_solution_20261007144006.LLH"), T0 - 300 + 18, T0 + 300 + 18)
+        rdir = os.path.join(rov, "Reach_raw_20261007144006_RINEX_3_03")          # as Emlid unzips it
+        os.makedirs(rdir)
+        make_rinex(os.path.join(rdir, "Reach_raw_20261007144006.26O"), T0, T0 + 3)
+        with zipfile.ZipFile(rov + ".zip", "w") as z:                            # and its zip beside it
+            z.write(os.path.join(rdir, "Reach_raw_20261007144006.26O"),
+                    "Reach\n_raw_20261007144006_RINEX_3_03/Reach\n_raw_20261007144006.26O")
+        os.makedirs(os.path.join(root, "RAW", "Base"))
+        bz = os.path.join(root, "RAW", "Base", "Reach_Base_20261007123356.zip")
+        make_rinex(os.path.join(self.tmp, "base.26O"), T0, T0 + 3)
+        make_llh(os.path.join(self.tmp, "base.LLH"), T0 - 300, T0 + 300)
+        with zipfile.ZipFile(bz, "w") as z:
+            z.write(os.path.join(self.tmp, "base.26O"), "Reach\n_raw_20261007123356_RINEX_3_00/Reach\n_raw_20261007123356.26O")
+            z.write(os.path.join(self.tmp, "base.LLH"), "Reach\n_solution_20261007123356.LLH")
+            z.writestr("Reach\n_base_20261007123356.RTCM3", b"\xd3\x00")
+        items = {i.name: i for i in sources.scan([son])}
+        self.assertEqual(sorted(items), ["2026-10-07-16-04", "2026-10-07-17-19"])
+        it = items["2026-10-07-16-04"]
+        self.assertEqual([os.path.basename(p) for p in it.parts], ["2026-10-07-16-04.svlz", "2026-10-07-16-04-1.svlz"])
+        self.assertEqual(items["2026-10-07-17-19"].missing_parts, ["2026-10-07-17-19.svlz"])
+        self.assertTrue(any("not here" in n for n in items["2026-10-07-17-19"].notes))
+        got = sorted((g.role, g.type, g.name) for g in it.gnss)
+        self.assertEqual(got, [("base", "llh", "Reach_solution_20261007123356.LLH"),
+                               ("base", "obs", "Reach_raw_20261007123356.26O"),
+                               ("rover", "llh", "Reach_solution_20261007144006.LLH"),
+                               ("rover", "obs", "Reach_raw_20261007144006.26O")])
+        self.assertIn("autopilot", sources.position_summary(it))
+        offs = sources.offsets_summary(it)
+        self.assertEqual([(v, src) for _l, v, src in offs], [([-0.122, 0.056, 0.564], "SonarView"),
+                                                             ([-0.122, -0.056, 0.564], "SonarView")])
+        self.assertFalse(any("No sonar offsets" in n for n in it.notes))
+        self.assertAlmostEqual(it.start, T0, delta=1.0)           # the recording's own UTC, not the file's date
+        r = make.run(it, [sources.CLRAW], os.path.join(self.tmp, "out_lum"))[sources.CLRAW]
+        files = [os.path.join(r["folder"], f) for f in r["files"]]
+        cf = clraw.ClrawFile(files[0])
+        self.assertEqual(sorted(k for k in cf.attachments if k.startswith("gnss/")),
+                         ["gnss/base/base_Reach_raw_20261007123356.26O", "gnss/rover/Reach_raw_20261007144006.26O"])
+        tops = topics_of(files)
+        llh = tops["/gnss/llh"]
+        self.assertTrue(llh and all(b.split()[2] == b"45.963600000" for _l, _t, b in llh))
+        # GPS-time lines taken back to UTC: written 18 s ahead, they start at T0 - 60 (the recording - 60 s)
+        self.assertAlmostEqual(llh[0][0] / 1e9, T0 - 60, delta=0.25)
+        # both parts, every packet once, in order
+        n_in = sum(1 for p in it.parts for _ in ping.Reader(p))
+        n_out = sum(len(v) for k, v in tops.items() if k.startswith(("/sonar/", "/vehicle", "/sonarview/session")))
+        self.assertEqual(n_out, n_in)
+        hw = cf.attachment_json("hardware.json")
+        self.assertEqual([s_["acoustic_centre_source"][:9] for s_ in hw["sonars"]], ["SonarView", "SonarView"])
+        self.assertEqual(cf.metadata["source_file"], "2026-10-07-16-04.svlz,2026-10-07-16-04-1.svlz")
+        self.assertIn("Position: ", " ".join(r["info"]))
+        self.assertTrue(any("autopilot positions" in x for x in r["info"]))
+        self.assertEqual(gnssfiles.clean_name("Reach\n_raw_1.26O"), "Reach_raw_1.26O")
 
     def test_cancel_leaves_nothing(self):
         it = sources.scan([self.src])[0]
