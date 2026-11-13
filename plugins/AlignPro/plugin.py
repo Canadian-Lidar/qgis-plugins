@@ -12,7 +12,7 @@ except ImportError:          # QGIS 3 / Qt5
     from qgis.PyQt.QtWidgets import QAction
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CORE_API = 12
+CORE_API = 15
 
 
 def _core():

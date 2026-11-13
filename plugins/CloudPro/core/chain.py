@@ -25,6 +25,10 @@ class Inputs:
         self.align_info = {"calibration": "no calibration"}
         self.source_crs = None
         self.files = []
+        self.sonar_files = []            # marine sonar recordings (.clraw kind "sonar")
+        self.marine = False              # a marine job: sonar recordings only
+        self.heads_cal = {}              # {device id: {"roll", "pitch", "heading", "latency_s"}} from AlignPro
+        self.traj_doc = None             # the trajectory handover (marine: each head's attitude file)
         self.warnings = []
 
     def summary(self):
@@ -32,6 +36,15 @@ class Inputs:
         a = self.align_info
         s = ["Trajectory: %s%s" % (t.get("description") or t.get("source") or "none",
                                    ("  (%s)" % t["handover_id"][7:19]) if t.get("handover_id") else "")]
+        if self.marine:
+            if self.heads_cal:
+                s.append("Sonar heads: AlignPro corrections %s  (%s)" % ("; ".join(
+                    "head %s roll %+.3f pitch %+.3f heading %+.3f deg, latency %.1f ms" % (
+                        k, v.get("roll", 0), v.get("pitch", 0), v.get("heading", 0), 1000 * v.get("latency_s", 0))
+                    for k, v in sorted(self.heads_cal.items())), (a.get("handover_id") or "")[7:19]))
+            else:
+                s.append("Sonar heads: as SonarView recorded them - no AlignPro calibration")
+            return s
         if a.get("calibration") == "applied":
             s.append("Mounting: AlignPro calibration %.4f / %.4f / %.4f deg, lever %s m, latency %.1f ms  (%s)" % (
                 self.mount[0], self.mount[1], self.mount[2], "/".join("%.3f" % v for v in self.lever),
@@ -81,6 +94,11 @@ def resolve(dcs, use_alignpro=True, override=None):
     except Exception:          # noqa: BLE001
         pass
     inp.files = clraw_files(dcs)
+    try:
+        inp.sonar_files = dcs.sonar_clraw_files()
+    except Exception:          # noqa: BLE001
+        inp.sonar_files = []
+    inp.marine = bool(inp.sonar_files) and not inp.files
     # trajectory: StripPro's when it is finalized and current (2.4.0: PosPro's, corrected from the point cloud)
     doc, src = None, "pospro"
     if traj_stage(dcs) == "strippro":
@@ -105,6 +123,7 @@ def resolve(dcs, use_alignpro=True, override=None):
         leap = float(tm.get("leap_seconds", 18))
         ws = GPS_EPOCH_UNIX + week * 604800.0 if week else None
         inp.traj = read_sbet(doc["paths"]["sbet"], week_start=ws, leap=leap, smrmsg=doc["paths"].get("smrmsg"))
+        inp.traj_doc = doc
         fr = doc.get("frame") or {}
         inp.source_crs = frame_to_crs(fr.get("name"))
         st, why = dcs.state(src)
@@ -130,6 +149,24 @@ def resolve(dcs, use_alignpro=True, override=None):
             al = handover.read(dcs, "alignpro", required=False)
         except handover.HandoverError as e:
             inp.warnings.append(str(e))
+    if al is not None and al.get("platform") == "marine":
+        # a marine calibration: corrections per sonar head (roll, pitch, heading, latency)
+        inp.heads_cal = {str(k): v for k, v in (al.get("heads") or {}).items()}
+        st, why = dcs.state("alignpro")
+        inp.align_info = {"calibration": "applied", "source": "alignpro", "handover_id": al.get("id"),
+                          "heads": inp.heads_cal, "state": st,
+                          "solved_on": (al.get("trajectory") or {}).get("handover_id")}
+        if st == "stale":
+            inp.warnings.append("AlignPro results are out of date: " + "; ".join(why))
+        al = None
+        inp.override = dict(override)
+        return inp
+    if inp.marine:
+        inp.heads_cal = {}
+        inp.align_info = {"calibration": "no calibration", "source": "SonarView mounts as recorded",
+                          "handover_id": None}
+        inp.override = dict(override)
+        return inp
     if al is not None:
         conv = (al.get("convention") or {}).get("name", CONVENTION)
         if conv != CONVENTION:

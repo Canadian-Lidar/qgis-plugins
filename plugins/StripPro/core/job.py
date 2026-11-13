@@ -69,12 +69,19 @@ class Trajectory:
         return np.interp(tq, self.t, v)
 
 
+class MarineJob(Exception):
+    pass
+
+
 class Inputs:
     """What one run uses: the DCS project, PosPro's trajectory, AlignPro's calibration, the survey lines."""
 
     def __init__(self, dcs):
         self.dcs = dcs
         self.traj_doc = handover.read(dcs, "pospro")
+        if self.traj_doc.get("platform") == "marine":
+            raise MarineJob("This is a marine job (sonar recordings). StripPro corrects the trajectory from Lidar "
+                            "lines; a marine job goes from AlignPro's sonar patch test straight to CloudPro.")
         # AlignPro's calibration when it has finalized one; a finalized one that cannot be read is an error,
         # never a quiet fall-back to the recorded mounting
         self.align_doc = handover.read(dcs, "alignpro", required=False)

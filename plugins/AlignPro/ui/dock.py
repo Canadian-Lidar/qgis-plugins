@@ -130,6 +130,13 @@ class AlignProDock(PluginWindow):
             self.stack.addWidget(_scroll(pg))
         self.pg_welcome = WelcomePage(self)
         self.stack.addWidget(_scroll(self.pg_welcome))
+        # marine jobs (sonar recordings from the survey boat): one page instead of the Lidar workflow
+        from .marinepage import MarinePage
+        self._marine = False
+        self._side = side
+        self.marine_page = MarinePage(self)
+        self._marine_scroll = _scroll(self.marine_page)
+        self.stack.addWidget(self._marine_scroll)
         self.b_view = QPushButton("CHECK / FINE TUNE")
         self.b_view.setObjectName("ppPrimary")
         self.b_view.setToolTip("Plan, profile and section of the points, re-drawn live while you adjust roll, pitch, "
@@ -153,7 +160,7 @@ class AlignProDock(PluginWindow):
         self.grid_attr.setCurrentIndex(list(GRID_ATTRS).index("separation"))
         self.grid_attr.currentIndexChanged.connect(self._grid_attr)
         sl.addWidget(self.grid_attr)
-        for pg in self.pages + [self.pg_welcome]:
+        for pg in self.pages + [self.pg_welcome, self.marine_page]:
             theme.mapperize(pg)
             for cb in pg.findChildren(QComboBox):
                 cb.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -243,6 +250,17 @@ class AlignProDock(PluginWindow):
     # ============================================================ state
     def set_enabled(self, on):
         has = self.p is not None
+        if getattr(self, "_marine", False) and has:
+            busy = self.job is not None
+            self.stack.setCurrentWidget(self._marine_scroll)
+            self.marine_page.setEnabled(not busy)
+            for w in (self.a_folder, self.a_qgz):
+                w.setEnabled(True)
+            self.a_reloc.setEnabled(self.p.dcs is not None)
+            for w in (self.a_reset, self.b_view, self.dv):
+                w.setEnabled(False)
+            self.update_nav()
+            return
         loaded = has and bool(self.p.lines)
         busy = self.job is not None
         for i, (pg, b) in enumerate(zip(self.pages, self.step_buttons)):
@@ -266,6 +284,11 @@ class AlignProDock(PluginWindow):
         self.update_nav()
 
     def goto_page(self, k):
+        if getattr(self, "_marine", False) and self.p is not None:
+            self.stack.setCurrentWidget(self._marine_scroll)
+            self.marine_page.refresh()
+            self.update_nav()
+            return
         self.stack.setCurrentIndex(k)
         self.step_buttons[k].setChecked(True)
         if self.p is not None:
@@ -276,6 +299,9 @@ class AlignProDock(PluginWindow):
         self.update_nav()
 
     def update_steps(self):
+        if getattr(self, "_marine", False):
+            self.update_header_steps()
+            return
         for pg, sb in zip(self.pages, self.step_buttons):
             try:
                 st, sub = pg.state()
@@ -297,6 +323,13 @@ class AlignProDock(PluginWindow):
         if self.p is None:
             self.header.set_steps([])
             return
+        if getattr(self, "_marine", False):
+            st = self.marine_page.state()[0]
+            if self.job is not None:
+                st = "running"
+            items, cur = crumbs([("marine", "Marine", [0])], ["Sonar patch test"], [(st, "")], 0)
+            self.header.set_steps(items, cur)
+            return
         states = []
         for pg in self.pages:
             try:
@@ -315,6 +348,9 @@ class AlignProDock(PluginWindow):
             return
         self.update_header_steps()
         k = self.stack.currentIndex()
+        if getattr(self, "_marine", False) and self.p is not None:
+            self.nav.setVisible(False)
+            return
         if self.p is None or k >= len(self.pages):
             self.nav.setVisible(False)             # the welcome page: open or create a project first
             return
@@ -452,7 +488,8 @@ class AlignProDock(PluginWindow):
                 done(res)
             if self.p is not None and self.p.dcs is not None:
                 self.chain.refresh()
-                self.pg_cal.refresh_publish()
+                if not self._marine:
+                    self.pg_cal.refresh_publish()
             self.update_steps()
             pend, self._pending = self._pending, []
             for f in pend:
@@ -545,6 +582,15 @@ class AlignProDock(PluginWindow):
             self.layers.remove_all()
         self.p = p
         self.chain.set_project(p.dcs)
+        from ..core import marine
+        self._marine = p.dcs is not None and marine.is_marine(p.dcs)
+        self._side.setVisible(not self._marine)
+        if self._marine:
+            self._set_pname(p.name)
+            self.set_enabled(True)
+            self.goto_page(0)
+            self.message("%s: marine job (sonar recordings): the sonar patch test" % p.name)
+            return True
         self.set_enabled(True)
         self._set_pname(p.name)
         self.goto_page(0)
@@ -1249,6 +1295,58 @@ class AlignProDock(PluginWindow):
     def explore(self):
         if self.p is not None:
             QDesktopServices.openUrl(QUrl.fromLocalFile(self.p.project_folder))
+
+    # ============================================================ marine jobs
+    def run_marine_solve(self):
+        """The sonar patch test (core.marine.solve) on a worker thread; the result goes into cfg["marine"]."""
+        p = self.p
+        if p is None or p.dcs is None:
+            return
+        from ..core import marine
+        m = p.cfg.setdefault("marine", {})
+        every, power, lat = int(m.get("every", 2)), m.get("power", "medium"), bool(m.get("latency", False))
+
+        def fn(prog, canc):
+            prog(0.02, "reading the soundings")
+            data = marine.load(p.dcs, every=every, power=power)
+            names = {str(d): "%s%s" % (h.get("nickname") or d, " (%s)" % h["side"] if h.get("side") else "")
+                     for d, h in data["heads"].items()}
+            res = marine.solve(data, latency=lat, progress=lambda f: prog(0.1 + 0.9 * f, "solving"),
+                               cancelled=canc, log=p.log)
+            return res, names
+
+        def done(out):
+            res, names = out
+            m["result"] = res
+            m["names"] = names
+            m.pop("applied", None)
+            p.save()
+            self.marine_page.refresh()
+            self.toast("Patch test: %.1f cm → %.1f cm" % (res["before_cm"], res["after_cm"]))
+        self._run("Sonar patch test", fn, done, warm=False)
+
+    def run_marine_publish(self):
+        p = self.p
+        if p is None or p.dcs is None or not (p.cfg.get("marine") or {}).get("result"):
+            return
+        from ..core import marine
+        m = p.cfg["marine"]
+        vals = self.marine_page.values()
+
+        def fn(prog, canc):
+            from dcs_core import handover
+            doc = handover.read(p.dcs, "pospro")
+            heads = {int(d): {"nickname": (m.get("names") or {}).get(d), "side": None}
+                     for d in m["result"]["heads"]}
+            for k, s in (doc.get("sensors") or {}).items():
+                if k.startswith("sonar_") and int(k.split("_")[1]) in heads:
+                    lv = s.get("lever_m") or [0.0, 0.0, 0.0]
+                    heads[int(k.split("_")[1])].update(nickname=s.get("nickname"), side="starboard" if lv[1] > 0
+                                                       else "port" if lv[1] < 0 else "centre")
+            return marine.publish(p.dcs, m["result"], {"heads": heads, "doc": doc}, applied=vals)
+        self._run("Finalize", self._stage_run(fn, "publish"),
+                  lambda _: (self.marine_page.refresh(), self.toast("Sonar corrections finalized for CloudPro")),
+                  warm=False)
 
     def publish_now(self):
         if self.p is None or self.p.dcs is None:

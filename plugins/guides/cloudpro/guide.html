@@ -36,6 +36,7 @@
 <div style="break-inside:avoid"><h2>What is new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>2.6.0</b></td><td><b>Marine jobs:</b> the soundings of each straight pass of each sonar head become a line, placed with PosPro's boat trajectory, each head's own attitude and AlignPro's corrections per head; the Georeference window gives the sonar's options (<a href="#marine">Marine jobs</a>). Line separation uses settings for the seabed. Needs DCS Core 1.14.0.</td></tr>
 <tr><td><b>2.5.1</b></td><td><b>Entire-project filter runs:</b> the ground filter (SMRF) no longer fails on a piece of the job one cell wide (a strip of points at a tile edge), and Geometric features not on a piece of one or two points; every filter is now tested on such pieces. If a filter still fails on a piece, that piece is left as it was, the rest of the run is written, and CloudPro says where (east and north range) with the details in the run log, instead of losing the whole run.</td></tr>
 <tr><td><b>2.5.0</b></td><td><b>LAZ:</b> Finalize and Export write the point cloud as LAZ, the same points as LAS compressed without loss (about 5–10 times smaller). LAZ is the default; LAS stays one click away. Finalize keeps one point cloud in <code>out/</code>: writing LAZ removes an earlier <code>&lt;Name&gt;.las</code> and the other way round. <b>Sections along a line:</b> Export splits the point cloud into numbered files of a set length along a survey line's trajectory, a road centerline computed from the drive lines or a centerline layer in QGIS, named by chainage (<code>Shirley_001_0+000-0+100.laz</code>), with an optional width across the line (<a href="#sections">Sections along a line</a>). <b>3D turning:</b> the arrows (and dragging) turn the cloud along the screen's own directions whatever its present turn, always about the Inspection Area's geometric centre, also after panning.</td></tr>
 <tr><td><b>2.4.1</b></td><td><b>Classes as a checklist</b> in Finalize and Export: every class in the job with its point count, ticked or not, with All and None; the choice is remembered per job. <b>Grids of any size:</b> the ground grid and exported grids are written block by block, so a 5 cm grid of a whole job no longer fails with <i>grid too large</i>.</td></tr>
@@ -202,6 +203,18 @@
 <tr><td><code>log/</code></td><td>One log per run (georeference, filter, tune, finalize).</td></tr>
 </table>
 <p>While a job's cloud is open in CloudPro it is locked for editing: a second QGIS that opens the same project is told <i>This job's point cloud is open elsewhere</i> and does not open it. Georeferencing, project-wide filter runs and finalizing also hold the stage lock, which shows CloudPro as <b>running</b> in the chain in the header.</p>
+
+<h2 id="marine">Marine jobs</h2>
+<p>For a job of sonar recordings the Georeference window places every sounding at its own ping time with the boat's trajectory PosPro finalized, the sonar head's own attitude and AlignPro's corrections for that head. Each straight pass of each head becomes a line, so <span class="ui">Check line separation</span> compares the passes of one head as well as the two heads.</p>
+<figure><img src="fig/georef_marine.png" style="max-height:95mm"><figcaption><b>Figure {N}.13</b> Georeference on a marine job: the corrections per head from AlignPro and the sonar's point options.</figcaption></figure>
+<table>
+<tr><th>Option</th><th>Meaning</th></tr>
+<tr><td>Range gate</td><td>Soundings nearer or farther than these slant ranges are left out. Far soundings meet the seabed at a grazing angle, where a small sound-speed error moves them by decimetres; AlignPro's patch test uses up to 40 m.</td></tr>
+<tr><td>Returns</td><td>Strong only, medium and strong (default), all above the low threshold, or every sounding. The sonar marks each ping's high, medium and low power thresholds; weaker soundings are mostly the water column.</td></tr>
+<tr><td>Sound speed</td><td><i>As recorded</i> uses the speed in each ping; another value re-scales the ranges and re-bends the angles at the sonar's face.</td></tr>
+<tr><td>Keep every Nth ping</td><td>1 keeps every ping.</td></tr>
+</table>
+<p>The stored fields: intensity is the sounding's power on a log scale (0–255 over 60 dB above the ping's low threshold), the channel is the head, the range and angle are kept. Line separation uses settings for the seabed (2 m patches, planes up to 15 cm thick).</p>
 
 <h1 id="window"><span class="num">{N}</span>Layout, menu and tools</h1>
 <figure><img src="fig/main_window.png"><figcaption><b>Figure {N}.1</b> CloudPro on a job: the header with its steps, project box and edit tools, the Plan, Slice and 3D views, the tabbed Automatic filters, Lines · Classes · Info and History, and the status strip.</figcaption></figure>

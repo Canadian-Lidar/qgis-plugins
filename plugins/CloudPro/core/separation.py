@@ -35,7 +35,7 @@ import numpy as np
 from . import pairmodel
 from .store import REJECTED, parse_key
 
-VERSION = 6                     # 6: recording holes (2.4.0)
+VERSION = 7                     # 6: recording holes (2.4.0); 7: marine settings, adaptive holes (2.6.0)
 PATCH = 1.0                       # cube side (m); must divide the tile size
 PATCHES = (0.5, 1.0, 2.0)
 MIN_POINTS = 12                   # points of one line in a cube
@@ -423,7 +423,28 @@ def recording_holes(project):
     return dsbet.holes_summary(t)
 
 
-def run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
+# a marine job (sonar soundings): a seabed is rougher and coarser than the surfaces a Lidar sees (2.6.0)
+MARINE = {"PATCH": 2.0, "MIN_POINTS": 20, "MAX_THICKNESS": 0.15, "MAX_ANGLE": 15.0, "MAX_SEP": 2.0, "FACE_GAP": 0.10}
+MARINE_TOLERANCE = 0.10
+
+
+def is_marine(project):
+    return bool((project.data.get("inputs") or {}).get("marine"))
+
+
+def run(project, progress=None, cancelled=None, patch=None, workers=None):
+    """Line separation; a marine job uses the MARINE settings (put back afterwards)."""
+    g = globals()
+    keep = {k: g[k] for k in MARINE}
+    if is_marine(project):
+        g.update(MARINE)
+    try:
+        return _run(project, progress, cancelled, patch if patch is not None else g["PATCH"], workers)
+    finally:
+        g.update(keep)
+
+
+def _run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
     """Measure the separation over the whole project; saves and returns a Result. Raises Cancelled."""
     st = project.store
     T = float(st.tile)

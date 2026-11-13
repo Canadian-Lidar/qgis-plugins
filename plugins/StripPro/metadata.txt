@@ -5,7 +5,7 @@ qgisMaximumVersion=4.99
 supportsQt6=True
 description=Trajectory correction from the point cloud for the Canadian Lidar mobile mapper: fills recording holes in the INS data from the Lidar and aligns the lines with each other. Optional stage of the Data Collection Systems chain (PosPro, AlignPro, StripPro, CloudPro).
 about=StripPro corrects PosPro's trajectory with the Lidar itself. Where the INS recording has holes (mapper 2.9.0 captures lost about a third of the Certus data), the trajectory is a straight line across each hole and the points there are tilted and shifted; the Lidar kept recording, and a surface it sees before, during and after a hole carries the motion through it. Overlapping lines are aligned at the same time. The correction is per line and changes over time: pinned where the trajectory had data, free inside holes, smooth everywhere. Align strips, look at the before and after, Finalize: CloudPro then georeferences with the corrected trajectory. Needs the DCS Core plugin. Menu: Plugins > Canadian Lidar > Data Systems.
-version=1.0.0
+version=1.0.1
 author=Canadian Lidar
 email=seantobrien@gmail.com
 category=Plugins
@@ -15,4 +15,5 @@ experimental=False
 deprecated=False
 hasProcessingProvider=no
 plugin_dependencies=DCS Core
-changelog=1.0.0 First version: recording holes in the trajectory filled from the Lidar, and the lines aligned with each other, as one time-varying trajectory correction per line; the corrected trajectory is finalized for CloudPro. Needs DCS Core 1.13.0 (API 14).
+changelog=1.0.1 A marine job (sonar recordings) says that StripPro is for Lidar lines and that the marine chain goes from AlignPro's patch test straight to CloudPro, instead of failing.
+    1.0.0 First version: recording holes in the trajectory filled from the Lidar, and the lines aligned with each other, as one time-varying trajectory correction per line; the corrected trajectory is finalized for CloudPro. Needs DCS Core 1.13.0 (API 14).

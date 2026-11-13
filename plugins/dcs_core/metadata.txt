@@ -3,7 +3,7 @@ name=DCS Core
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Shared base of the Canadian Lidar Data Collection Systems plugins (PosPro, AlignPro, CloudPro, RemixPro): one project per job, handover files between stages, stale-result detection, shared menu and look. Menu: Plugins > Canadian Lidar > Data Systems.
-version=1.13.0
+version=1.14.0
 author=Canadian Lidar
 email=seantobrien@gmail.com
 about=Install this before PosPro, AlignPro, CloudPro and RemixPro. It keeps one project per job in Processing/<Name>/ beside the captures, records what each stage published and what it was built from, flags results that are out of date when an earlier stage is re-run, and gives every plugin the same menu, look, chain bar and readers for the mapper's .clraw captures, SBET trajectories and LAS. It has no window of its own.
@@ -15,7 +15,8 @@ experimental=False
 deprecated=False
 hasProcessingProvider=no
 tags=canadian lidar,mobile mapping,dcs
-changelog=1.13.0 (API 14) StripPro, the optional stage between AlignPro and CloudPro: its corrected trajectory is a dcs.trajectory/1 handover; the chain bar shows StripPro when it is installed or has run, and CloudPro becomes out of date when StripPro finalizes. Recording holes in a trajectory (sbet.holes_summary): PosPro writes them into trajectory.json, CloudPro's line separation and AlignPro read them.
+changelog=1.14.0 (API 15) Marine jobs through the whole chain: marine (SonarRecording - the sonar heads, pings, each head's own attitude (packet 504) and raw motion sensor (packet 505), the autopilot, the Reach log, PPK and the RINEX attachments of a RemixPro .clraw; sample_soundings, LocalTrajectory, georef_local - one sounding's position, shared by AlignPro's patch test and CloudPro; split_passes / pass_of - the boat's straight runs). .clraw files made by RemixPro 1.2.0 read SonarView's Y offset as starboard; it is port, and DCS Core corrects those files when it reads them. sbet.hole_threshold: a recording hole is longer than 2.5 times the trajectory's usual step (sonar pings at 7 Hz are not holes). Additive; plugins built for API 14 work unchanged.
+    1.13.0 (API 14) StripPro, the optional stage between AlignPro and CloudPro: its corrected trajectory is a dcs.trajectory/1 handover; the chain bar shows StripPro when it is installed or has run, and CloudPro becomes out of date when StripPro finalizes. Recording holes in a trajectory (sbet.holes_summary): PosPro writes them into trajectory.json, CloudPro's line separation and AlignPro read them.
     1.12.0 (API 13) registry.focus: a plugin can open another one with a given item shown (CloudPro's line separation opens PosPro on a problem area and AlignPro on a line pair). Additive; plugins built for API 12 work unchanged.
     1.11.0 (API 12) New header in every plugin: the chain (PosPro › AlignPro › CloudPro) and the plugin's own steps as two rows of breadcrumbs coloured by state, with the guidance in their tooltips instead of a sentence under the header; the project box holds the plugin's menu; the plugin's tools sit right of it. Plugin windows are always normal windows (no docking, no inner title strip, no Window button). "Finalize" replaces "Publish" in what users read.
     1.10.0 (API 11) Plugins can be told when a stage publishes (registry.on_publish): CloudPro uses it to georeference a job in the background as soon as PosPro and AlignPro are current again.

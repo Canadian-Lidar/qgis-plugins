@@ -135,13 +135,23 @@ HOLES_MATTER_PCT = 2.0      # % of the time missing from which the holes change 
 HOLES_MATTER_LONGEST_S = 1.0
 
 
+def hole_threshold(t, min_s=HOLE_S):
+    """The step that counts as a hole for records t: min_s (0.1 s), or 2.5 x the usual step when the trajectory
+    is slower than that (a 5 Hz boat trajectory: 0.5 s) (1.14.0)."""
+    t = np.asarray(t, float)
+    if len(t) < 3:
+        return min_s
+    return max(min_s, 2.5 * float(np.median(np.diff(t))))
+
+
 def holes(t, min_s=HOLE_S):
     """Where a trajectory has no records: (n, 2) array of [last time before, first time after] for every step
-    between consecutive records longer than min_s (t in any one time base, sorted)."""
+    between consecutive records longer than the hole threshold (min_s, or 2.5 x the usual step of a slower
+    trajectory) (t in any one time base, sorted)."""
     t = np.asarray(t, float)
     if len(t) < 2:
         return np.zeros((0, 2))
-    i = np.flatnonzero(np.diff(t) > min_s)
+    i = np.flatnonzero(np.diff(t) > hole_threshold(t, min_s))
     return np.column_stack([t[i], t[i + 1]])
 
 
