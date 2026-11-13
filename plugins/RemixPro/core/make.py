@@ -44,7 +44,12 @@ def signature(item, kind):
     """What an output depends on."""
     if kind == CLRAW:
         files = item.inputs
-        extra = {"offsets": item.offsets}
+        mounts = {}
+        for k, v in sorted((item.peek or {}).items()):
+            if k in ("sessions", "platform"):
+                mounts[k] = len(json.dumps(v, sort_keys=True))
+        extra = {"offsets": item.offsets, "fallback_offsets": item.fallback_offsets,
+                 "gnss": sorted("%s|%s|%s" % (g.role, g.name, g.size) for g in item.gnss), "mounts": mounts}
     elif kind == BEAMWORX:
         files = item.clraw
         extra = {}
@@ -271,10 +276,24 @@ def _make_clraw(item, out_root, prog, stop):
     final = target(out_root, item, CLRAW)
     os.makedirs(os.path.dirname(final), exist_ok=True)
     work = _work(final)
+    from . import gnssfiles
     try:
-        r = sonar.to_clraw(item.sonar_file, work, base_name=item.name, project=item.project, offsets=item.offsets,
-                           llh=item.llh, ppk=item.ppk, rinex=item.rinex, extra_hw=item.extra_hw,
-                           extra_attachments=item.extra_attachments, progress=prog, cancelled=stop)
+        # the GNSS files whose time covers the recording, zip members extracted into the work folder
+        pk = item.peek or {}
+        t0 = pk.get("utc_first")
+        gf = gnssfiles.covering(item.gnss, t0, t0 + 24 * 3600) if t0 else list(item.gnss)
+        ex = os.path.join(work, ".gnss")
+        rinex = [(p, "rover") for p in item.rinex] + [(g.extract(ex), g.role) for g in gf if g.type in ("obs", "nav")]
+        llh = list(item.llh) + [g.extract(ex) for g in gf if g.type == "llh" and g.role == "rover"]
+        ppk = list(item.ppk) + [g.extract(ex) for g in gf if g.type == "pos" and g.role == "rover"]
+        seen = set()
+        rinex = [r for r in rinex if not (os.path.basename(r[0]) in seen or seen.add(os.path.basename(r[0])))]
+        r = sonar.to_clraw(item.parts or item.sonar_file, work, base_name=item.name, project=item.project,
+                           offsets=item.offsets, llh=llh, ppk=ppk, rinex=rinex, extra_hw=item.extra_hw,
+                           extra_attachments=item.extra_attachments, progress=prog, cancelled=stop,
+                           fallback_offsets=item.fallback_offsets,
+                           fallback_source=item.fallback_source or "TidalCal vessel table")
+        shutil.rmtree(ex, ignore_errors=True)
     except sonar.Cancelled:
         shutil.rmtree(work, ignore_errors=True)
         raise Cancelled()
@@ -291,12 +310,32 @@ def _make_clraw(item, out_root, prog, stop):
         warnings.append("The recording ends inside a packet (unfinished file): everything complete was kept.")
     missing = [s["device_id"] for s in r["hardware"]["sonars"] if not s.get("acoustic_centre_m")]
     if missing:
-        warnings.append("No measured offsets for sonar(s) %s: enter them in %s." % (missing, "sonar_offsets.json"))
+        warnings.append("No offsets for sonar(s) %s: enter the Mount Offset in SonarView, or put %s beside the "
+                        "recording." % (missing, "sonar_offsets.json"))
+    npos = sum(v for k, v in r.get("mav_types", {}).items() if k in sonar.POSITION_TYPES)
+    m = r["messages"]
+    pos = []
+    if npos:
+        pos.append("%s autopilot positions" % "{:,}".format(npos))
+    if m.get(sonar.T_LLH):
+        pos.append("%s receiver log lines" % "{:,}".format(m[sonar.T_LLH]))
+    if m.get(sonar.T_PPK):
+        pos.append("%s PPK solutions" % "{:,}".format(m[sonar.T_PPK]))
+    if m.get(sonar.T_NMEA):
+        pos.append("%s NMEA sentences" % "{:,}".format(m[sonar.T_NMEA]))
+    rin = ["%s %s" % (s.get("gnss_role"), s["file"]) for s in r["sources"] if s.get("gnss_role")]
+    if not pos:
+        warnings.append("No position in this recording and no receiver log for its time.")
     files = [os.path.basename(p) for p in r["files"]]
     extra = {"made_from": [s["file"] for s in r["sources"]], "messages": r["messages"], "sonars": r["sonars"],
-             "time_basis": r["time_basis"], "first_utc": r["first_utc"], "last_utc": r["last_utc"]}
+             "time_basis": r["time_basis"], "first_utc": r["first_utc"], "last_utc": r["last_utc"],
+             "positions": pos, "rinex": rin,
+             "offsets": {str(s["device_id"]): [s.get("acoustic_centre_m"), s.get("acoustic_centre_source")]
+                         for s in r["hardware"]["sonars"]}}
     _publish(work, final, files, signature(item, CLRAW), extra)
-    return {"state": "made", "folder": final, "files": files, "warnings": warnings}
+    return {"state": "made", "folder": final, "files": files, "warnings": warnings,
+            "info": ["Position: " + ("; ".join(pos) or "none")] +
+                    (["GNSS RINEX: " + ", ".join(rin)] if rin else [])}
 
 
 def describe_result(item, result):
@@ -309,5 +348,6 @@ def describe_result(item, result):
         word = "made" if r["state"] == "made" else "already up to date"
         lines.append("%s %s: %s, %d file(s) in %s" % (item.name, OUTPUT_LABELS[kind], word, len(r["files"]),
                                                    r["folder"]))
+        lines += ["    " + w for w in r.get("info", [])]
         lines += ["    " + w for w in r["warnings"]]
     return lines

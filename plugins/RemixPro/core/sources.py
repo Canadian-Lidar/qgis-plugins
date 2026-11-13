@@ -61,8 +61,13 @@ class Item:
         self.config_source = ""         # BeamworX survey configuration: "recorded" / "built from hardware.json"
         # marine sonar recordings (SonarView .svlz / .svlog, alone or from a TidalCal project)
         self.sonar_file = None
+        self.parts = []                 # the files of a recording SonarView split (sonar_file first)
+        self.missing_parts = []         # earlier parts named but not there
+        self.gnss = []                  # gnssfiles.GnssFile: rover / base RINEX, rover .LLH / .pos
         self.rinex, self.llh, self.ppk = [], [], []
         self.offsets, self.offsets_source = {}, ""
+        self.fallback_offsets, self.fallback_source = {}, ""
+        self.peek = {}
         self.extra_hw, self.extra_attachments = None, []
 
     @property
@@ -85,13 +90,14 @@ class Item:
     def inputs(self):
         """The files the outputs are made from (for the up-to-date check and the size shown)."""
         if self.kind == SONAR:
-            return [self.sonar_file] + self.rinex + self.llh + self.ppk
+            return list(self.parts or [self.sonar_file]) + self.rinex + self.llh + self.ppk + \
+                sorted({g.path for g in self.gnss})
         return list(self.clraw) + list(self.anpp) + ([self.ephemeris] if self.ephemeris else [])
 
     @property
     def size(self):
         if self.kind == SONAR:
-            return _size(self.sonar_file)
+            return sum(_size(p) for p in (self.parts or [self.sonar_file]))
         return sum(_size(p) for p in self.clraw + self.anpp)
 
     def certus_source(self):
@@ -410,45 +416,135 @@ def _side_gnss(folder):
     return rinex, llh, ppk
 
 
+# SonarView names a recording by its start (UTC) and numbers the files of a split one: 2026-10-07-16-04.svlz,
+# 2026-10-07-16-04-1.svlz, -2, ... (a suffix after the time, e.g. _repaired, belongs to the name)
+_SV_NAME = re.compile(r"^(?P<stamp>\d{4}-\d\d-\d\d-\d\d-\d\d)(-(?P<part>\d+))?(?P<rest>.*)\.(svlz|svlog)$", re.I)
+
+
+def split_parts(recordings):
+    """[(name, [files in order], [missing earlier part names])] for SonarView recordings: the files of a split
+    recording are one recording, named after its first part."""
+    groups = {}
+    for rec in recordings:
+        m = _SV_NAME.match(os.path.basename(rec))
+        if not m:
+            groups[(rec, "", "")] = [(0, rec)]
+            continue
+        key = (os.path.normcase(os.path.dirname(rec)), m.group("stamp"), m.group("rest").lower())
+        groups.setdefault(key, []).append((int(m.group("part") or 0), rec))
+    out = []
+    for key, files in groups.items():
+        files.sort()
+        nums = [n for n, _p in files]
+        m = _SV_NAME.match(os.path.basename(files[0][1]))
+        if m:
+            name = m.group("stamp") + m.group("rest")
+            ext = os.path.splitext(files[0][1])[1]
+            missing = ["%s%s%s%s" % (m.group("stamp"), "" if n == 0 else "-%d" % n, m.group("rest"), ext)
+                       for n in range(0, max(nums)) if n not in nums]
+        else:
+            name = re.sub(r"\.(svlz|svlog)$", "", os.path.basename(files[0][1]), flags=re.I)
+            missing = []
+        out.append((name, [p for _n, p in files], missing))
+    return out
+
+
+_PEEK = {}
+
+
+def _peek(path):
+    from . import sonar
+    try:
+        st = os.stat(path)
+    except OSError:
+        return {}
+    k = (os.path.normcase(path), st.st_size, st.st_mtime)
+    if k not in _PEEK:
+        _PEEK[k] = sonar.peek(path)
+    return _PEEK[k]
+
+
 def _sonar_items(paths, svl):
-    from . import tidalcal
+    from . import tidalcal, gnssfiles
     items, used = [], set()
     for pdir in tidalcal.find_projects(paths):
         try:
             proj = tidalcal.Project(pdir)
         except ValueError:
             continue
-        for rec in proj.recordings():
-            used.add(rec)
-            it = Item(SONAR, re.sub(r"\.(svlz|svlog)$", "", os.path.basename(rec), flags=re.I), os.path.dirname(rec))
-            it.sonar_file = rec
+        for name, files, missing in split_parts(proj.recordings()):
+            used.update(files)
+            it = Item(SONAR, name, os.path.dirname(files[0]))
+            it.sonar_file, it.parts, it.missing_parts = files[0], files, missing
             it.project = proj.name
-            it.rinex, it.llh, it.ppk = proj.gnss_for(rec)
-            off, src = _offsets_near(pdir)
-            it.offsets, it.offsets_source = (off, src) if off else (proj.offsets(), "TidalCal vessel table")
+            it.rinex, it.llh, it.ppk = proj.gnss_for(files[0])
+            it.gnss = gnssfiles.find(files[0], extra_roots=[pdir])
+            it.offsets, it.offsets_source = _offsets_near(pdir)
+            it.fallback_offsets, it.fallback_source = proj.offsets(), "TidalCal vessel table"
             it.extra_hw = proj.calibration()
             it.extra_attachments = proj.attachments()
             it.notes.append("From TidalCal project %s." % proj.name)
             items.append(it)
-    for rec in sorted(svl):
-        if rec in used:
-            continue
-        folder = os.path.dirname(rec)
-        it = Item(SONAR, re.sub(r"\.(svlz|svlog)$", "", os.path.basename(rec), flags=re.I), folder)
-        it.sonar_file = rec
-        it.rinex, it.llh, it.ppk = _side_gnss(folder)
+    for name, files, missing in split_parts(sorted(r for r in svl if r not in used)):
+        folder = os.path.dirname(files[0])
+        it = Item(SONAR, name, folder)
+        it.sonar_file, it.parts, it.missing_parts = files[0], files, missing
+        it.gnss = gnssfiles.find(files[0])
         it.offsets, it.offsets_source = _offsets_near(folder)
         items.append(it)
+    from . import sonar
     for it in items:
-        it.start = _mtime(it.sonar_file)
-        if not it.offsets:
-            it.notes.append("No sonar offsets entered (%s): each sonar's acoustic centre is recorded as not "
-                            "entered." % OFFSETS_FILE)
-        else:
-            it.notes.append("Sonar offsets from %s." % (os.path.basename(it.offsets_source) or it.offsets_source))
-        if not (it.rinex or it.llh or it.ppk):
-            it.notes.append("No GNSS files beside it: position comes from the vehicle data SonarView recorded.")
+        it.peek = pk = _peek(it.sonar_file)
+        it.start = pk.get("utc_first") or _mtime(it.sonar_file)
+        if len(it.parts) > 1:
+            it.notes.append("Split by SonarView into %d files: converted as one recording." % len(it.parts))
+        if it.missing_parts:
+            it.notes.append("Part of a split recording: %s %s not here; what is here is converted." % (
+                ", ".join(it.missing_parts), "is" if len(it.missing_parts) == 1 else "are"))
+        mounts = sonar.sonar_mounts(pk.get("sessions"), pk.get("platform"))
+        if not it.offsets and not any(sonar.sonarview_offset(o) for _d, o in mounts.values()) and \
+                not it.fallback_offsets:
+            it.notes.append("No sonar offsets: none in SonarView (Offsets > Mount Offset) and no %s. Enter them in "
+                            "SonarView for the next recordings, or put %s beside the recording." % (
+                                OFFSETS_FILE, OFFSETS_FILE))
     return items
+
+
+def offsets_summary(it):
+    """[(sonar label, [F, S, D], source)] as the conversion will use them."""
+    from . import sonar
+    mounts = sonar.sonar_mounts(it.peek.get("sessions"), it.peek.get("platform"))
+    off = {str(k).lower(): v for k, v in (it.offsets or {}).items()}
+    fb = {str(k).lower(): v for k, v in (it.fallback_offsets or {}).items()}
+    out = []
+    for did in sorted(mounts):
+        d, opt = mounts[did]
+        if not str(d.get("product_id", "")).startswith(("os", "mbes", "s500", "ping", "insight")):
+            continue
+        label = "%s (id %d)" % (d.get("nickname") or "sonar", did)
+        lev, src = sonar.lever_for(did, d, opt, off), OFFSETS_FILE
+        if lev is None:
+            lev, src = sonar.sonarview_offset(opt), "SonarView"
+        if lev is None:
+            lev, src = sonar.lever_for(did, d, opt, fb), it.fallback_source or "TidalCal"
+        out.append((label, lev, src if lev is not None else None))
+    return out
+
+
+def position_summary(it):
+    """Plain words: where the boat's position will come from."""
+    pk = it.peek or {}
+    parts = []
+    from . import sonar
+    mav = {k: v for k, v in (pk.get("mavlink") or {}).items() if k in sonar.POSITION_TYPES}
+    if mav:
+        parts.append("autopilot (MAVLink %s)" % ", ".join(sorted(mav)))
+    if pk.get("nmea"):
+        parts.append("NMEA")
+    rover = [g for g in it.gnss if g.role == "rover" and g.type in ("llh", "pos")]
+    if rover:
+        parts.append("receiver log: " + ", ".join(g.name for g in rover))
+    return "; ".join(parts) or "none found"
 
 
 def _mtime(p):

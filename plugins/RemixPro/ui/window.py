@@ -327,7 +327,7 @@ class RemixProWindow(PluginWindow):
         out = self.out.text().strip()
         for it in self.items:
             row = QTreeWidgetItem([it.name, sources.KIND_LABELS[it.kind],
-                                   str(len(it.clraw) or len(it.anpp) or (1 if it.sonar_file else 0)),
+                                   str(len(it.clraw) or len(it.anpp) or len(it.parts) or (1 if it.sonar_file else 0)),
                                    _size(it.size), time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(it.start))
                                    if it.start else "", "", "", "", ""])
             row.setData(0, Qt.ItemDataRole.UserRole, it.key)
@@ -409,13 +409,26 @@ class RemixProWindow(PluginWindow):
             return
         self.kv.set("Folder", it.folder)
         if it.kind == sources.SONAR:
-            self.kv.set("Recording", os.path.basename(it.sonar_file))
-            self.kv.set("GNSS files", ", ".join(os.path.basename(p) for p in it.rinex + it.llh + it.ppk) or
-                        "none: vehicle data from the recording", None if (it.rinex or it.llh or it.ppk) else "warn")
-            self.kv.set("Sonar offsets", ("; ".join("%s: %+.3f, %+.3f, %+.3f" % ((k,) + tuple(v))
-                                                    for k, v in sorted(it.offsets.items())) + "  (%s)"
-                                          % os.path.basename(it.offsets_source)) if it.offsets else
-                        "not entered (sonar_offsets.json)", None if it.offsets else "warn")
+            self.kv.set("Recording", ", ".join(os.path.basename(p) for p in (it.parts or [it.sonar_file])),
+                        "warn" if it.missing_parts else None)
+            pos = sources.position_summary(it)
+            self.kv.set("Position", pos, "warn" if pos == "none found" else None)
+            rx = [g for g in it.gnss if g.type in ("obs", "nav")] + \
+                [g for g in it.gnss if g.type in ("llh", "pos") and g.role == "rover"]
+            groups = {}
+            for g in rx:
+                groups.setdefault((g.role, os.path.basename(g.path) if g.member else os.path.dirname(g.path)),
+                                  []).append(g.name if g.member else os.path.basename(g.path))
+            files = ["%s: %s%s" % (role, ", ".join(names), " (in %s)" % where if where.lower().endswith(".zip")
+                                   else "") for (role, where), names in sorted(groups.items())] + \
+                [os.path.basename(p) for p in it.rinex + it.llh + it.ppk]
+            self.kv.set("GNSS files", "\n".join(files) + "\n(used where their times cover the recording)"
+                        if files else "none near the recording")
+            offs = sources.offsets_summary(it)
+            if offs:
+                self.kv.set("Sonar offsets", "\n".join(
+                    "%s: %s" % (lab, ("%+.3f, %+.3f, %+.3f m F/S/D  (%s)" % (tuple(v) + (src,))) if v else "none")
+                    for lab, v, src in offs), "warn" if any(v is None for _l, v, _s in offs) else None)
             if it.notes:
                 self.kv.set("Notes", "\n".join(it.notes))
             return

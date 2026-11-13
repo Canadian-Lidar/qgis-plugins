@@ -65,10 +65,82 @@ def _sha256(path):
     return h.hexdigest()
 
 
+# ----------------------------------------------------------------------------- the parts of a recording
+class Parts:
+    """The packets of a recording SonarView split into several files (2026-10-07-16-04.svlz,
+    2026-10-07-16-04-1.svlz, ...), read one after the other as one stream; one file works the same way.
+    packets / skipped_bytes / truncated add up; tell() is the position in the compressed files together."""
+
+    def __init__(self, paths):
+        self.paths = [paths] if isinstance(paths, str) else list(paths)
+        self.packets = self.skipped_bytes = 0
+        self.truncated = False
+        self._done = 0
+        self._r = None
+
+    def tell(self):
+        return self._done + (self._r.tell() if self._r is not None else 0)
+
+    def __iter__(self):
+        for p in self.paths:
+            self._r = r = ping.Reader(p)
+            for x in r:
+                yield x
+            self.packets += r.packets
+            self.skipped_bytes += r.skipped_bytes
+            self.truncated = self.truncated or r.truncated
+            self._done += os.path.getsize(p)
+            self._r = None
+
+
+def peek(paths, max_packets=60000):
+    """A quick look at the start of a recording (no full read): first sonar UTC (s), SonarView's sessions and
+    platform JSON (mount offsets), and the position sources seen: {"utc_first", "sessions", "platform",
+    "mavlink": {type: count}, "nmea": count, "sonars": {device id: packets}}."""
+    out = {"utc_first": None, "sessions": [], "platform": [], "mavlink": {}, "nmea": 0, "sonars": {}}
+    path = paths if isinstance(paths, str) else paths[0]
+    try:
+        for n, (mid, src, _dst, pl, _pk) in enumerate(ping.Reader(path)):
+            if n >= max_packets:
+                break
+            if mid == ping.SONARLINK_JSON:
+                try:
+                    out["sessions"].append(ping.json_payload(pl))
+                except ValueError:
+                    pass
+            elif mid == ping.PLATFORM_JSON:
+                try:
+                    if not out["platform"]:
+                        out["platform"].append(ping.json_payload(pl))
+                except ValueError:
+                    pass
+            elif mid == ping.MAVLINK_JSON:
+                try:
+                    typ = ping.mavlink(pl)[0]
+                    out["mavlink"][typ] = out["mavlink"].get(typ, 0) + 1
+                except ValueError:
+                    pass
+            elif mid == ping.NMEA:
+                out["nmea"] += 1
+            else:
+                out["sonars"][src] = out["sonars"].get(src, 0) + 1
+                if out["utc_first"] is None:
+                    u = ping.packet_utc_ms(mid, pl)
+                    if u:
+                        out["utc_first"] = u / 1000.0
+    except (OSError, EOFError):
+        pass
+    return out
+
+
+POSITION_TYPES = ("GLOBAL_POSITION_INT", "GPS_RAW_INT", "GPS2_RAW", "GPS_INPUT")
+
+
 # ----------------------------------------------------------------------------- pass 1: what is in the file
 def survey(path, cancelled=None):
-    """One pass over a recording: sessions, sonar device ids, packet counts, UTC span, time anchors."""
-    r = ping.Reader(path)
+    """One pass over a recording (one file or the parts of a split one): sessions, sonar device ids, packet
+    counts, UTC span, time anchors."""
+    r = Parts(path)
     info = {"sessions": [], "platform": [], "sonars": {}, "counts": {}, "utc_first": None, "utc_last": None,
             "mav_anchor": None, "mav_boot_first": None, "packets": 0, "uptime_first": {}}
     for n, (mid, src, _dst, pl, _pk) in enumerate(r):
@@ -92,6 +164,8 @@ def survey(path, cancelled=None):
                 typ, m, _h = ping.mavlink(pl)
             except ValueError:
                 continue
+            info.setdefault("mav_types", {})
+            info["mav_types"][typ] = info["mav_types"].get(typ, 0) + 1
             boot = m.get("time_boot_ms")
             if boot is not None and info["mav_boot_first"] is None:
                 info["mav_boot_first"] = boot
@@ -140,18 +214,27 @@ def session_devices(info):
 
 # ----------------------------------------------------------------------------- GNSS side files
 def read_lines_in_span(path, t0, t1, kind):
-    """[(utc s, line bytes)] of an LLH or RTKLIB .pos file within [t0, t1] (UTC). Header lines are skipped."""
+    """[(utc s, line bytes)] of an LLH or RTKLIB .pos file within [t0, t1] (UTC). Header lines are skipped.
+    Emlid .LLH lines are in GPS time (as the Reach logs them by default), .pos lines in GPS time when the
+    header says GPST: both are taken back to UTC (the line itself is kept as written)."""
     import datetime
     out = []
     with open(path, encoding="utf-8-sig", errors="replace") as f:
+        head = []
+        gpst = kind.lower().find("llh") >= 0
         for line in f:
             s = line.strip()
-            if not s or s.startswith(("%", "#")):
+            if s.startswith(("%", "#")):
+                head.append(s)
+                if "GPST" in s:
+                    gpst = True
+                continue
+            if not s:
                 continue
             a = s.split()
             try:
                 t = datetime.datetime.strptime(a[0] + " " + a[1], "%Y/%m/%d %H:%M:%S.%f").replace(
-                    tzinfo=datetime.timezone.utc).timestamp()
+                    tzinfo=datetime.timezone.utc).timestamp() - (18 if gpst else 0)
             except (ValueError, IndexError):
                 continue
             if t0 <= t <= t1:
@@ -213,10 +296,54 @@ def _num(v):
     except (TypeError, ValueError):
         return None
 
-def hardware_json(info, offsets=None, gnss=None, extra=None):
-    """The marine hardware record. offsets: {device id (int or str) or nickname or "port"/"starboard":
-    [F, S, D] m from the GNSS antenna to the sonar's acoustic centre}."""
+def lever_for(did, d, opt, offsets):
+    """The offset entered for a sonar: by device id, nickname, or side (from SonarView's mount_y)."""
+    for key in (str(did), str(d.get("nickname", "")).lower()):
+        if key and key in offsets:
+            return offsets[key]
+    if _num(opt.get("mount_y")) not in (None, 0):
+        side = "starboard" if _num(opt["mount_y"]) > 0 else "port"
+        if side in offsets:
+            return offsets[side]
+    return None
+
+
+def sonar_mounts(sessions, platform):
+    """{device id: (SonarView's device record, its mount options)}: newer SonarView keeps the Omniscan 3D mounts
+    in the platform JSON (packet 12), by channel number in the order of the session's os3d devices."""
+    devs = session_devices({"sessions": sessions})
+    os3d = [k for k, v in sorted(devs.items()) if str(v.get("product_id", "")).startswith("os3d")]
+    plat = {}
+    for pj in platform or []:
+        for o in pj.get("os3d_device_options") or []:
+            plat[int(o.get("channel_number", 0))] = o.get("options") or {}
+    out = {}
+    for did, d in devs.items():
+        opt = d.get("options") or {}
+        if not any(k.startswith("mount_") for k in opt) and did in os3d and os3d.index(did) in plat:
+            opt = plat[os3d.index(did)]
+        out[did] = (d, opt)
+    return out
+
+
+def sonarview_offset(opt):
+    """SonarView's Mount Offset [X forward, Y starboard, Z down] m, or None when not set (all zero / missing)."""
+    v = [_num(opt.get(k)) for k in ("mount_x", "mount_y", "mount_z")] if opt else []
+    if len(v) != 3 or any(x is None for x in v) or not any(v):
+        return None
+    return v
+
+
+OFFSETS_SOURCE = "sonar_offsets.json"
+SV_SOURCE = "SonarView Mount Offset (X forward, Y starboard, Z down), as recorded"
+
+
+def hardware_json(info, offsets=None, gnss=None, extra=None, fallback=None, fallback_source="TidalCal vessel table"):
+    """The marine hardware record. Each sonar's lever arm [F, S, D] m from the GNSS antenna to its acoustic
+    centre comes from, in order: offsets (sonar_offsets.json: by device id, nickname or "port" / "starboard"),
+    SonarView's Mount Offset as recorded in the session, fallback (e.g. TidalCal's vessel table)."""
     offsets = {str(k).lower(): v for k, v in (offsets or {}).items()}
+    fallback = {str(k).lower(): v for k, v in (fallback or {}).items()}
     devs = session_devices(info)
     sonars = []
     # newer SonarView keeps the Omniscan 3D mounts in the platform JSON (packet 12), by channel number in the
@@ -240,24 +367,18 @@ def hardware_json(info, offsets=None, gnss=None, extra=None):
                "mount_m_sonarview": [_num(opt.get(k)) for k in ("mount_x", "mount_y", "mount_z")] if opt else None,
                "motion_sensor": "internal (RX16 IMU): packets 504 and 505 on this sonar's channel"
                if str(d.get("product_id", "")).startswith("os3d") else None}
-        lever = None
-        for key in (str(did), str(d.get("nickname", "")).lower()):
-            if key and key in offsets:
-                lever = offsets[key]
+        lever, source = lever_for(did, d, opt, offsets), OFFSETS_SOURCE
         if lever is None:
-            side = None
-            if _num(opt.get("mount_y")) not in (None, 0):
-                side = "starboard" if _num(opt["mount_y"]) > 0 else "port"
-            if side and side in offsets:
-                lever = offsets[side]
+            lever, source = sonarview_offset(opt), SV_SOURCE
+        if lever is None:
+            lever, source = lever_for(did, d, opt, fallback), fallback_source
         if lever is not None:
             rec["acoustic_centre_m"] = [float(v) for v in lever]
-            rec["acoustic_centre_source"] = "measured (entered in RemixPro)"
+            rec["acoustic_centre_source"] = source
             rec["side"] = "starboard" if float(lever[1]) > 0 else "port" if float(lever[1]) < 0 else "centre"
         else:
             rec["acoustic_centre_m"] = None
-            rec["acoustic_centre_source"] = "not entered: SonarView's mount_m_sonarview is kept as recorded, its " \
-                                            "frame and origin are not verified"
+            rec["acoustic_centre_source"] = "not entered (no sonar_offsets.json, no Mount Offset in SonarView)"
         sonars.append(rec)
     hw = {"platform": "marine",
           "reference_point": "GNSS antenna reference point (ARP) of the position receiver",
@@ -318,11 +439,16 @@ class _Clock:
 
 
 def to_clraw(path, out_dir, base_name=None, line=1, project="", offsets=None, gnss=None, llh=(), ppk=(),
-             rinex=(), extra_hw=None, extra_attachments=(), progress=None, cancelled=None, split_bytes=SPLIT_BYTES):
-    """Convert one SonarView recording. Returns a summary dict (files written, counts, time span and basis)."""
+             rinex=(), extra_hw=None, extra_attachments=(), progress=None, cancelled=None, split_bytes=SPLIT_BYTES,
+             fallback_offsets=None, fallback_source="TidalCal vessel table"):
+    """Convert one SonarView recording (path: a file, or the files of a split recording in order). rinex:
+    paths (the rover's) or (path, "rover" | "base") pairs; llh / ppk: the rover's solution logs only. Returns a
+    summary dict (files written, counts, time span and basis)."""
     stop = cancelled or (lambda: False)
+    parts = [path] if isinstance(path, str) else list(path)
+    path = parts[0]
     base_name = base_name or re.sub(r"\.(svlog|svlz)$", "", os.path.basename(path), flags=re.I)
-    info = survey(path, stop)
+    info = survey(parts, stop)
     if not info["sonars"]:
         raise ValueError("%s holds no sonar packets" % os.path.basename(path))
     clock = _Clock(info)
@@ -335,9 +461,10 @@ def to_clraw(path, out_dir, base_name=None, line=1, project="", offsets=None, gn
     for i, did in enumerate(sonar_ids):
         ch_sonar[did] = 10 + i
         channels.append((10 + i, 1, "/sonar/%d/ping" % did, "x-cerulean-ping"))
-    hw = hardware_json(info, offsets, gnss, extra_hw)
-    sources = [{"file": os.path.basename(path), "size": os.path.getsize(path), "sha256": _sha256(path),
-                "role": "SonarView recording"}]
+    hw = hardware_json(info, offsets, gnss, extra_hw, fallback_offsets, fallback_source)
+    sources = [{"file": os.path.basename(p), "size": os.path.getsize(p), "sha256": _sha256(p),
+                "role": "SonarView recording" + (" (part %d of %d)" % (i + 1, len(parts)) if len(parts) > 1 else "")}
+               for i, p in enumerate(parts)]
     atts = [("hardware.json", "application/json", json.dumps(hw, indent=1).encode()),
             ("sonarview_session.json", "application/json",
              json.dumps({"sessions": info["sessions"], "platform": info["platform"]}, indent=1).encode())]
@@ -346,12 +473,12 @@ def to_clraw(path, out_dir, base_name=None, line=1, project="", offsets=None, gn
     md = {"format": "clraw", "format_version": "1", "kind": "sonar", "platform": "marine",
           "writer": software(), "capture": base_name, "capture_name": base_name, "project": project or "",
           "project_id": project or "", "line": int(line), "line_digits": 3, "source": "SonarView recording",
-          "source_file": os.path.basename(path), "sonars": ",".join(str(d) for d in sonar_ids),
+          "source_file": ",".join(os.path.basename(p) for p in parts), "sonars": ",".join(str(d) for d in sonar_ids),
           "time": "log_time = best UTC known for the packet (never decreasing); publish_time = the packet's own "
                   "UTC when it carries one, else log_time",
           "time_basis": clock.basis}
     os.makedirs(out_dir, exist_ok=True)
-    total = os.path.getsize(path) or 1
+    total = sum(os.path.getsize(p) for p in parts) or 1
     files, writer = [], [None]
     number = [0]
     n_written = {}
@@ -375,17 +502,24 @@ def to_clraw(path, out_dir, base_name=None, line=1, project="", offsets=None, gn
     gnss_src = []
     if t_last is None:
         t_last = span0 + 24 * 3600          # unknown span: keep a day (lines are cut only by time)
-    for p in rinex:
+    for entry in rinex:
+        p, who = (entry, "rover") if isinstance(entry, str) else entry
         kind = rinex_kind(p)
-        data = cut_rinex_obs(p, span0 - GNSS_MARGIN_S, t_last + GNSS_MARGIN_S) if kind == "obs" else open(p, "rb").read()
-        gnss_atts.append(("gnss/" + os.path.basename(p), "text/plain", data))
+        with open(p, "rb") as fh:
+            data = cut_rinex_obs(p, span0 - GNSS_MARGIN_S, t_last + GNSS_MARGIN_S) if kind == "obs" else fh.read()
+        if kind == "obs" and data.count(b"\n>") == 0 and data.find(b"END OF HEADER") >= 0:
+            continue                        # no epoch within the recording +- margin: not this recording's
+        gnss_atts.append(("gnss/%s/%s" % (who, os.path.basename(p)), "text/plain", data))
         gnss_src.append((p, {"file": os.path.basename(p), "size": os.path.getsize(p), "sha256": _sha256(p),
-                             "role": "GNSS RINEX %s (cut to the recording +- %d s)" % (kind or "?", GNSS_MARGIN_S)
-                             if kind == "obs" else "GNSS RINEX %s" % (kind or "?")}))
+                             "gnss_role": who,
+                             "role": "GNSS %s RINEX %s (cut to the recording +- %d s)" % (who, kind or "?", GNSS_MARGIN_S)
+                             if kind == "obs" else "GNSS %s RINEX %s" % (who, kind or "?")}))
     side_lines = []
     for paths, ch, role in ((llh, 5, "GNSS solution log (LLH)"), (ppk, 6, "PPK solution (.pos)")):
         for p in paths:
             rows = read_lines_in_span(p, span0 - LINE_MARGIN_S, t_last + LINE_MARGIN_S, role)
+            if not rows:
+                continue                    # not this recording's time
             side_lines += [(t, ch, b) for t, b in rows]
             gnss_src.append((p, {"file": os.path.basename(p), "size": os.path.getsize(p), "sha256": _sha256(p),
                                  "role": role, "lines_kept": len(rows)}))
@@ -407,7 +541,7 @@ def to_clraw(path, out_dir, base_name=None, line=1, project="", offsets=None, gn
             put(ch, int(t * NS), int(t * NS), b)
             si[0] += 1
 
-    r = ping.Reader(path)
+    r = Parts(parts)
     try:
         for n, (mid, src, _dst, pl, pk) in enumerate(r):
             if n % 20000 == 0:
@@ -450,4 +584,5 @@ def to_clraw(path, out_dir, base_name=None, line=1, project="", offsets=None, gn
             "truncated": info["truncated"], "sonars": sonar_ids, "messages": by_topic, "time_basis": clock.basis,
             "first_utc": first_sonar[0] / NS if first_sonar[0] else None,
             "last_utc": last_sonar[0] / NS if last_sonar[0] else None, "hardware": hw,
-            "sources": sources + [s for _a, s in gnss_src], "program": NAME, "version": __version__}
+            "sources": sources + [s for _a, s in gnss_src], "program": NAME, "version": __version__,
+            "mav_types": info.get("mav_types", {}), "parts": len(parts)}
