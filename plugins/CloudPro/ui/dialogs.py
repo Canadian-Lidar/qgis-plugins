@@ -564,7 +564,11 @@ class GeorefDialog(QtWidgets.QDialog):
         t = QtWidgets.QLabel("Georeference")
         t.setObjectName("ppTitle")
         lay.addWidget(t)
-        h = QtWidgets.QLabel("Every Lidar return is placed at its own firing time with the trajectory PosPro "
+        self.marine = bool(getattr(inp, "marine", False))
+        h = QtWidgets.QLabel("Every sounding is placed at its own ping time with the boat's trajectory PosPro "
+                             "finalized, the sonar's own attitude and the corrections per head AlignPro finalized. "
+                             "Each straight pass of each head becomes a line." if self.marine else
+                             "Every Lidar return is placed at its own firing time with the trajectory PosPro "
                              "finalized and the mounting AlignPro finalized. Without an AlignPro result the "
                              "mounting recorded in the capture is used and the results say \"no calibration\".")
         h.setObjectName("ppHint")
@@ -576,7 +580,15 @@ class GeorefDialog(QtWidgets.QDialog):
         f.addRow(_k("Trajectory"), self._val(ti.get("description", "?"), "ok" if ti.get("source") in ("pospro", "strippro") else "warn"))
         if ti.get("handover_id"):
             f.addRow(_k("Trajectory id"), self._val(ti["handover_id"][:23]))
-        if inp.align_info.get("calibration") == "applied":
+        if self.marine:
+            hc = inp.heads_cal or {}
+            f.addRow(_k("Sonar heads"), self._val("; ".join(
+                "head %s: roll %+.3f, pitch %+.3f, heading %+.3f deg, latency %.1f ms" % (
+                    k, v.get("roll", 0), v.get("pitch", 0), v.get("heading", 0), 1000 * v.get("latency_s", 0))
+                for k, v in sorted(hc.items())) or "no AlignPro patch test  -  no corrections", "ok" if hc else "warn"))
+            f.addRow(_k("Recordings"), self._val("%d sonar .clraw file(s) in %d recording(s)" % (
+                len(inp.sonar_files), len(clraw.group_recordings(inp.sonar_files, sonar=True)))))
+        elif inp.align_info.get("calibration") == "applied":
             f.addRow(_k("Mounting"), self._val("AlignPro calibration  R %.4f  P %.4f  H %.4f deg" % inp.mount, "ok"))
             if inp.lever:
                 f.addRow(_k("Lidar lever arm"), self._val("F %.3f  S %.3f  D %.3f m  (%s)" % (
@@ -589,8 +601,9 @@ class GeorefDialog(QtWidgets.QDialog):
         else:
             f.addRow(_k("Mounting"), self._val("as recorded in the capture%s  -  no calibration" % (
                 ("  (R %.4f  P %.4f  H %.4f deg)" % inp.mount) if inp.mount else ""), "warn"))
-        f.addRow(_k("Captures"), self._val("%d .clraw file(s) in %d line(s)" % (
-            len(inp.files), len(clraw.group_recordings(inp.files)))))
+        if not self.marine:
+            f.addRow(_k("Captures"), self._val("%d .clraw file(s) in %d line(s)" % (
+                len(inp.files), len(clraw.group_recordings(inp.files)))))
         self._crs_val = self._val("")
         self._crs_text = project.crs
         f.addRow(_k("Coordinate system"), self._crs_val)
@@ -643,6 +656,8 @@ class GeorefDialog(QtWidgets.QDialog):
         f.addWidget(self.geoid, 3, 1, 1, 2)
         f.addWidget(gb, 3, 3)
         lay.addWidget(g)
+        if self.marine:
+            self._marine_points(f, project)
         self.keep_edits = QtWidgets.QCheckBox("Carry the manual and filter edits over to the new points")
         self.keep_edits.setChecked(True)
         self.keep_edits.setEnabled(bool(project.lines))
@@ -683,6 +698,41 @@ class GeorefDialog(QtWidgets.QDialog):
             lab.setProperty("level", level)
         return lab
 
+    def _marine_points(self, f, project):
+        """The sonar's point options in place of the Lidar's (core/sonar.SonarOptions)."""
+        for w in (self.returns, self.dups, self.stopped):
+            w.setVisible(False)
+        for i in range(f.count()):
+            w = f.itemAt(i).widget()
+            if isinstance(w, QtWidgets.QLabel) and w.text() in ("Returns", "Keep every Nth packet"):
+                w.setVisible(False)
+        so = dict(project.data.get("sonar") or {})
+        self.power = QtWidgets.QComboBox()
+        for k, t in (("high", "strong returns only"), ("medium", "medium and strong"),
+                     ("low", "all above the low threshold"), ("all", "every sounding")):
+            self.power.addItem(t, k)
+        self.power.setCurrentIndex(max(0, self.power.findData(so.get("power", "medium"))))
+        self.power.setToolTip("The sonar marks each ping's high, medium and low power thresholds; weaker "
+                              "soundings are mostly the water column")
+        self.rmin.setValue(float(so.get("rmin", 0.5)))
+        self.rmax.setValue(float(so.get("rmax", 200.0)))
+        self.rmax.setToolTip("Far soundings meet the seabed at a grazing angle, where a small error in the sound "
+                             "speed moves them by decimetres; AlignPro's patch test uses up to 40 m")
+        self.sos = dspin(0, 1700, float(so.get("sound_speed") or 0), 1, 1, " m/s")
+        self.sos.setSpecialValueText("as recorded")
+        self.sos.setToolTip("Another sound speed than the sonar used (ranges re-scaled, angles re-bent at the "
+                            "face); as recorded = the speed in each ping")
+        self.every = QtWidgets.QSpinBox()
+        self.every.setRange(1, 50)
+        self.every.setValue(int(so.get("decimate", 1)))
+        self.every.setToolTip("Keep every Nth ping (1 = all)")
+        f.addWidget(_k("Returns"), 4, 0)
+        f.addWidget(self.power, 4, 1)
+        f.addWidget(_k("Sound speed"), 5, 0)
+        f.addWidget(self.sos, 5, 1)
+        f.addWidget(_k("Keep every Nth ping"), 6, 0)
+        f.addWidget(self.every, 6, 1)
+
     def _pick_geoid(self):
         p, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Geoid grid", "", "Grids (*.tif *.tiff *.gtx *.byn *.vrt)")
         if p:
@@ -691,6 +741,10 @@ class GeorefDialog(QtWidgets.QDialog):
     def options(self):
         from ..core.importer import ImportOptions
         self.project.data["geoid_path"] = self.geoid.text().strip()
+        if self.marine:
+            self.project.data["sonar"] = {"power": self.power.currentData(), "rmin": self.rmin.value(),
+                                          "rmax": self.rmax.value(), "sound_speed": self.sos.value() or None,
+                                          "decimate": self.every.value()}
         return ImportOptions(returns=self.returns.currentText(), drop_duplicates=self.dups.isChecked(),
                              rmin=self.rmin.value(), rmax=self.rmax.value(), decimate=self.dec.value(),
                              min_speed=STOP_SPEED if self.stopped.isChecked() else 0.0)

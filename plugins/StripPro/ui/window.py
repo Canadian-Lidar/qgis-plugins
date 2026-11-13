@@ -214,6 +214,8 @@ class StripProWindow(PluginWindow):
         if self.dcs is not None:
             try:
                 self.inputs = J.Inputs(self.dcs)
+            except J.MarineJob as e:
+                theme.msg_info(self, "StripPro", str(e))
             except Exception as e:      # noqa: BLE001  (no PosPro trajectory yet, unreadable handover, ...)
                 theme.msg_warn(self, "StripPro", "StripPro needs PosPro's finalized trajectory first:\n%s" % e)
         self.summary = J.load(self.dcs) if self.dcs is not None else None

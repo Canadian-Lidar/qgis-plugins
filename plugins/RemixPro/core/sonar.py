@@ -302,7 +302,7 @@ def lever_for(did, d, opt, offsets):
         if key and key in offsets:
             return offsets[key]
     if _num(opt.get("mount_y")) not in (None, 0):
-        side = "starboard" if _num(opt["mount_y"]) > 0 else "port"
+        side = "port" if _num(opt["mount_y"]) > 0 else "starboard"        # SonarView's Y is to port
         if side in offsets:
             return offsets[side]
     return None
@@ -327,15 +327,17 @@ def sonar_mounts(sessions, platform):
 
 
 def sonarview_offset(opt):
-    """SonarView's Mount Offset [X forward, Y starboard, Z down] m, or None when not set (all zero / missing)."""
+    """SonarView's Mount Offset as [Forward, Starboard, Down] m, or None when not set (all zero / missing).
+    SonarView's Y is positive to PORT (settled 13 Nov 2026 on the Lumston recording: device 30053, Y +0.056, looks
+    to port, as its yaw +90 and SonarView's XTF channel names say), so Starboard = -Y; X forward; Z down."""
     v = [_num(opt.get(k)) for k in ("mount_x", "mount_y", "mount_z")] if opt else []
     if len(v) != 3 or any(x is None for x in v) or not any(v):
         return None
-    return v
+    return [v[0], -v[1], v[2]]
 
 
 OFFSETS_SOURCE = "sonar_offsets.json"
-SV_SOURCE = "SonarView Mount Offset (X forward, Y starboard, Z down), as recorded"
+SV_SOURCE = "SonarView Mount Offset (X forward, Y port, Z down), as recorded"
 
 
 def hardware_json(info, offsets=None, gnss=None, extra=None, fallback=None, fallback_source="TidalCal vessel table"):

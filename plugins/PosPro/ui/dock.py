@@ -36,6 +36,7 @@ from dcs_core.window import PluginWindow
 
 from .widgets import VEHICLE_PRESETS, Card, CoverageView, Section, StepButton, Toast, VehicleView
 from . import antennacheck
+from .marinepage import MarinePage
 from .plots import Donut
 
 
@@ -2729,6 +2730,13 @@ class PosProDock(PluginWindow):
             sb.clicked.connect(lambda _=False, k=i: self.goto_page(k))
             self.stack.addWidget(_scroll(pg))
         sl.addStretch(1)
+        # marine jobs (sonar recordings from the survey boat): one page instead of the Lidar workflow
+        self._side = side
+        self._marine = False
+        self.marine_page = MarinePage(self)
+        self._marine_scroll = _scroll(self.marine_page)
+        self.stack.addWidget(self._marine_scroll)
+        theme.mapperize(self.marine_page)
         for pg in self.pages:
             theme.mapperize(pg)
             for cb in pg.findChildren(QComboBox):
@@ -2804,6 +2812,12 @@ class PosProDock(PluginWindow):
         return self.keys.index(key)
 
     def goto_page(self, k):
+        if self._marine:
+            self.stack.setCurrentWidget(self._marine_scroll)
+            if self.project:
+                self.marine_page.refresh()
+            self.update_header_steps()
+            return
         if isinstance(k, str):
             k = self.index_of(k)
         self.stack.setCurrentIndex(k)
@@ -2828,6 +2842,13 @@ class PosProDock(PluginWindow):
     def update_header_steps(self):
         """Prepare › Process › Finalize in the header, by the pages' states (DCS Core 1.11.0)."""
         from dcs_core.stepnav import crumbs
+        if self._marine:
+            st = self.marine_page.state()[0] if self.project else "todo"
+            if getattr(self, "task", None) is not None:
+                st = "running"
+            items, cur = crumbs([("Marine", "Marine", [0])], ["Marine trajectory"], [(st, "")], 0)
+            self.header.set_steps(items, cur)
+            return
         states = []
         for pg in self.pages:
             try:
@@ -2842,6 +2863,9 @@ class PosProDock(PluginWindow):
         self.header.set_steps(items, cur)
 
     def update_steps(self):
+        if self._marine:
+            self.update_header_steps()
+            return
         for pg, sb in zip(self.pages, self.step_buttons):
             try:
                 st, sub = pg.state()
@@ -2882,6 +2906,9 @@ class PosProDock(PluginWindow):
     def update_nav(self):
         """Back / Next under the pages: is the current step done, what is next."""
         if not hasattr(self, "nav"):
+            return
+        if self._marine:
+            self.update_header_steps()
             return
         self.update_header_steps()
         k = self.stack.currentIndex()
@@ -3141,6 +3168,14 @@ class PosProDock(PluginWindow):
         self.chain.set_project(p.dcs)
         self._set_pname(p.name)
         self.set_enabled(True)
+        from ..core import marine
+        self._marine = marine.is_marine(p)
+        self._side.setVisible(not self._marine)
+        self.nav.setVisible(not self._marine)
+        if self._marine:
+            self.qc = None
+            self.goto_page(0)
+            return
         self.qc = results.load_qc(os.path.join(p.work_dir, "results", "qc.csv"))
         # nothing of the previous project stays on show
         self.antenna_check = None
@@ -3378,6 +3413,55 @@ class PosProDock(PluginWindow):
             if self.plugin.editor is not None and self.plugin.editor.isVisible():
                 self.plugin.editor.reload(keep_view=True)
         if self.start_task("Processing", work, done) is None:
+            self._release_run(False, "not started")
+
+    def run_marine(self):
+        """Marine job: trajectory of the GNSS antenna and each head's attitude, finalized for AlignPro and CloudPro."""
+        p = self.project
+        if p is None or p.dcs is None:
+            return
+        if self.task is not None:
+            theme.msg_info(self, "PosPro", "Wait for the current job to finish (or cancel it).")
+            return
+        self.save()
+        from dcs_core.locks import Locked
+        from ..core import marine
+        run = p.dcs.run("pospro", "PosPro", pipeline.plugin_version())
+        try:
+            run.__enter__()
+        except Locked as e:
+            theme.msg_warn(self, "PosPro", str(e))
+            return
+        self._run_lock = run
+        self.chain.refresh()
+        work_p = self._work_copy()
+
+        def work(ctx):
+            atx = None
+            try:
+                atx = products.antex(lambda m: ctx.log("info", m))
+            except products.DownloadError:
+                ctx.log("warning", "antenna calibrations (igs20.atx) not available: the base antenna's phase centre "
+                                   "is taken from its type where PosPro knows it")
+            summary = marine.process(work_p, ctx.sub(0, 0.9), atx)
+            summary["handover"] = marine.publish(work_p, ctx.sub(0.9, 1.0))
+            return summary
+
+        def done(ok, res):
+            self._release_run(ok, res)
+            p.dcs.reload()
+            self.chain.refresh()
+            if not ok:
+                theme.msg_warn(self, "PosPro", "Processing stopped:\n\n%s" % res)
+                return
+            p.cfg.setdefault("results", {})["marine"] = work_p.cfg["results"]["marine"]
+            self.save()
+            for r in res.get("recordings", []):
+                self.log("info", "%s: %s, %.1f %% fixed" % (r["name"], r["source_label"],
+                                                           (r.get("quality_pct") or {}).get("fixed", 0.0)))
+            self.marine_page.refresh()
+            self.update_header_steps()
+        if self.start_task("Marine trajectory", work, done) is None:
             self._release_run(False, "not started")
 
     # ------------------------------------------------------------------

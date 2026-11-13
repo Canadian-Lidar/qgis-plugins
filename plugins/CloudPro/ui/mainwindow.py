@@ -655,7 +655,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._error("Cannot create the project", ex)
             return
         self.set_project(p)
-        if chain.clraw_files(dcs):
+        if chain.clraw_files(dcs) or dcs.sonar_clraw_files():
             self.georeference()
 
     def open_project(self, path=None):
@@ -1340,7 +1340,7 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as ex:
             self._error("Cannot read the chain's inputs", ex)
             return
-        if not inp.files:
+        if not inp.files and not inp.marine:
             theme.msg_warn(self, "CloudPro", "No .clraw files were found in the job's captures (%s).\nUse "
                            "Menu > Add other .clraw files, or record the captures in PosPro." % p.dcs.job_folder)
             return
@@ -1384,7 +1384,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             ["L%d: %s points %s" % (l + 1, st["points"], st) for l, st in out] +
                             ["edits carried over: %d" % rest])
             return out, rest, inp
-        self._run("georef", job, "Georeferencing %d .clraw file(s)" % len(inp.files))
+        self._run("georef", job, "Georeferencing %d .clraw file(s)" % len(inp.sonar_files if inp.marine else inp.files))
 
     def auto_update(self, why=""):
         """Georeference again with the last settings, edits carried over, because PosPro or AlignPro published
@@ -1401,7 +1401,7 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as ex:                 # noqa: BLE001
             self.status("Automatic georeferencing not started: %s" % ex, 10000)
             return
-        if not inp.files:
+        if not inp.files and not inp.marine:
             return
         self._auto_georef = True
         self._pending_geo = None

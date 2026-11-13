@@ -406,6 +406,8 @@ def import_chain(project, inp, opts, files=None, progress=None, cancel=None, kee
     with the new points and put back with the old ones on failure. Returns (lines [(lid, stats)], edits
     restored)."""
     from . import clraw as _clraw
+    if getattr(inp, "marine", False) and not files:
+        return import_marine(project, inp, opts, progress, cancel, keep_edits, settings)
     files = files or inp.files
     groups = _clraw.group_recordings(files)
     if not groups:
@@ -489,6 +491,81 @@ def import_chain(project, inp, opts, files=None, progress=None, cancel=None, kee
         project.data["inputs"]["warnings"] = list(inp.warnings)
         project.data["inputs"]["crs"] = project.crs
         project.log("Georeferenced %d line(s) with %s; %s%s" % (
+            len(out), inp.traj_info.get("description", "?"), inp.align_info.get("calibration"),
+            ("; %d edited points carried over" % restored) if restored else ""))
+        project.commit_rebuild()
+    except BaseException:
+        project.abort_rebuild()
+        raise
+    finally:
+        if ed is not None:
+            ed.close()
+    return out, restored
+
+
+def import_marine(project, inp, opts, progress=None, cancel=None, keep_edits=True, settings=None):
+    """(Re)georeference a marine job: every head of every sonar recording becomes a line (core/sonar.py). Staged
+    like import_chain: the old points stay until everything worked; edits are carried over."""
+    from dcs_core import clraw as _dclraw
+    from dcs_core.marine import SonarRecording
+    from . import sonar as SN
+    if inp.traj is None:
+        raise ValueError("PosPro has not finalized the boat's trajectory: process it in PosPro (Marine) first")
+    groups = _dclraw.group_recordings(inp.sonar_files, sonar=True)
+    if not groups:
+        raise ValueError("No sonar recordings (.clraw made by RemixPro) found for this job")
+    settings = dict(settings or {})
+    from dcs_core import marine as _dm
+    old = {(tuple(sorted(l.get("files", []))), l.get("head"), l.get("pass")): l for l in project.lines
+           if l.get("kind") == "sonar"}
+    sopts = SN.SonarOptions(**dict(project.data.get("sonar") or {}))
+    sopts.geoid = opts.geoid
+    sopts.source_crs = inp.source_crs
+    ed = collect_edits(project) if keep_edits and project.lines else None
+    project.begin_rebuild()
+    try:
+        project.data.update(settings)
+        project.store.crs = project.crs
+        out = []
+        jobs = []
+        for _key, paths in groups.items():
+            rec = SonarRecording(paths)
+            # each straight run of the boat (a survey line) of each head is a line, so the separation compares the
+            # passes of one head as well as the two heads (dcs_core.marine.split_passes, as AlignPro's patch test)
+            a, b = rec.span()
+            tr = inp.traj
+            spans = _dm.split_passes(tr.t, tr.heading, max(a, tr.t[0]), min(b, tr.t[-1]) + 1e-3)
+            spans[0] = (min(a, spans[0][0]), spans[0][1])
+            spans[-1] = (spans[-1][0], max(b, spans[-1][1]) + 1.0)
+            for n, w in enumerate(spans, 1):
+                for did in rec.heads:
+                    jobs.append((rec, did, w, n if len(spans) > 1 else None))
+        for k, (rec, did, win, pno) in enumerate(jobs):
+            if cancel and cancel():
+                raise Cancelled()
+            att, att_src = SN.head_attitude(inp.traj_doc, did, rec)
+            cal = (inp.heads_cal or {}).get(str(did)) or {}
+            prev = old.get((tuple(sorted(f.path for f in rec.files)), int(did), pno))
+            lid, st = SN.import_sonar_head(
+                project, rec, did, inp.traj, att, cal, sopts,
+                progress=(lambda f, s, k=k: progress((k + f) / len(jobs) * 0.9, "%s points" % "{:,}".format(
+                    s["points"]))) if progress else None,
+                cancel=cancel, line_name=prev.get("name") if prev else None, window=win, pass_no=pno)
+            if lid is None:
+                continue
+            project.lines[lid]["attitude_source"] = att_src
+            project.lines[lid]["calibration"] = inp.align_info.get("calibration")
+            out.append((lid, st))
+        restored = apply_edits(project, ed, progress, cancel) if ed is not None else 0
+        if progress:
+            progress(0.95, "building the project grids")
+        rebuild_grids(project)
+        project.data["inputs"] = inp.record()
+        project.data["inputs"]["georeferenced"] = _now()
+        project.data["inputs"]["warnings"] = list(inp.warnings)
+        project.data["inputs"]["crs"] = project.crs
+        project.data["inputs"]["marine"] = True
+        project.log("Georeferenced %d sonar line(s) with %s; %s%s" % (
             len(out), inp.traj_info.get("description", "?"), inp.align_info.get("calibration"),
             ("; %d edited points carried over" % restored) if restored else ""))
         project.commit_rebuild()

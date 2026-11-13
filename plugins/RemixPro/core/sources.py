@@ -491,6 +491,16 @@ def _sonar_items(paths, svl):
         it.sonar_file, it.parts, it.missing_parts = files[0], files, missing
         it.gnss = gnssfiles.find(files[0])
         it.offsets, it.offsets_source = _offsets_near(folder)
+        proj = _tidalcal_above(folder)
+        if proj is not None:
+            # a TidalCal project in a folder above (e.g. RAW/project.tidalcal beside RAW/Sonar): its surveyed
+            # base, sound speed and calibration notes travel with the recording; its vessel table is the last
+            # resort for offsets
+            it.project = proj.name
+            it.extra_hw = proj.calibration()
+            it.extra_attachments = proj.attachments()
+            it.fallback_offsets, it.fallback_source = proj.offsets(), "TidalCal vessel table"
+            it.notes.append("TidalCal project %s found above it: its surveyed base and settings are kept." % proj.name)
         items.append(it)
     from . import sonar
     for it in items:
@@ -508,6 +518,23 @@ def _sonar_items(paths, svl):
                             "SonarView for the next recordings, or put %s beside the recording." % (
                                 OFFSETS_FILE, OFFSETS_FILE))
     return items
+
+
+def _tidalcal_above(folder, levels=2):
+    """The TidalCal project in the recording's folder or up to `levels` folders above it, or None."""
+    from . import tidalcal
+    d = folder
+    for _ in range(levels + 1):
+        if os.path.isfile(os.path.join(d, "project.tidalcal")):
+            try:
+                return tidalcal.Project(d)
+            except ValueError:
+                return None
+        up = os.path.dirname(d)
+        if up == d:
+            break
+        d = up
+    return None
 
 
 def offsets_summary(it):
