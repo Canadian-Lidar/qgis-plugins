@@ -20,7 +20,7 @@ plugins (PosPro, AlignPro, CloudPro, RemixPro).
   theme, widgets, stepbar, dialogs, registry   the shared look and UI
 
 The plugins import it as `dcs_core`; it has no window of its own."""
-__version__ = "1.14.0"
+__version__ = "1.15.0"
 # API 2 (1.1.0): adds clraw, hesai, anpp, sbet, las, mcap, zstd and widgets.align_flags.
 # API 3 (1.2.0): adds window.PluginWindow (the standard plugin window) and theme.FAINT, DISABLED, VIEW_BG, GRID.
 # API 4 (1.3.0): adds header.PluginHeader (the same header bar in every plugin).
@@ -56,7 +56,9 @@ __version__ = "1.14.0"
 # holes_matter / in_holes / longest_hole_in (recording holes in a trajectory)
 # API 15 (1.14.0): marine (SonarRecording, imu_505, sample_soundings, LocalTrajectory, georef_local, split_passes,
 #   pass_of, rays, level_vectors) - marine jobs in PosPro, AlignPro and CloudPro; sbet.hole_threshold.
-API = 15
+# API 16 (1.15.0): frames - the canonical body frame (FRD) and the device adapters (hesai_navaq, cerulean_sonarview_mount,
+#   cerulean_device, inertial_explorer, qinertia / beamworx); marine heads carry mount_side, looks, lever_adapter.
+API = 16
 
 
 def classFactory(iface):  # noqa: N802 - QGIS API

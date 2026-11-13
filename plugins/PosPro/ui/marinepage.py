@@ -182,8 +182,9 @@ class MarinePage(QWidget):
             have.append("autopilot")
             srcs.append("%s: %s" % (r.name, ", ".join(have)))
         self.v_recs.setText("\n".join(names) or "none")
-        self.v_heads.setText("\n".join("%s (id %d): offsets %s m F/S/D (%s)" % (
-            h["nickname"], did, ", ".join("%+.3f" % v for v in h["lever_m"]) if h.get("lever_m") else "not entered",
+        self.v_heads.setText("\n".join("%s (id %d)%s: offsets %s m F/S/D (%s)" % (
+            h["nickname"], did, ", looks %s" % h["looks"] if h.get("looks") else "",
+            ", ".join("%+.3f" % v for v in h["lever_m"]) if h.get("lever_m") else "not entered",
             (h.get("lever_source") or "").split(" (")[0]) for did, h in sorted(heads.items())) or "none")
         self.v_sources.setText("\n".join(srcs))
         o = marine.options(p)

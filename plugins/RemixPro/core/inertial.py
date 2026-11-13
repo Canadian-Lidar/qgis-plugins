@@ -139,8 +139,8 @@ class ImuWriter:
     def _lever_ie_mm(self):
         if not self.lever:
             return None
-        x, y, z = self.lever
-        return (y * 1000.0, x * 1000.0, -z * 1000.0)
+        from dcs_core import frames                 # inertial_explorer/1: [S, F, -D]
+        return tuple(v * 1000.0 for v in frames.frd_to_inertial_explorer(self.lever))
 
     def add(self, unix_s, micros, s):
         """unix_s, micros: UTC time of the sample, or unix_s None when the

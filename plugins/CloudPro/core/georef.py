@@ -12,7 +12,9 @@ import numpy as np
 
 from .geodesy import local_jacobian, radii
 
-Z0 = np.array([[0.0, 0.0, 1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]])
+from dcs_core import frames as _frames
+
+Z0 = _frames.HESAI_ZERO               # the hesai_navaq adapter's zero (dcs_core.frames)
 
 
 def _rx(a):
@@ -32,8 +34,7 @@ def _rz(a):
 
 def lidar_matrix(roll, pitch, heading):
     """Mapper mounting angles (deg, navaq_hesai convention) -> sensor-to-vehicle rotation."""
-    r, p, h = np.radians([roll, pitch, heading])
-    return _rz(h) @ _ry(p) @ _rx(-r) @ Z0
+    return _frames.hesai_mount_matrix(roll, pitch, heading)
 
 
 def navaq_from_lidar_matrix(Mx):

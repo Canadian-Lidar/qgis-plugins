@@ -302,7 +302,7 @@ def lever_for(did, d, opt, offsets):
         if key and key in offsets:
             return offsets[key]
     if _num(opt.get("mount_y")) not in (None, 0):
-        side = "port" if _num(opt["mount_y"]) > 0 else "starboard"        # SonarView's Y is to port
+        side = "starboard" if _num(opt["mount_y"]) > 0 else "port"        # SonarView's Mount Offset is FRD
         if side in offsets:
             return offsets[side]
     return None
@@ -327,17 +327,17 @@ def sonar_mounts(sessions, platform):
 
 
 def sonarview_offset(opt):
-    """SonarView's Mount Offset as [Forward, Starboard, Down] m, or None when not set (all zero / missing).
-    SonarView's Y is positive to PORT (settled 13 Nov 2026 on the Lumston recording: device 30053, Y +0.056, looks
-    to port, as its yaw +90 and SonarView's XTF channel names say), so Starboard = -Y; X forward; Z down."""
+    """SonarView's Mount Offset as canonical [Forward, Starboard, Down] m (adapter cerulean_sonarview_mount/1 in
+    dcs_core.frames: Cerulean's FRD frame, kept as entered), or None when not set (all zero / missing)."""
+    from dcs_core import frames
     v = [_num(opt.get(k)) for k in ("mount_x", "mount_y", "mount_z")] if opt else []
-    if len(v) != 3 or any(x is None for x in v) or not any(v):
+    if len(v) != 3 or any(x is None for x in v):
         return None
-    return [v[0], -v[1], v[2]]
+    return frames.sonarview_mount_to_frd(v)
 
 
 OFFSETS_SOURCE = "sonar_offsets.json"
-SV_SOURCE = "SonarView Mount Offset (X forward, Y port, Z down), as recorded"
+SV_SOURCE = "SonarView Mount Offset (FRD: X forward, Y starboard, Z down)"   # = frames.SONARVIEW_MOUNT_TEXT
 
 
 def hardware_json(info, offsets=None, gnss=None, extra=None, fallback=None, fallback_source="TidalCal vessel table"):
@@ -377,6 +377,10 @@ def hardware_json(info, offsets=None, gnss=None, extra=None, fallback=None, fall
         if lever is not None:
             rec["acoustic_centre_m"] = [float(v) for v in lever]
             rec["acoustic_centre_source"] = source
+            if source == SV_SOURCE:
+                from dcs_core import frames
+                rec["acoustic_centre_frame"] = frames.adapter_record(*frames.SONARVIEW_MOUNT,
+                                                                     raw=rec["mount_m_sonarview"])
             rec["side"] = "starboard" if float(lever[1]) > 0 else "port" if float(lever[1]) < 0 else "centre"
         else:
             rec["acoustic_centre_m"] = None

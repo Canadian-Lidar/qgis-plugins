@@ -39,7 +39,7 @@ class SonarOptions:
 
 
 def head_label(info, did):
-    side = info.get("side")
+    side = info.get("looks") or info.get("side")          # the side its fan looks to
     return "%s%s" % (side or "head %d" % did, " (%s)" % info["nickname"] if info.get("nickname") else "")
 
 

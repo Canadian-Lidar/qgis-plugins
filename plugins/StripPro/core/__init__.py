@@ -5,4 +5,4 @@
   job      read PosPro / AlignPro / the survey lines, sample, solve, write the corrected trajectory (handover)
 """
 NAME = "StripPro"
-__version__ = "1.0.1"
+__version__ = "1.0.2"
