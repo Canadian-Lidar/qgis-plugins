@@ -878,3 +878,100 @@ class ScaleDialog(QtWidgets.QDialog):
             theme.msg_warn(self, "CloudPro", "The maximum must be larger than the minimum.")
             return
         self.accept()
+
+
+class InterpolateDialog(QtWidgets.QDialog):
+    """Interpolation (fill holes in the grid with virtual points), as AutoClean's: area, method, virtual points per
+    cell, cell size, search range, which points give the heights, the class of the new points, append."""
+
+    def __init__(self, parent, have_box, existing, class_counts=None, last=None):
+        super().__init__(parent)
+        from ..core import filters as F, interpolate as I
+        self.I = I
+        last = dict(last or {})
+        self.setWindowTitle("CloudPro - interpolation")
+        lay = QtWidgets.QFormLayout(self)
+        self.area = QtWidgets.QComboBox()
+        self.area.addItem("Inspection Area", "box")
+        self.area.addItem("Entire project", "project")
+        if not have_box:
+            self.area.model().item(0).setEnabled(False)
+            self.area.setCurrentIndex(1)
+        else:
+            self.area.setCurrentIndex(max(0, self.area.findData(last.get("area", "box"))))
+        lay.addRow("Area", self.area)
+        self.method = QtWidgets.QComboBox()
+        for k, label in I.METHODS:
+            self.method.addItem(label, k)
+        self.method.setCurrentIndex(max(0, self.method.findData(last.get("method", "hole_idw"))))
+        self.method.setToolTip("Hole - inverse distance: an empty cell with filled cells in 6 of the 8 directions "
+                               "(within the search range) gets their inverse-distance mean.\nHole - triangulation: "
+                               "each hole closed by data is filled on straight lines between the cells around it.\n"
+                               "Area - triangulation: every empty cell of the Inspection Area, on straight lines; "
+                               "the search range is the longest gap bridged.\nArea - extrapolation: as inverse "
+                               "distance with 2 of 8 directions: fills the edges of the survey.")
+        lay.addRow("Method", self.method)
+        self.ppc = QtWidgets.QComboBox()
+        for n in I.POINTS_PER_CELL:
+            self.ppc.addItem("%d" % n, n)
+        self.ppc.setCurrentIndex(max(0, self.ppc.findData(int(last.get("points_per_cell", 4)))))
+        self.ppc.setToolTip("Virtual points made in each filled cell, spread evenly over it (1 = the cell centre)")
+        lay.addRow("Virtual points per cell", self.ppc)
+        self.cell = QtWidgets.QComboBox()
+        for c in I.CELLS:
+            self.cell.addItem("%g m" % c, c)
+        self.cell.setCurrentIndex(max(0, self.cell.findData(float(last.get("cell", 1.0)))))
+        lay.addRow("Cell size", self.cell)
+        self.search = QtWidgets.QSpinBox()
+        self.search.setRange(1, 200)
+        self.search.setValue(int(last.get("search", 10)))
+        self.search.setSuffix(" cells")
+        self.search.setToolTip("How far to look for a filled cell (Area - triangulation: the longest gap bridged)")
+        lay.addRow("Search range", self.search)
+        self.src = QtWidgets.QComboBox()
+        self.src.addItem("Every accepted point", ())
+        counts = class_counts[0] if class_counts is not None else None
+        for c, name in sorted(F.ASPRS.items()):
+            if counts is None or (c < len(counts) and counts[c] > 0):
+                self.src.addItem("%s only" % name, (c,))
+        self.src.setCurrentIndex(max(0, self.src.findData(tuple(last.get("classes") or ()))))
+        lay.addRow("Heights from", self.src)
+        self.cls = QtWidgets.QComboBox()
+        for c, name in sorted(F.ASPRS.items()):
+            self.cls.addItem(name, c)
+        self.cls.setCurrentIndex(max(0, self.cls.findData(int(last.get("new_class", 2)))))
+        lay.addRow("Class of the new points", self.cls)
+        self.append = QtWidgets.QCheckBox("Keep the interpolated points made before (%s)" % "{:,}".format(existing))
+        self.append.setVisible(existing > 0)
+        self._existing = existing
+        lay.addRow("", self.append)
+        self.note = QtWidgets.QLabel("")
+        self.note.setWordWrap(True)
+        self.note.setMaximumWidth(420)
+        lay.addRow(self.note)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok |
+                                        QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+        bb.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).setText("Interpolate")
+        bb.accepted.connect(self._ok)
+        bb.rejected.connect(self.reject)
+        lay.addRow(bb)
+        self.method.currentIndexChanged.connect(self._check)
+        self.area.currentIndexChanged.connect(self._check)
+        self._check()
+        theme.polish_dialog(self)
+
+    def _check(self):
+        need = self.method.currentData() in self.I.AREA_ONLY and self.area.currentData() == "project"
+        self.note.setText("This method needs an area: choose the Inspection Area." if need else "")
+
+    def _ok(self):
+        if self.method.currentData() in self.I.AREA_ONLY and self.area.currentData() == "project":
+            return
+        self.accept()
+
+    def settings(self):
+        """(interpolate.Settings, area key)."""
+        return self.I.Settings(method=self.method.currentData(), cell=float(self.cell.currentData()),
+                               points_per_cell=int(self.ppc.currentData()), search=int(self.search.value()),
+                               classes=tuple(self.src.currentData() or ()), new_class=int(self.cls.currentData()),
+                               append=self._existing > 0 and self.append.isChecked()), self.area.currentData()

@@ -404,6 +404,8 @@ class MainWindow(QtWidgets.QMainWindow):
                              self.show_properties, "Ctrl+R"), (None, None, None),
                             ("Georeference / update the points...", self.georeference, "Ctrl+I"),
                             ("Check line separation...", self.check_separation, ""),
+                            ("Interpolate (fill holes in the grid)...", self.interpolate, ""),
+                            ("Delete interpolation", self.delete_interpolation, ""),
                             ("Finalize for the job (LAS, ground grid, cloud.json)...", self.publish_dialog, "Ctrl+P"),
                             ("Export (LAS, XYZ, grid) anywhere...", self.export, "Ctrl+E"),
                             ("Save", self.save_project, "Ctrl+S"), (None, None, None),
@@ -956,6 +958,51 @@ class MainWindow(QtWidgets.QMainWindow):
             self.status("QGIS project saved: %s" % path, 8000)
         except Exception as ex:        # noqa: BLE001
             self._error("Cannot save the QGIS project", ex)
+
+    def interpolate(self):
+        """Fill holes in the grid with virtual points (AutoClean's Interpolation)."""
+        if self.project is None or self._guard("interpolating"):
+            return
+        from ..core import interpolate as I
+        from .dialogs import InterpolateDialog
+        try:
+            counts = self.project.store.class_counts()
+        except Exception:       # noqa: BLE001
+            counts = None
+        d = InterpolateDialog(self, self.box is not None, I.count(self.project), counts,
+                              self.project.data.get("interpolate"))
+        if exec_(d) != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        s, area = d.settings()
+        box = dict(self.box) if area == "box" and self.box is not None else None
+        from dataclasses import asdict
+        self.project.data["interpolate"] = dict(asdict(s), area=area)
+        prj = self.project
+
+        def job(progress, cancel):
+            res = I.run(prj, s, box, progress, cancel)
+            IM.rebuild_grids(prj, res["keys"])
+            return res, s, area
+        self._run("interpolate", job, "Interpolating")
+
+    def delete_interpolation(self):
+        if self.project is None or self._guard("deleting the interpolation"):
+            return
+        from ..core import interpolate as I
+        n = I.count(self.project)
+        if not n:
+            theme.msg_info(self, "CloudPro", "The project has no interpolated points.")
+            return
+        if theme.msg_question(self, "CloudPro", "Delete the %s interpolated points?" % "{:,}".format(n)) != \
+                QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        prj = self.project
+
+        def job(progress, cancel):
+            m, keys = I.delete(prj)
+            IM.rebuild_grids(prj, keys)
+            return m
+        self._run("interp_delete", job, "Deleting the interpolation")
 
     def reset_points(self):
         if self.project is None or self._guard("removing the points"):
@@ -3375,6 +3422,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plan.invalidate()                  # the worker rebuilt the changed grids
             self.load_box()
             self._edited(None)
+        elif tag == "interpolate":
+            r, s, area = res
+            from ..core import interpolate as I
+            self.project.log("Interpolated (%s, %g m cells, %d point%s per cell, search %d cells, %s): %d cells "
+                             "filled, %s virtual points (%s in the project)" % (
+                                 dict(I.METHODS)[s.method], s.cell, s.points_per_cell,
+                                 "" if s.points_per_cell == 1 else "s", s.search,
+                                 "Inspection Area" if area == "box" else "entire project", r["filled_cells"],
+                                 "{:,}".format(r["points"]), "{:,}".format(r["total"])))
+            self.save_project()
+            self._after_points_changed()
+            self.status("Interpolated: %s virtual points in %d cells (of %d empty)" % (
+                "{:,}".format(r["points"]), r["filled_cells"], r["empty_cells"]), 15000)
+        elif tag == "interp_delete":
+            self.project.log("Interpolation deleted: %s virtual points" % "{:,}".format(res))
+            self.save_project()
+            self._after_points_changed()
+            self.status("Deleted %s interpolated points" % "{:,}".format(res), 10000)
         elif tag == "separation":
             self.plan.set_separation(res, True)
             self.project.log("Line separation checked: %s" % SEP.verdict(res, self.plan.tolerance))
