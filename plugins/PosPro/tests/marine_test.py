@@ -53,6 +53,13 @@ def test_marine_llh_process_and_finalize():
         assert doc["platform"] == "marine"
         assert sorted(doc["sensors"]) == ["sonar_1", "sonar_2"]
         assert doc["sensors"]["sonar_1"]["lever_m"] == [-0.40, -0.31, 0.65]
+        # the same results as a mobile mapping GNSS-only run: Quality, Trajectory Review and Export read them
+        from PosPro.core import results, review
+        assert p.cfg["results"]["mode"] == "gnss" and p.cfg["results"]["combine"], p.cfg["results"].keys()
+        qc = results.load_qc(os.path.join(p.work_dir, "results", "qc.csv"))
+        assert qc and len(qc["gps_time"]) > 5 and abs(qc["h_m"][0] - 12.0) < 0.5, qc and qc["h_m"][:3]
+        assert os.path.exists(review._orig(p)[0])            # Trajectory Review's untouched copy
+        assert "review" in doc and os.path.exists(os.path.join(p.out_dir, "trajectory_qc.csv"))
         S = np.fromfile(os.path.join(p.out_dir, "trajectory_sbet.out"), sbet.SBET)
         assert len(S) > 10
         # the Base page (same as mobile mapping): the recordings' base RINEX listed, the selected base used by PPK

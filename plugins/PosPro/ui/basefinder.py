@@ -280,6 +280,14 @@ class BaseFinder(QDialog):
         self.canvas.setLayers(layers)
         self._zoom_km(70)
 
+    def showEvent(self, e):
+        """Centre on the survey once the map has its real size (an extent set before that drifts)."""
+        super().showEvent(e)
+        if not getattr(self, "_centred", False):
+            self._centred = True
+            from qgis.PyQt.QtCore import QTimer
+            QTimer.singleShot(0, lambda: self._zoom_km(70))
+
     def _zoom_km(self, km):
         la0, lo0 = self.centre[0], self.centre[1]
         n = geo.destination(la0, lo0, 0, km * 1000)[0]

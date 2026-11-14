@@ -586,6 +586,13 @@ class BasePage(Page):
         llh = geo.ecef2llh(*xyz)
         rows = results.load_rt(os.path.join(p.work_dir, "extract", "rt.bin"), 2.0) or []
         track = [(r[1], r[2]) for r in rows]
+        if not track and self.dock._marine:            # the boat's track: the recordings' autopilot positions
+            for rec in self.dock.marine_recordings():
+                if isinstance(rec, Exception):
+                    continue
+                P = rec.vehicle()["pos"]
+                step = max(1, len(P) // 2000)
+                track += [(float(a), float(b)) for a, b in zip(P["lat"][::step], P["lon"][::step])]
         if track:
             llh = (sum(t[0] for t in track) / len(track), sum(t[1] for t in track) / len(track), llh[2])
         dlg = BaseFinder(self, p, days, llh, track)
@@ -1344,6 +1351,22 @@ class ProcessPage(Page):
         f.addRow("Passes", self.passes)
         ml.addLayout(f)
         v.addWidget(mg)
+        self._mg, self._mform = mg, f
+        # a marine job (the survey boat): where the boat's position comes from and how its heading is made
+        self.boat = QGroupBox("Boat")
+        bf = QFormLayout(self.boat)
+        self.b_pos = QComboBox()
+        from .marinepages import POSITION_CHOICES
+        for k, label in POSITION_CHOICES:
+            self.b_pos.addItem(label, k)
+        self.b_cog = _dspin(0.0, 5.0, 1, 0.1, " m/s")
+        self.b_cog.setToolTip("Heading = course over ground above this speed, the autopilot's compass below it")
+        bf.addRow("Position", self.b_pos)
+        bf.addRow("Course over ground above", self.b_cog)
+        v.addWidget(self.boat)
+        self.boat.setVisible(False)
+        self.b_pos.currentIndexChanged.connect(self.store_boat)
+        self.b_cog.valueChanged.connect(self.store_boat)
 
         gg = QGroupBox("GNSS")
         gl = QGridLayout(gg)
@@ -1377,6 +1400,7 @@ class ProcessPage(Page):
         gl.addLayout(f4, 2, 0, 1, 3)
         v.addWidget(gg)
 
+        self._gg = gg
         ig = QGroupBox("Inertial")
         il = QGridLayout(ig)
         self.nhc = QCheckBox("Wheeled vehicle constraint")
@@ -1390,6 +1414,7 @@ class ProcessPage(Page):
         il.addWidget(QLabel("Trajectory rate"), 2, 0)
         il.addWidget(self.rate, 2, 1)
         v.addWidget(ig)
+        self._ig = ig
 
         adv = QWidget()
         al = QFormLayout(adv)
@@ -1408,7 +1433,8 @@ class ProcessPage(Page):
         al.addRow("Outlier gate (\u03c7\u00b2)", self.gate)
         al.addRow("Max base gap", self.basedt)
         al.addRow("Expert", self.extra)
-        v.addWidget(Section("Advanced", adv))
+        self._adv = Section("Advanced", adv)
+        v.addWidget(self._adv)
 
         self.b_run = QPushButton("Process")
         self.b_run.setObjectName("ppPrimary")
@@ -1429,11 +1455,41 @@ class ProcessPage(Page):
         self.extra.textChanged.connect(lambda *_: self._extra_timer.start(400))
         self._loading = False
 
+    def _marine_layout(self, on):
+        """Marine job: GNSS only (the boat has no IMU in the processing), PPK, the boat's position and heading;
+        the same GNSS settings and Process button as mobile mapping."""
+        for b in self.mode.buttons():
+            b.setVisible(not on or b.property("key") == "gnss")
+        if hasattr(self._mform, "setRowVisible"):          # Qt 6.4+
+            self._mform.setRowVisible(0, not on)
+        else:
+            self.pos.setEnabled(not on)
+        self._ig.setVisible(not on)
+        self._adv.setVisible(not on)
+        self.boat.setVisible(on)
+
+    def store_boat(self, *_):
+        if self._loading or not self.project:
+            return
+        m = self.project.cfg.setdefault("marine", {})
+        m["position"] = self.b_pos.currentData()
+        m["cog_min_speed"] = self.b_cog.value()
+        self.dock.save()
+        self.dock.update_steps()
+
     def refresh(self):
         p = self.project
         if not p:
             return
         self._loading = True
+        self._marine_layout(self.dock._marine)
+        if self.dock._marine:
+            from ..core import marine
+            o = marine.options(p)
+            self.b_pos.setCurrentIndex(max(0, self.b_pos.findData(o["position"])))
+            self.b_cog.setValue(float(o["cog_min_speed"]))
+            p.cfg["processing"]["mode"] = "gnss"
+            p.cfg["processing"]["positioning"] = "ppk"
         c = p.cfg["processing"]
         for b in self.mode.buttons():
             b.setChecked(b.property("key") == c.get("mode", "tc"))
@@ -1495,6 +1551,8 @@ class ProcessPage(Page):
         p = self.project
         if not p:
             return "todo", ""
+        if self.dock._marine:
+            return self.dock.mpage["process"].state()
         r = p.cfg.get("results") or {}
         if r.get("combine") or (r.get("mode") == "gnss" and r.get("gnss")):
             if pipeline.lever_bug_job(p):
@@ -1830,8 +1888,8 @@ class ReviewPage(Page):
         self.poor_sd.setValue(float(th["poor_sd_m"]))
         self._loading = False
         mode = p.cfg["processing"].get("mode")
-        self.b_excl.setVisible(mode in ("tc", "lc"))
-        self.b_excl.setEnabled(mode in ("tc", "lc"))
+        self.b_excl.setVisible(mode in ("tc", "lc") and not self.dock._marine)
+        self.b_excl.setEnabled(mode in ("tc", "lc") and not self.dock._marine)
         self.fill()
 
     def store(self, *_):
@@ -1966,7 +2024,7 @@ class ReviewPage(Page):
             b.setEnabled(n > 0)
         self.b_remove.setEnabled(any(str(it["id"]).startswith("S") for it in self.selected_items()))
         mode = self.project.cfg["processing"].get("mode") if self.project else ""
-        self.b_excl.setEnabled(n > 0 and mode in ("tc", "lc"))
+        self.b_excl.setEnabled(n > 0 and mode in ("tc", "lc") and not self.dock._marine)
         self.b_interp.setEnabled(n > 0)
 
     # ------------------------------------------------------------- actions
@@ -2535,11 +2593,17 @@ class ExportPage(Page):
         self.folder.setText(e.get("folder") or os.path.join(p.folder, "export"))
         inst = p.cfg["installation"]
         self.point.clear()
-        self.point.addItem("IMU centre", "imu")
-        if any(inst["lever_output"]):
-            self.point.addItem(inst.get("output_name") or "Output point", "output")
-        self.point.addItem("GNSS antenna", "antenna")
-        self.point.setCurrentIndex(max(0, self.point.findData(e.get("point", "imu"))))
+        mp = self.dock.marine_export_points if self.dock._marine else None
+        if mp is not None:                  # marine job: the antenna (reference point) and each sonar head
+            for label, key, _lever in mp():
+                self.point.addItem(label, key)
+            self.point.setCurrentIndex(max(0, self.point.findData(e.get("point", "antenna"))))
+        else:
+            self.point.addItem("IMU centre", "imu")
+            if any(inst["lever_output"]):
+                self.point.addItem(inst.get("output_name") or "Output point", "output")
+            self.point.addItem("GNSS antenna", "antenna")
+            self.point.setCurrentIndex(max(0, self.point.findData(e.get("point", "imu"))))
         self.rate.setCurrentIndex(max(0, self.rate.findData(int(e.get("rate_hz", 0) or 0))))
         self.sbet.setChecked(bool(e.get("sbet", True)))
         self.ascii.setChecked(bool(e.get("ascii", False)))
@@ -2571,8 +2635,12 @@ class ExportPage(Page):
         self.store()
         e = p.cfg["export"]
         cols = [c for c in (e.get("ascii_cols") or "").split(",") if c]
-        lever = {"imu": [0, 0, 0], "output": p.cfg["installation"]["lever_output"],
-                 "antenna": p.cfg["installation"]["lever_antenna"]}[e["point"]]
+        mp = self.dock.marine_export_points if self.dock._marine else None
+        if mp is not None:
+            lever = next((lv for _l, k, lv in mp() if k == e["point"]), [0.0, 0.0, 0.0])
+        else:
+            lever = {"imu": [0, 0, 0], "output": p.cfg["installation"]["lever_output"],
+                     "antenna": p.cfg["installation"]["lever_antenna"]}.get(e["point"], [0, 0, 0])
         proj = None
         if e["ascii"] and ("easting" in cols or "northing" in cols):
             crs = self.crs.crs() if hasattr(self.crs, "crs") else QgsCoordinateReferenceSystem(self.crs.text())
@@ -2825,13 +2893,16 @@ class PosProDock(PluginWindow):
         w = self.stack.currentWidget()
         if self._marine and w in self._mscroll:
             return self._mscroll.index(w)
-        return self.stack.currentIndex()
+        return self.stack.currentIndex()        # the mobile mapping page (also a marine job's shared steps)
 
     def goto_page(self, k):
         if isinstance(k, str):
             k = self.index_of(k)
         if self._marine:
-            self.stack.setCurrentWidget(self._mscroll[k])
+            if getattr(self.mpages[k], "SHARED", False):
+                self.stack.setCurrentIndex(k)   # the mobile mapping page itself (Base, Quality, Review, Export)
+            else:
+                self.stack.setCurrentWidget(self._mscroll[k])
             self.step_buttons[k].setChecked(True)
             if self.project:
                 try:
@@ -3185,11 +3256,25 @@ class PosProDock(PluginWindow):
         self._marine = marine.is_marine(p)
         self._mrecs = None
         self.nav.setVisible(True)
+        self.qc = results.load_qc(os.path.join(p.work_dir, "results", "qc.csv"))
         if self._marine:
-            self.qc = None
+            p.cfg["processing"]["mode"] = "gnss"     # GNSS only (no IMU): Review and the editor offer what fits
+            self.antenna_check = None
+            self.traj_layer = None
+            self._edits_pending = False
+            try:
+                if self.plugin.plots is not None:
+                    self.plugin.plots.set_data(self.qc)
+                if self.plugin.editor is not None:
+                    self.plugin.editor.sel_windows = []
+                    self.plugin.editor.reload(keep_view=False)
+            except Exception as e:      # noqa: BLE001
+                self.log("warning", "could not refresh the editor or plots: %s" % e)
+            self.refresh_map_bases()
+            if self.qc:
+                self.show_trajectory()
             self.goto_page(0)
             return
-        self.qc = results.load_qc(os.path.join(p.work_dir, "results", "qc.csv"))
         # nothing of the previous project stays on show
         self.antenna_check = None
         self.traj_layer = None
@@ -3362,6 +3447,8 @@ class PosProDock(PluginWindow):
 
     def run_processing(self):
         p = self.project
+        if self._marine:                    # the boat: its own processing behind the same Process button
+            return self.run_marine()
         problems = []
         if not (p.cfg["rover"].get("extract") or {}):
             problems.append("Read the rover files (Data).")
@@ -3428,6 +3515,16 @@ class PosProDock(PluginWindow):
         if self.start_task("Processing", work, done) is None:
             self._release_run(False, "not started")
 
+    def marine_export_points(self):
+        """Export 'Position of' on a marine job: [(label, key, lever [F, S, D] from the GNSS antenna)]."""
+        out = [("GNSS antenna", "antenna", [0.0, 0.0, 0.0])]
+        s = ((self.project.cfg.get("results") or {}).get("marine") or {}) if self.project else {}
+        for d, h in sorted((s.get("heads") or {}).items()):
+            if h.get("lever_m"):
+                out.append(("Sonar %s (looks %s)" % (h.get("nickname") or d, h.get("looks") or "?"), "head:%s" % d,
+                            [float(v) for v in h["lever_m"]]))
+        return out
+
     def marine_recordings(self):
         """The job's sonar recordings (dcs_core.marine.SonarRecording, or the exception that stopped one), read
         once per project."""
@@ -3493,12 +3590,19 @@ class PosProDock(PluginWindow):
             if not ok:
                 theme.msg_warn(self, "PosPro", "Processing stopped:\n\n%s" % res)
                 return
-            p.cfg.setdefault("results", {})["marine"] = work_p.cfg["results"]["marine"]
+            self._merge_back(work_p)            # the same results as a mobile mapping run (+ results.marine)
+            p.cfg["rover"]["marine_span"] = work_p.cfg["rover"].get("marine_span")
             self.save()
             for r in res.get("recordings", []):
                 self.log("info", "%s: %s, %.1f %% fixed" % (r["name"], r["source_label"],
                                                            (r.get("quality_pct") or {}).get("fixed", 0.0)))
             self._mrecs = None
+            self.qc = results.load_qc(os.path.join(p.work_dir, "results", "qc.csv"))
+            self.show_trajectory()
+            if self.plugin.plots:
+                self.plugin.plots.set_data(self.qc)
+            if self.plugin.editor is not None and self.plugin.editor.isVisible():
+                self.plugin.editor.reload(keep_view=True)
             self.goto_page("quality")
         if self.start_task("Marine trajectory", work, done) is None:
             self._release_run(False, "not started")
@@ -3629,7 +3733,7 @@ class PosProDock(PluginWindow):
                  "Base         %s, position from %s" % (b.get("name") if b else "-", b.get("pos_source") if b else "-"),
                  "Heights      ellipsoidal",
                  "Time         GPS; SBET time is GPS seconds of week %s" % (geo.gps_week_sow(span[0])[0] if span else ""),
-                 "Point        %s, offset from IMU (X fwd, Y right, Z down) %.3f %.3f %.3f m" % (
+                 "Point        %s, offset from the reference point (IMU centre; GNSS antenna on a boat) (X fwd, Y right, Z down) %.3f %.3f %.3f m" % (
                      e.get("point"), lever[0], lever[1], lever[2]),
                  "Attitude     roll, pitch, heading of the Certus aligned (vehicle) frame",
                  "",
