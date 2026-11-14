@@ -226,7 +226,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <p><b>Navigation or survey lines?</b> A mapper 2.10 navigation recording holds everything the Certus sent while the mapper project was open: the static periods before and after the drive and the time between the lines as well as the lines themselves. Processed once, it gives one trajectory that covers every line, which suits PPK and tight coupling best. The survey lines hold only each line and a few seconds around it. Files are read in recording order, whatever their names. The navigation recording's hardware record has no vehicle, rear axle or coordinate system; PosPro takes those from a survey line of the same job.</p>
 <p>PosPro keeps its own settings in <code>01_PosPro/pospro.json</code> and its work in <code>01_PosPro/work/</code> (extracted data, intermediate files, results). Shared facts that the other stages need (coordinate frame, base station, antenna offsets, vehicle, the capture's hardware record, the list of captures) are written into the shared project whenever you change them in PosPro.</p>
 
-<h1><span class="num">{N}</span>Step 1 – Data</h1>
+<h1 id="step1"><span class="num">{N}</span>Step 1 – Data</h1>
 <div class="tip"><b>Why here</b> Everything is computed from the rover files. Reading them first shows how complete the recording is (IMU and satellite coverage, gaps) before any time is spent on it; a recording with holes is better found now than after processing.</div>
 <p>The Data page holds the rover files, what they contain, the time range to process and the satellite ephemeris.</p>
 <figure><img src="fig/data_files.png"><figcaption><b>Figure {N}.1</b> The rover files of the project: the two captures found in the job folder.</figcaption></figure>
@@ -370,7 +370,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 </ol>
 <p>Station lists are cached for a week; <span class="ui">Refresh station lists</span> loads them again. The commercial stations come from NRCan's list of networks tied to NAD83(CSRS), so they cover Canada only.</p>
 
-<h1><span class="num">{N}</span>Step 4 – Processing</h1>
+<h1 id="step4"><span class="num">{N}</span>Step 4 – Processing</h1>
 <div class="tip"><b>Why here</b> With the data read, the antennas checked and the base positioned, processing has everything it needs. The defaults (tight coupling, both antennas, both passes) are the most accurate and suit almost every drive.</div>
 <figure><img src="fig/processing.png"><figcaption><b>Figure {N}.1</b> The Processing page with its default settings (tightly coupled, PPK, both passes) and the <span class="ui">Advanced</span> section opened.</figcaption></figure>
 
@@ -426,7 +426,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 </ol>
 <p>The status line shows the stage and the progress bar the progress; <span class="ui">STOP</span> ends the run. The project box turns red and PosPro in the chain turns blue (<i>running</i>); another computer cannot process the same stage at the same time (<i>… is being processed by … on … since …</i>). When the run finishes, the Quality page opens. A run that fails or is stopped keeps the earlier results, and PosPro in the chain turns red (<i>failed</i>).</p>
 
-<h1><span class="num">{N}</span>Step 5 – Quality</h1>
+<h1 id="step5"><span class="num">{N}</span>Step 5 – Quality</h1>
 <div class="tip"><b>Why here</b> Judge the result before building on it. The share of fixed ambiguities, the forward/backward separation and the longest IMU-only gap say whether to go on, change a setting, or fix an input and process again.</div>
 <figure><img src="fig/quality.png"><figcaption><b>Figure {N}.1</b> The Quality page for a real-time trajectory. With one pass there is no forward/backward separation; see the note below.</figcaption></figure>
 <p>The donut shows the share of each solution type (Fixed mint, Float blue, PPP light blue, Code (DGNSS) amber, Single red, INS only violet). The cards:</p>
@@ -467,7 +467,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <figure class="half"><img src="fig/calib_needs_tc.png"><figcaption><b>Figure {N}.2</b> The solver needs tight coupling.</figcaption></figure>
 <p>The offsets become observable when the vehicle turns and changes speed: drive a few figure-eights or loops in open sky. Horizontal offsets come out to about a centimetre; the vertical offset is weaker, so keep the tape measure for that one. A straight drive cannot separate the forward offset from the IMU's own errors.</p>
 
-<h1><span class="num">{N}</span>Step 7 – Trajectory Review</h1>
+<h1 id="step7"><span class="num">{N}</span>Step 7 – Trajectory Review</h1>
 <div class="tip"><b>Why here</b> Hand edits belong to one processed trajectory (processing again takes hand selections off the list), so they come once the processing is final. Review is for what the data cannot give, such as a wrong fix under trees; wrong inputs are fixed at their own step and processed again.</div>
 <p>Trajectory Review finds where the trajectory misses your limits, lets you look at each place in the Trajectory editor, on the map and in the plots, and records what you decide for each. Decisions are kept with the project and carried to AlignPro and CloudPro.</p>
 <figure><img src="fig/review_found.png"><figcaption><b>Figure {N}.1</b> Anomalies found with the default limits on the simulated drive: the float spell under trees, the DGNSS spell with a sideways jump and the short GNSS gap. All are still open.</figcaption></figure>
@@ -557,7 +557,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <p>The Review step shows <i>find anomalies</i> before the first search, <i>N open</i> in amber while windows are undecided, <i>process again</i> while GNSS exclusions wait, and <i>N reviewed</i> in green when all are decided.</p>
 <div class="tip"><b>No base station?</b> Choose <span class="ui">Real-time solution (no base station)</span> on the Processing page. PosPro then uses the trajectory the Certus computed in the field (RTK when it had corrections), and Trajectory Review cleans it the same way, with the Trajectory editor for the parts it got wrong.</div>
 
-<h1><span class="num">{N}</span>Step 8 – Export</h1>
+<h1 id="step8"><span class="num">{N}</span>Step 8 – Export</h1>
 <div class="tip"><b>Why here</b> Only for other software. AlignPro and CloudPro already read the trajectory PosPro finalizes every time it processes or applies a review edit.</div>
 <figure><img src="fig/export.png"><figcaption><b>Figure {N}.1</b> The Export page with SBET + SMRMSG, a text file with seven columns and a GPX track chosen.</figcaption></figure>
 <table>
@@ -614,14 +614,14 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <figure><img src="fig/marine_install.png" style="max-height:110mm"><figcaption><b>Figure {N}.1</b> Installation on the Lumston survey: each head looks to the side opposite to where SonarView's offsets put it, so the page suggests swapping the offsets. Below, the mounting check: the heads are tilted 2.6° differently and both see 1.8 m of seabed under the boat at 13.2 m.</figcaption></figure>
 <table>
 <tr><th>Step</th><th>Marine content</th></tr>
-<tr><td>1 Data</td><td>The recordings: start, length, parts of a split recording, the heads (and which side each looks to) and the position each holds (rover and base RINEX, the Reach log, the autopilot).</td></tr>
+<tr><td>1 Data</td><td>Laid out as the mobile mapping Data page (<a href="#step1">Step 1</a>): the recordings, what each contains (start, length, parts, the heads and which side each looks to, the positions it holds), the time range to process, the data coverage and the satellite ephemeris (IGS broadcast download, navigation files you add), which marine PPK uses.</td></tr>
 <tr><td>2 Installation</td><td>The boat's reference point is the GNSS antenna reference point. Each head's offset to its acoustic centre (forward, starboard, down) comes from SonarView's Mount Offset (X forward, Y starboard, Z down, as Cerulean documents it); type another value to use it, <span class="ui">Use the recorded offsets</span> goes back. Untick <span class="ui">Use</span> to leave a head out of the job (PosPro, AlignPro and CloudPro). <i>Looks to</i> comes from the head's own tilt sensor and <i>Mounted</i> follows the offsets in use; when they differ for both heads the page says so and <span class="ui">Swap the two heads' offsets</span> gives each head the other's (offsets entered for the wrong head in SonarView). <b>Mounting (from the data)</b>, filled by <span class="ui">Process</span> or <span class="ui">Measure from the data</span>: each head's tilt from vertical (its beam centre, from its tilt sensor), how far its 90° fan reaches past vertical under the boat (spec from the tilt / measured where 99.5 % of its soundings stop), its outer edge and the depth; below, how much seabed both heads see under the boat at that depth and from what depth they meet. The step turns amber when the two heads are tilted more than 1.5° differently or do not meet. After remounting the heads, record a short run and look here before the patch test.</td></tr>
 <tr><td>3 Base</td><td>The same Base page as for mobile mapping (<a href="#base">Base stations</a>). The base RINEX stored in the recordings is listed as <i>Recorded</i>, with its position from the RINEX header (approximate), or the surveyed base of a TidalCal project; set the mark, frame, epoch, antenna type and ARP height there, or run <span class="ui">Built-in PPP</span> / CSRS-PPP. <span class="ui">Add RINEX…</span> and <span class="ui">Download…</span> add other bases; <span class="ui">Use this base</span> chooses the one PPK uses. The step is amber while the position is the RINEX header's or the antenna type / ARP height are missing.</td></tr>
-<tr><td>4 Processing</td><td>Position: <i>Best available</i> (PPK, else the Reach log, else the autopilot) or one of them; heading from the course over ground above the speed set (0.5 m/s), the compass below. <span class="ui">Process</span> computes and finalizes the trajectory for AlignPro and CloudPro. The step says when the settings or offsets changed since the last run.</td></tr>
-<tr><td>5 Quality</td><td>Per recording: position source, % fixed, rate, share of time on the compass heading; plots of the solution, the estimated accuracy and the speed (compass stretches shaded) over time; each head's attitude check (its own fused attitude against its raw motion sensor).</td></tr>
+<tr><td>4 Processing</td><td>The mobile mapping Processing page (<a href="#step4">Step 4</a>) with the method GNSS only and PPK: Passes and the GNSS settings (systems, elevation mask, ratio test, ambiguity fixing, frequencies) are what marine PPK uses. The <b>Boat</b> group sets the position (<i>Best available</i>: PPK, else the Reach log, else the autopilot; or one of them) and the speed above which the heading is the course over ground (the autopilot compass below). PROCESS finalizes the trajectory for AlignPro and CloudPro.</td></tr>
+<tr><td>5 Quality</td><td>The mobile mapping Quality page (<a href="#step5">Step 5</a>): solution donut, fixed share, forward/backward separation, largest σ, longest gap, findings, map colouring and the quality plots. Where one PPK pass is fixed and the other is not, the fixed one is used; both fixed are combined.</td></tr>
 <tr><td>6 Calibration</td><td>Not used for marine jobs: the sonar angles and offsets are checked in AlignPro.</td></tr>
-<tr><td>7 Review</td><td>The stretches where the position was not fixed or the heading came from the compass.</td></tr>
-<tr><td>8 Export</td><td>SBET and SMRMSG at the GNSS antenna, and a text file (UTC, latitude, longitude, height, heading, speed, solution) — only for other software.</td></tr>
+<tr><td>7 Review</td><td>The mobile mapping Trajectory Review and Trajectory editor (<a href="#step7">Step 7</a>): find anomalies, select on the map, mark poor, interpolate, accept; the edits are finalized for AlignPro and CloudPro. (Bridge with IMU is not offered: the boat is processed without an IMU.)</td></tr>
+<tr><td>8 Export</td><td>The mobile mapping Export page (<a href="#step8">Step 8</a>): SBET + SMRMSG, text file with chosen columns and easting/northing, GeoPackage, GPX. <i>Position of</i>: the GNSS antenna or a sonar head's acoustic centre.</td></tr>
 </table>
 <figure><img src="fig/marine_quality.png" style="max-height:110mm"><figcaption><b>Figure {N}.2</b> Quality after processing: PPK 100 % fixed; the boat slowed at the end, where the heading came from the compass (shaded).</figcaption></figure>
 <div class="note"><b>Files from RemixPro 1.2.1</b> RemixPro 1.2.1 read SonarView's Y the other way; DCS Core 1.15.0 corrects those files when it reads them.</div>
@@ -716,6 +716,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <h1 id="history"><span class="num">{N}</span>Version history</h1>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>2.7.0</b></td><td>Marine jobs on the mobile mapping pages: Data (time range, satellite ephemeris), Processing (GNSS settings, passes, Boat group), Quality, Trajectory Review and the Trajectory editor, Export (text, GeoPackage, GPX; position of the antenna or a sonar head). The base finder centres on the survey.</td></tr>
 <tr><td><b>2.6.1</b></td><td>Marine jobs use the same Base page as mobile mapping: base list, position source, frame, epoch, antenna type, ARP height, built-in PPP and CSRS-PPP.</td></tr>
 <tr><td><b>2.6.0</b></td><td><b>Mounting check</b> on the marine Installation page: tilt, reach past vertical, outer edge and depth per head, and the seabed both heads see under the boat (<a href="#marine">Marine jobs</a>).</td></tr>
 <tr><td><b>2.5.0</b></td><td><b>Marine jobs on the normal steps</b>: Data, Installation (offsets you can type, heads on / off, a check of the mounted and looking sides), Base, Processing, Quality (with plots), Calibration (not used), Review, Export (<a href="#marine">Marine jobs</a>).</td></tr>

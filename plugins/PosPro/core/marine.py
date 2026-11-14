@@ -17,6 +17,8 @@ import math
 import os
 import re
 import shutil
+import struct
+import time
 
 import numpy as np
 
@@ -67,10 +69,26 @@ def options(project):
 def settings_key(opts, project=None):
     """What a run depends on (Processing shows 'out of date' when it changed since)."""
     out = {k: opts.get(k) for k in ("position", "cog_min_speed", "base", "levers", "heads_off")}
+    if project is not None:                     # the Processing page's GNSS settings (as mobile mapping)
+        c = project.cfg.get("processing") or {}
+        out["gnss"] = {k: c.get(k) for k in PROC_KEYS}
+        rc = project.cfg.get("rover") or {}
+        out["time_range"] = [rc.get("time_start"), rc.get("time_end")]
+        out["ephemeris"] = [project.cfg.get("auto_ephemeris", True), project.cfg.get("nav_files")]
     b = selected_base(project) if project is not None else None
     if b:                                       # the Base page's selected base: what PPK uses
         out["base_station"] = {k: b.get(k) for k in ("id", "xyz", "frame", "epoch", "antenna", "delta_hen", "files")}
     return _jsonable(out)
+
+
+PROC_KEYS = ("systems", "elmask", "ar_ratio", "ar", "frequencies", "passes", "advanced")
+
+
+def ppk_proc(project):
+    """RTKLIB settings for marine PPK from the Processing page (the same GNSS settings as mobile mapping)."""
+    c = (project.cfg.get("processing") or {}) if project is not None else {}
+    return {"frequencies": c.get("frequencies", 2), "elmask": c.get("elmask", 12), "systems": c.get("systems", "GREJ"),
+            "ar": c.get("ar", True), "ar_ratio": c.get("ar_ratio", 3.0), "advanced": c.get("advanced") or {}}
 
 
 # ----------------------------------------------------------------------------- the Base page's bases
@@ -307,7 +325,7 @@ def combine_passes(fwd, bwd):
     return res
 
 
-def positions_ppk(rec, wdir, base, ctx, atx=None):
+def positions_ppk(rec, wdir, base, ctx, atx=None, navs_extra=None, proc=None, forward_only=False):
     """PPK of the rover RINEX against the base RINEX with PosPro's engine. -> (POS, info) or (None, reason)."""
     from . import engine, pipeline, rinex
     rov, bas = rec.rinex("rover"), rec.rinex("base")
@@ -331,7 +349,7 @@ def positions_ppk(rec, wdir, base, ctx, atx=None):
     if page:
         bo = base["obs"]
         navs = [put("nav_%d_%s" % (i, n), d) for i, (n, d) in enumerate(rov.items()) if not pipeline_obs(n)]
-        navs += list(base["navs"])
+        navs += [f for f in base["navs"] if f not in (navs_extra or [])]
         delta = list(base["delta_hen"])
         ant = base["antenna"]
         note = "base %s: antenna %.3f m to the ARP%s (Base page)" % (base.get("name"), delta[0],
@@ -347,7 +365,8 @@ def positions_ppk(rec, wdir, base, ctx, atx=None):
     if not atx and ant.upper().startswith("EML_REACH_RS2"):
         delta[0] += RS2_PCO_UP_M            # no antenna calibrations: Emlid's ARP -> L1 phase centre
         note += "; no ANTEX: +%.3f m (Emlid RS2 ARP to L1 phase centre)" % RS2_PCO_UP_M
-    proc = {"frequencies": 2, "elmask": 12, "systems": "GREJ", "ar": True, "ar_ratio": 3.0}
+    navs += list(navs_extra or [])                  # the Data page's ephemeris: IGS broadcast, files added there
+    proc = proc or {"frequencies": 2, "elmask": 12, "systems": "GREJ", "ar": True, "ar_ratio": 3.0}
     conf = os.path.join(wdir, "ppk.conf")
     with open(conf, "w", encoding="utf-8") as f:
         f.write(pipeline.rtklib_conf_ppk(proc, atx, delta, ant if atx else ""))
@@ -356,9 +375,15 @@ def positions_ppk(rec, wdir, base, ctx, atx=None):
     g0 = 315964800.0 - 18.0                 # engine times: GPS seconds since 1980-01-06
     common = ["--ts", "%.3f" % (t0 - g0 - 120), "--te", "%.3f" % (t1 - g0 + 120), "--base"] + ["%.4f" % v for v in xyz]
     jobs = [("GNSS forward", ["gnss", "-k", conf, "-o", os.path.join(wdir, "fwd.pos"), "-d", "fwd"] + common +
-             [ro, bo] + navs),
-            ("GNSS backward", ["gnss", "-k", conf, "-o", os.path.join(wdir, "bwd.pos"), "-d", "bwd"] + common +
              [ro, bo] + navs)]
+    for f in ("fwd.pos", "bwd.pos"):
+        try:
+            os.remove(os.path.join(wdir, f))
+        except OSError:
+            pass
+    if not forward_only:                            # Processing page Passes: forward and backward, combined
+        jobs.append(("GNSS backward", ["gnss", "-k", conf, "-o", os.path.join(wdir, "bwd.pos"), "-d", "bwd"] +
+                     common + [ro, bo] + navs))
     res = engine.run_parallel(jobs, ctx.progress if ctx else None, ctx.log if ctx else None,
                               ctx.cancelled if ctx else None)
     for label, r in res.items():
@@ -373,7 +398,8 @@ def positions_ppk(rec, wdir, base, ctx, atx=None):
         return None, "PPK gave no solution"
     if page:
         base = {k: base[k] for k in ("lat", "lon", "h", "frame", "epoch", "source", "name", "approximate")}
-    info = {"base": base, "note": note, "fixed_fwd_pct": _pct(fwd, 1), "fixed_bwd_pct": _pct(bwd, 1)}
+    info = {"base": base, "note": note, "fixed_fwd_pct": _pct(fwd, 1), "fixed_bwd_pct": _pct(bwd, 1),
+            "_fwd": fwd, "_bwd": bwd}             # the passes, for the engine's combination (not kept in the summary)
     return pos, info
 
 
@@ -408,14 +434,16 @@ def positions_mavlink(rec):
     return out
 
 
-def choose_positions(rec, wdir, opts, ctx=None, atx=None, base=None):
+def choose_positions(rec, wdir, opts, ctx=None, atx=None, base=None, navs_extra=None, proc=None,
+                     forward_only=False):
     """(POS, source key, info, [notes]) by the order PPK > rover LLH > autopilot (or the one asked for)."""
     want = opts.get("position", "auto")
     notes = []
     order = ["ppk", "llh", "mavlink"] if want == "auto" else [want]
     for src in order:
         if src == "ppk":
-            pos, info = positions_ppk(rec, os.path.join(wdir, "ppk"), base or base_of(rec, opts), ctx, atx)
+            pos, info = positions_ppk(rec, os.path.join(wdir, "ppk"), base or base_of(rec, opts), ctx, atx,
+                                      navs_extra, proc, forward_only)
             if pos is not None and _pct(pos, 1) >= 50:
                 return pos, "ppk", info, notes
             notes.append("PPK not used: %s" % (info if pos is None else "only %.0f %% fixed" % _pct(pos, 1)))
@@ -546,6 +574,91 @@ def fuse_505(I, tau=0.5):
     return out
 
 
+# ----------------------------------------------------------------------------- engine trajectory
+GPS_MINUS_UNIX = 315964800.0 - 18.0          # UTC (Unix s) -> GPS seconds since 1980-01-06: t - GPS_MINUS_UNIX
+STATUS_OF_Q = {1: 6, 2: 5, 3: 4, 4: 3, 5: 2, 6: 4, 9: 2}      # POS quality -> engine PPST (fix 6, float 5, DGPS 3...)
+
+
+def _att_at(T, t):
+    """Vessel roll, pitch, heading (rad) and velocity N / E at times t (UTC) from the processed trajectory T."""
+    roll = np.interp(t, T["t"], T["roll"])
+    pitch = np.interp(t, T["t"], T["pitch"])
+    hs = np.interp(t, T["t"], np.sin(T["heading"]))
+    hc = np.interp(t, T["t"], np.cos(T["heading"]))
+    hsd = np.where(np.interp(t, T["t"], T["hsrc"].astype(float)) > 0.5, math.radians(2.0), math.radians(1.0))
+    return roll, pitch, np.arctan2(hs, hc), np.interp(t, T["t"], T["vn"]), np.interp(t, T["t"], T["ve"]), hsd
+
+
+def write_pass(path, P, T, direction=1):
+    """A position pass (POS: t UTC, lat / lon deg, h, q, sd) with the vessel attitude as an engine trajectory pass
+    (PPTRJ001, the record the engine's combine reads)."""
+    from .editor import _DT
+    P = np.sort(P, order="t")
+    n = len(P)
+    out = np.zeros(n, dtype=_DT)
+    roll, pitch, hdg, vn, ve, hsd = _att_at(T, P["t"])
+    out["t"] = P["t"] - GPS_MINUS_UNIX
+    out["lat"], out["lon"], out["h"] = np.radians(P["lat"]), np.radians(P["lon"]), P["h"]
+    out["vel"] = np.column_stack([vn, ve, np.zeros(n)]).astype(np.float32)
+    out["att"] = np.column_stack([roll, pitch, hdg]).astype(np.float32)
+    out["sdp"] = np.column_stack([P["sdn"], P["sde"], P["sdu"]]).astype(np.float32)
+    rest = np.zeros((n, 18), np.float32)
+    rest[:, 0:3] = 0.05                                        # velocity sigma m/s
+    rest[:, 3:6] = np.column_stack([np.full(n, math.radians(0.5)), np.full(n, math.radians(0.5)), hsd])
+    out["rest"] = rest
+    lut = np.zeros(16, np.uint8)
+    for q, st in STATUS_OF_Q.items():
+        lut[q] = st
+    st = lut[np.clip(P["q"].astype(int), 0, 15)]
+    out["status"] = st
+    good = (st == 6) | (st == 5)
+    last = np.maximum.accumulate(np.where(good, np.arange(n), -1)) if n else np.zeros(0, np.int64)
+    out["gap"] = np.where(last >= 0, np.maximum(0.0, out["t"] - out["t"][np.maximum(last, 0)]), 0.0)
+    if direction < 0:
+        out = out[::-1]                         # backward passes are stored latest first (the engine reverses them)
+    with open(path + ".tmp", "wb") as fo:
+        fo.write(b"PPTRJ001" + struct.pack("<Q", n) + struct.pack("<3d", 0, 0, 0) + struct.pack("<ii", 0, direction)
+                 + b"\0" * 24)
+        out.tofile(fo)
+    os.replace(path + ".tmp", path)
+    return n
+
+
+def prefer_fixed(F, B):
+    """Where one pass is fixed and the other is not at the same epoch, leave out the worse one (fixed > float >
+    others), so the combination never pulls a fixed position toward a float one; both fixed, or both float, are
+    combined by their sigmas (and the separation is measured there)."""
+    rank = lambda a: np.where(a["q"] == 1, 0, np.where(a["q"] == 2, 1, 2))      # noqa: E731
+    kf, kb = np.round(F["t"] * 20).astype(np.int64), np.round(B["t"] * 20).astype(np.int64)
+    _c, i_f, i_b = np.intersect1d(kf, kb, return_indices=True)
+    rf, rb = rank(F)[i_f], rank(B)[i_b]
+    drop_f = np.zeros(len(F), bool)
+    drop_b = np.zeros(len(B), bool)
+    drop_f[i_f[rf > rb]] = True
+    drop_b[i_b[rb > rf]] = True
+    return F[~drop_f], B[~drop_b]
+
+
+def engine_trajectory(project, T, passes, ctx):
+    """results/trajectory.bin + qc.csv from the passes (PPK forward / backward of every recording, or the one
+    position source) with the engine's combination, as a mobile mapping GNSS-only run. -> combine results."""
+    from . import engine, pipeline
+    idir = project.wpath("ins", "x")[:-2]
+    rdir = project.wpath("results", "x")[:-2]
+    args = ["combine", "--out", os.path.join(rdir, "trajectory.bin"), "--qc", os.path.join(rdir, "qc.csv")]
+    keys = ("fwd", "bwd") if passes["both"] and passes["bwd"] else ("fwd",)
+    P = {k: np.sort(np.hstack(passes[k]), order="t") for k in keys}
+    if len(keys) == 2:
+        P["fwd"], P["bwd"] = prefer_fixed(P["fwd"], P["bwd"])
+    for k in keys:
+        f = os.path.join(idir, "marine_%s.bin" % k)
+        write_pass(f, P[k], T, 1 if k == "fwd" else -1)
+        args += ["--" + k, f]
+    r = pipeline._check(engine.run(args, ctx.progress if ctx else None, ctx.log if ctx else None,
+                                   ctx.cancelled if ctx else None), "Combining the passes")
+    return r.results
+
+
 # ----------------------------------------------------------------------------- process and finalize
 def process(project, ctx, atx=None):
     """Trajectory of every marine recording of the job -> work/marine/trajectory.npz + summary (cfg results)."""
@@ -556,14 +669,45 @@ def process(project, ctx, atx=None):
         raise MarineError("the job has no sonar recordings (.clraw made by RemixPro)")
     wdir = project.wpath("marine", "x")[:-2]
     parts, summary, heads = [], {"recordings": [], "notes": []}, {}
+    passes = {"fwd": [], "bwd": [], "both": True}
+    t_start = time.time()
+    from . import pipeline as _pl
+    navs_extra = []
+    if selected_base(project) is not None:          # the Data page's ephemeris, as for mobile mapping
+        try:
+            navs_extra = _pl.nav_files(project, ctx or _pl.Ctx(log=lambda *_: None))
+        except Exception as e:      # noqa: BLE001 - the recordings' own navigation files are still there
+            summary["notes"].append("ephemeris: %s (the recordings' own navigation files are used)" % e)
+    crop = None
+    rc = project.cfg["rover"]
+    if rc.get("time_start") or rc.get("time_end"):  # the Data page's time range (GPS s) -> UTC
+        span = project.rover_span()
+        if span:
+            crop = (span[0] + GPS_MINUS_UNIX, span[1] + GPS_MINUS_UNIX)
     for i, paths in enumerate(recs):
         rec = SonarRecording(paths)
         sub = ctx.sub(i / len(recs), (i + 0.8) / len(recs)) if ctx else None
+        if crop and (rec.span()[1] < crop[0] or rec.span()[0] > crop[1]):
+            continue                                # outside the Data page's time range
         pos, src, info, notes = choose_positions(rec, os.path.join(wdir, rec.name), opts, sub, atx,
-                                                 base=base_for(project, rec))
+                                                 base=base_for(project, rec), navs_extra=navs_extra,
+                                                 proc=ppk_proc(project),
+                                                 forward_only=project.cfg["processing"].get("passes") == "forward")
         if src == "ppk" and (info.get("base") or {}).get("approximate"):
             notes.append("PPK against a base position from its RINEX header (approximate): every position is "
                          "off by the same metres - enter the base mark or run PPP on the Base page")
+        f_, b_ = info.pop("_fwd", None), info.pop("_bwd", None)
+        if crop:
+            cut = lambda a: a if a is None else a[(a["t"] >= crop[0]) & (a["t"] <= crop[1])]     # noqa: E731
+            pos, f_, b_ = cut(pos), cut(f_), cut(b_)
+            if not len(pos):
+                continue
+        if f_ is not None and b_ is not None and len(f_) and len(b_):
+            passes["fwd"].append(f_)
+            passes["bwd"].append(b_)
+        else:
+            passes["fwd"].append(pos)
+            passes["both"] = False
         att = rec.vehicle()["att"]
         hd, spd, hsrc, vn, ve = heading_and_speed(pos, att, float(opts["cog_min_speed"]))
         roll = np.interp(pos["t"], att["t"], att["roll"]) if len(att) else np.zeros(len(pos))
@@ -596,6 +740,8 @@ def process(project, ctx, atx=None):
                                       "span": [float(pos["t"][0]), float(pos["t"][-1])], "info": _jsonable(info),
                                       "notes": notes, "mavlink_boot_fit_rms_s": rec.vehicle()["boot_fit"][2]})
         summary["notes"] += ["%s: %s" % (rec.name, n) for n in notes]
+    if not parts:
+        raise MarineError("no recording inside the Data page's time range")
     T = np.hstack(parts)
     T.sort(order="t")
     np.save(os.path.join(wdir, "trajectory.npy"), T)
@@ -614,7 +760,25 @@ def process(project, ctx, atx=None):
     summary["compass_pct"] = round(100.0 * float(T["hsrc"].mean()), 1)
     summary["cog_min_speed"] = float(opts["cog_min_speed"])
     summary["settings"] = settings_key(opts, project)
-    project.cfg.setdefault("results", {})["marine"] = summary
+    # the same results as a mobile mapping GNSS-only run: results/trajectory.bin + qc.csv from the engine's
+    # combination, so Quality, Trajectory Review (and its editor) and Export are the mobile mapping pages
+    from . import pipeline
+    project.cfg["rover"]["marine_span"] = [float(T["t"][0]) - GPS_MINUS_UNIX, float(T["t"][-1]) - GPS_MINUS_UNIX]
+    project.cfg["processing"]["mode"] = "gnss"      # no IMU: the results read as a GNSS-only run
+    comb = engine_trajectory(project, T, passes, ctx)
+    project.cfg["results"] = {"started": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t_start)),
+                              "mode": "gnss", "positioning": "+".join(summary["position_source"]),
+                              "passes": "both" if passes["both"] else "forward",
+                              "combine": comb, "marine": summary}
+    base = next((r["info"].get("base") for r in summary["recordings"] if r["source"] == "ppk"), None)
+    fu = {"name": (base or {}).get("frame") or ("NAD83(CSRS)" if base else "as the GNSS receiver gave it"),
+          "epoch": (base or {}).get("epoch")}
+    project.cfg["results"]["frame_used"] = fu
+    project.cfg["results"]["frame"] = ("%s %s" % (fu["name"], fu["epoch"] or "")).strip()
+    pipeline._finish_review(project, ctx or pipeline.Ctx(log=lambda *_: None))
+    project.cfg["results"]["elapsed_s"] = round(time.time() - t_start, 1)
+    project.cfg["results"]["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    project.dirty = True
     if ctx:
         ctx.progress(1.0)
     return summary
@@ -649,6 +813,23 @@ def write_sbet(T, path, leap=18):
     return path, smr, week
 
 
+def _quality(project, summ):
+    """The handover's quality block from the published qc (Trajectory Review's 'poor' raises the sigmas)."""
+    from . import results
+    comb = (project.cfg.get("results") or {}).get("combine") or {}
+    qc = results.load_qc(os.path.join(project.work_dir, "results", "qc.csv"))
+
+    def num(k):
+        try:
+            return float(comb.get(k))
+        except (TypeError, ValueError):
+            return None
+    return {"mode": "gnss", "positioning": "+".join(summ["position_source"]), "fixed_pct": summ["fixed_pct"],
+            "sep_h_p95_m": num("sep_h_p95_m"),
+            "max_sd_h_m": round(max(qc["sd_h"]), 4) if qc else None,
+            "max_sd_v_m": round(max(qc["sd_d"]), 4) if qc else None}
+
+
 def publish(project, ctx):
     """Finalize the marine trajectory: SBET + SMRMSG at the GNSS antenna, each head's attitude, trajectory.json
     (dcs.trajectory/1 with the marine and sensors sections)."""
@@ -657,7 +838,8 @@ def publish(project, ctx):
     summ = (project.cfg.get("results") or {}).get("marine")
     wdir = os.path.join(project.work_dir, "marine")
     tf = os.path.join(wdir, "trajectory.npy")
-    if not summ or not os.path.exists(tf):
+    trj = os.path.join(project.work_dir, "results", "trajectory.bin")
+    if not summ or not os.path.exists(tf) or not os.path.exists(trj):
         raise MarineError("process the marine trajectory first")
     T = np.load(tf)
     od = project.out_dir
@@ -668,10 +850,22 @@ def publish(project, ctx):
         pass
     tmp = os.path.join(wdir, "handover")
     os.makedirs(tmp, exist_ok=True)
-    sb, smr, week = write_sbet(T, os.path.join(tmp, "trajectory_sbet.out"))
-    files = {"sbet": os.path.join(od, "trajectory_sbet.out"), "smrmsg": os.path.join(od, "trajectory_smrmsg.out")}
-    os.replace(sb, files["sbet"])
-    os.replace(smr, files["smrmsg"])
+    for f in os.listdir(tmp):
+        try:
+            os.unlink(os.path.join(tmp, f))
+        except OSError:
+            pass
+    # SBET / SMRMSG from the processed trajectory as Trajectory Review left it (the mobile mapping export)
+    sub = ctx.sub(0, 0.8) if ctx else pipeline.Ctx(log=lambda *_: None)
+    written = pipeline.export(project, sub, tmp, rate_hz=0, lever=[0.0, 0.0, 0.0], sbet=True)
+    files = {"sbet": os.path.join(od, "trajectory_sbet.out"), "smrmsg": os.path.join(od, "trajectory_smrmsg.out"),
+             "qc": os.path.join(od, "trajectory_qc.csv")}
+    os.replace(written[0], files["sbet"])
+    os.replace(written[1], files["smrmsg"])
+    shutil.copyfile(os.path.join(project.work_dir, "results", "qc.csv"), files["qc"] + ".tmp")
+    os.replace(files["qc"] + ".tmp", files["qc"])
+    from dcs_core import sbet as dsbet
+    week = int((T["t"][0] + 18 - dsbet.GPS_EPOCH_UNIX) // dsbet.WEEK)
     sensors = {}
     for did in summ.get("heads", {}):
         src = os.path.join(wdir, "sonar_%s_attitude.npy" % did)
@@ -711,9 +905,9 @@ def publish(project, ctx):
                       "clockwise (roll / pitch from the autopilot; heading per marine.heading)",
         "levers_m": {"gnss1": {"value": [0.0, 0.0, 0.0], "source": "reference point"}},
         "rate_hz": rate,
-        "quality": {"mode": "gnss", "positioning": "+".join(summ["position_source"]), "fixed_pct": summ["fixed_pct"],
-                    "max_sd_h_m": round(float(np.max(np.hypot(T["sdn"], T["sde"]))), 3),
-                    "max_sd_v_m": round(float(np.max(T["sdu"])), 3)},
+        "quality": _quality(project, summ),
+        "review": pipeline.review_summary(project),
+        "recording_holes": pipeline.recording_holes(files["sbet"]),
         "base_station": "%s (%s)" % ("surveyed base", base.get("source")) if base else None,
         "marine": {"position": [{"recording": r["name"], "source": r["source_label"], "quality_pct": r["quality_pct"]}
                                 for r in recs],

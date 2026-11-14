@@ -1222,6 +1222,9 @@ def publish_handover(project, ctx):
     and trajectory.json (DCS spec, dcs.trajectory/1). Returns the handover."""
     if not project.dcs:
         return None
+    from . import marine
+    if marine.is_marine(project):                   # the boat: its own handover (sensors, platform marine)
+        return marine.publish(project, ctx)
     from dcs_core import handover
     from dcs_core import sbet as dsbet
     od = project.out_dir

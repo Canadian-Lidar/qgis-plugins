@@ -3,13 +3,9 @@ Data · Installation · Base · Processing · Quality · Calibration · Review �
 the header phases are the Lidar ones; each page shows the marine content of its step."""
 import datetime
 import os
-import shutil
 
-import numpy as np
 from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtGui import QColor
-from qgis.PyQt.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-                                 QGridLayout,
+from qgis.PyQt.QtWidgets import (QAbstractItemView, QCheckBox, QDoubleSpinBox, QFormLayout,
                                  QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableWidget, QTableWidgetItem,
                                  QVBoxLayout, QWidget)
 
@@ -109,25 +105,118 @@ class MPage(QWidget):
 
 # ------------------------------------------------------------------------------------------------- 1 Data
 class MDataPage(MPage):
+    """Laid out as the mobile mapping Data page: the recordings (rover data), what they contain, the time range,
+    the data coverage and the satellite ephemeris (the same settings and files as mobile mapping)."""
+
     def __init__(self, dock):
         super().__init__(dock)
-        self.lay.addWidget(_title("Data"))
-        self.lay.addWidget(_val("The job's sonar recordings (.clraw made by RemixPro from SonarView and the Reach "
-                                "files). Each recording holds every sonar head, the autopilot and, when they were "
-                                "found, the Reach rover and base files."))
-        self.lay.addWidget(_section("Recordings"))
-        self.t_recs = _table(["Recording", "Start (UTC)", "Length", "Parts", "Sonar heads", "Position in the recording"])
-        self.lay.addWidget(self.t_recs)
-        self.v_notes = _val()
-        self.lay.addWidget(self.v_notes)
-        self.lay.addStretch(1)
+        import types
+        from qgis.PyQt.QtWidgets import QDateTimeEdit, QGridLayout, QGroupBox, QListWidget
+        from . import dock as D
+        from .widgets import CoverageView, Section
+        self._D = D
+        v = self.lay
+        v.setContentsMargins(0, 0, 0, 0)
+        v.addWidget(D._title("Rover data"))
+        v.addWidget(D._hint("The job's sonar recordings (.clraw made by RemixPro from SonarView and the Reach files). "
+                            "Each holds every sonar head, the autopilot and, when they were found, the Reach rover "
+                            "and base files."))
+        self.files = QListWidget()
+        self.files.setMinimumHeight(54)
+        self.files.setMaximumHeight(90)
+        v.addWidget(self.files)
+        self.summary = QGroupBox("What the files contain")
+        self.form = QFormLayout(self.summary)
+        self.form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        v.addWidget(self.summary)
+        tg = QGroupBox("Time range to process (UTC)")
+        tl = QGridLayout(tg)
+        self.t0, self.t1 = QDateTimeEdit(), QDateTimeEdit()
+        for w in (self.t0, self.t1):
+            w.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+            D._edit_utc(w)
+            w.setCalendarPopup(True)
+            w.editingFinished.connect(self.store_times)
+        b_all = QPushButton("Whole capture")
+        b_all.clicked.connect(self.whole)
+        tl.addWidget(QLabel("Start"), 0, 0)
+        tl.addWidget(self.t0, 0, 1)
+        tl.addWidget(QLabel("End"), 1, 0)
+        tl.addWidget(self.t1, 1, 1)
+        tl.addWidget(b_all, 0, 2, 2, 1)
+        v.addWidget(tg)
+        ng = QGroupBox("Satellite ephemeris")
+        nl = QVBoxLayout(ng)
+        self.auto_nav = QCheckBox("Download broadcast ephemeris")
+        self.auto_nav.toggled.connect(self.store_nav)
+        nl.addWidget(self.auto_nav)
+        nl.addWidget(D._hint("All constellations, from the IGS (internet). Without internet, the navigation files "
+                             "recorded by the Reach (in the recordings, beside the base) are used; add others here."))
+        self.navs = QListWidget()
+        self.navs.setMaximumHeight(70)
+        nl.addWidget(self.navs)
+        r2 = QHBoxLayout()
+        b_nav = QPushButton("Add navigation file\u2026")
+        b_navrm = QPushButton("Remove")
+        b_nav.clicked.connect(self.add_nav)
+        b_navrm.clicked.connect(self.remove_nav)
+        r2.addWidget(b_nav)
+        r2.addWidget(b_navrm)
+        r2.addStretch(1)
+        nl.addLayout(r2)
+        self.cov = CoverageView()
+        cw = QWidget()
+        cl = QVBoxLayout(cw)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.addWidget(self.cov)
+        cl.addWidget(D._hint("Mint: data. Red: none. Dashed lines: the processing span. Hover for times."))
+        v.addWidget(Section("Data coverage", cw, expanded=True))
+        v.addWidget(ng)
+        v.addStretch(1)
+        # the same handlers as the mobile mapping Data page (cfg nav_files, auto_ephemeris, rover time range)
+        for name in ("add_nav", "remove_nav", "store_nav", "store_times", "whole"):
+            setattr(self, name, types.MethodType(getattr(D.DataPage, name), self))
+        b_nav.clicked.disconnect()
+        b_navrm.clicked.disconnect()
+        b_all.clicked.disconnect()
+        b_nav.clicked.connect(self.add_nav)
+        b_navrm.clicked.connect(self.remove_nav)
+        b_all.clicked.connect(self.whole)
+        self.auto_nav.toggled.disconnect()
+        self.auto_nav.toggled.connect(self.store_nav)
+        for w in (self.t0, self.t1):
+            w.editingFinished.disconnect()
+            w.editingFinished.connect(self.store_times)
+
+    def add_nav(self):                  # replaced in __init__ by the mobile mapping page's handlers
+        pass
+
+    remove_nav = store_nav = store_times = whole = add_nav
 
     def refresh(self):
-        rows, notes = [], []
+        from qgis.PyQt.QtWidgets import QListWidgetItem
+        D = self._D
+        p = self.project
+        self.files.clear()
+        self.navs.clear()
+        while self.form.rowCount():
+            self.form.removeRow(0)
+        if p is None:
+            return
+        if not p.cfg["rover"].get("marine_span"):
+            span, xyz = marine.rover_extent(p)
+            if span:
+                p.cfg["rover"]["marine_span"] = list(span)
+                p.cfg["rover"]["marine_xyz"] = list(xyz) if xyz else None
+                self.dock.save()
+        self.dock.show_coverage(self.cov, bases=False)
         for r in self.recs():
             if isinstance(r, Exception):
-                rows.append([str(r), "", "", "", "", ""])
+                self.form.addRow(_key("Recording"), _val(str(r)))
                 continue
+            it = QListWidgetItem(r.name)
+            it.setToolTip("\n".join(f.path if hasattr(f, "path") else str(f) for f in r.files))
+            self.files.addItem(it)
             t0, t1 = r.span()
             have = []
             if r.rinex("rover") and r.rinex("base"):
@@ -139,13 +228,32 @@ class MDataPage(MPage):
             have.append("autopilot")
             parts = r.metadata.get("source_file")
             n_parts = len(parts) if isinstance(parts, list) else 1
-            rows.append([r.name, _utc(t0), "%.0f min" % ((t1 - t0) / 60.0), n_parts,
-                         ", ".join("%s (looks %s)" % (h["nickname"], h.get("looks") or "?") for h in r.heads.values()),
-                         ", ".join(have)])
+            self.form.addRow(_key(r.name), _val("%s  (%.0f min, %d part%s)" % (
+                _utc(t0), (t1 - t0) / 60.0, n_parts, "" if n_parts == 1 else "s")))
+            self.form.addRow(_key("Sonar heads"), _val(", ".join("%s (looks %s)" % (h["nickname"], h.get("looks") or "?")
+                                                                 for h in r.heads.values())))
+            self.form.addRow(_key("Position"), _val(", ".join(have)))
             for n in r.metadata.get("notes") or []:
-                notes.append("%s: %s" % (r.name, n))
-        _set_rows(self.t_recs, rows)
-        self.v_notes.setText("\n".join(notes))
+                self.form.addRow(_key("Note"), _val(n))
+        for f in p.cfg.get("nav_files") or []:
+            it = QListWidgetItem(os.path.basename(f))
+            it.setData(Qt.ItemDataRole.UserRole, f)
+            it.setToolTip(f)
+            self.navs.addItem(it)
+        self.auto_nav.blockSignals(True)
+        self.auto_nav.setChecked(bool(p.cfg.get("auto_ephemeris", True)))
+        self.auto_nav.blockSignals(False)
+        span = p.capture_span()
+        if span:
+            t0, t1 = span
+            u0, u1 = D.geo.gps_to_utc(t0), D.geo.gps_to_utc(t1)
+            for w, g in ((self.t0, p.cfg["rover"].get("time_start") or t0),
+                         (self.t1, p.cfg["rover"].get("time_end") or t1)):
+                w.blockSignals(True)
+                w.setMinimumDateTime(D._utc_qdt(int(D.geo.unix_from_utc(u0))))
+                w.setMaximumDateTime(D._utc_qdt(int(D.geo.unix_from_utc(u1)) + 1))
+                w.setDateTime(D._utc_qdt(int(D.geo.unix_from_utc(D.geo.gps_to_utc(g)))))
+                w.blockSignals(False)
 
     def state(self):
         ok = [r for r in self.recs() if not isinstance(r, Exception)]
@@ -407,13 +515,15 @@ class MBasePage(MPage):
     to its list once; what is set there (position source, frame, epoch, antenna type, ARP height, PPP, CSRS-PPP)
     is what marine PPK uses."""
 
+    SHARED = True
+
     def __init__(self, dock):
         super().__init__(dock)
-        from .dock import BasePage
-        self.lay.setContentsMargins(0, 0, 0, 0)
-        self.inner = BasePage(dock)
-        self.lay.addWidget(self.inner)
         self._synced = None
+
+    @property
+    def inner(self):
+        return self.dock.page["base"]
 
     def _sync(self):
         """Add the recordings' base RINEX to the Base page's list (once per job and set of recordings)."""
@@ -495,59 +605,12 @@ class MBasePage(MPage):
 
 # ------------------------------------------------------------------------------------------------- 4 Processing
 class MProcessPage(MPage):
-    def __init__(self, dock):
-        super().__init__(dock)
-        self.lay.addWidget(_title("Processing"))
-        f = QFormLayout()
-        self.c_pos = QComboBox()
-        for k, label in POSITION_CHOICES:
-            self.c_pos.addItem(label, k)
-        f.addRow(_key("Position"), self.c_pos)
-        self.s_cog = QDoubleSpinBox()
-        self.s_cog.setRange(0.0, 5.0)
-        self.s_cog.setSingleStep(0.1)
-        self.s_cog.setDecimals(1)
-        self.s_cog.setSuffix(" m/s")
-        self.s_cog.setToolTip("Heading = course over ground above this speed, the autopilot's compass below it")
-        f.addRow(_key("Course over ground above"), self.s_cog)
-        self.lay.addLayout(f)
-        self.lay.addWidget(_val("The boat's trajectory at the GNSS antenna: PPK forward and backward, combined; the "
-                                "heading from the course over ground (the compass when slow); each sonar head's own "
-                                "attitude at every ping (its fused packet 504), checked against its raw motion sensor. "
-                                "Processing finalizes the trajectory for AlignPro and CloudPro."))
-        row = QHBoxLayout()
-        self.b_run = QPushButton("Process")
-        self.b_run.setObjectName("ppPrimary")
-        self.b_run.clicked.connect(self.dock.run_marine)
-        row.addWidget(self.b_run)
-        row.addStretch(1)
-        self.lay.addLayout(row)
-        self.v_last = _val()
-        self.lay.addWidget(self.v_last)
-        self.lay.addStretch(1)
-        self._loading = False
-        self.c_pos.currentIndexChanged.connect(self._store)
-        self.s_cog.valueChanged.connect(self._store)
+    """The mobile mapping Processing page (GNSS only, PPK, the same GNSS settings) with the Boat group; this object
+    carries the marine step state."""
+    SHARED = True
 
     def refresh(self):
-        o = marine.options(self.project)
-        self._loading = True
-        self.c_pos.setCurrentIndex(max(0, self.c_pos.findData(o["position"])))
-        self.s_cog.setValue(float(o["cog_min_speed"]))
-        self._loading = False
-        s = self.summary()
-        self.v_last.setText("Last run: %s" % ", ".join("%s %s, %.1f %% fixed" % (
-            r["name"], r["source_label"], (r.get("quality_pct") or {}).get("fixed", 0.0)) for r in s["recordings"])
-            if s else "Not processed.")
-
-    def _store(self, *_):
-        p = self.project
-        if p is None or self._loading:
-            return
-        m = self.cfg()
-        m["position"] = self.c_pos.currentData()
-        m["cog_min_speed"] = self.s_cog.value()
-        p.save()
+        self.dock.page["process"].refresh()
 
     def state(self):
         try:
@@ -565,86 +628,23 @@ class MProcessPage(MPage):
 
 
 # ------------------------------------------------------------------------------------------------- 5 Quality
-class MQualityPage(MPage):
-    def __init__(self, dock):
-        super().__init__(dock)
-        from .plots import TimePlot
-        self.lay.addWidget(_title("Quality"))
-        self.grid = QGridLayout()
-        self.grid.setHorizontalSpacing(14)
-        self.lay.addLayout(self.grid)
-        self.lay.addWidget(_section("Over time"))
-        self.p_q = TimePlot("Position solution", "")
-        self.p_sd = TimePlot("Estimated accuracy (horizontal / vertical)", "m")
-        self.p_v = TimePlot("Speed (heading from the compass below the line)", "m/s")
-        for pl in (self.p_q, self.p_sd, self.p_v):
-            pl.setMinimumHeight(130)
-            self.lay.addWidget(pl)
-            pl.xRangeChanged.connect(self._sync)
-        self.lay.addWidget(_section("Sonar heads"))
-        self.v_heads = _val()
-        self.lay.addWidget(self.v_heads)
-        self.lay.addStretch(1)
-
-    def _sync(self, x0, x1):
-        for pl in (self.p_q, self.p_sd, self.p_v):
-            if (pl.x0, pl.x1) != (x0, x1):
-                pl.set_xrange(x0, x1)
+class _Hosted(MPage):
+    """A step that shows the mobile mapping page itself on a marine job (the marine processing writes the same
+    results): the dock shows dock.page[KEY] for it; this object only carries its state for the step list."""
+    KEY = ""
+    SHARED = True
 
     def refresh(self):
-        while self.grid.count():
-            w = self.grid.takeAt(0).widget()
-            if w is not None:
-                w.hide()
-                w.deleteLater()
-        for pl in (self.p_q, self.p_sd, self.p_v):
-            pl.clear()
-        s = self.summary()
-        if not s:
-            self.grid.addWidget(_val("Process first."), 0, 0)
-            self.v_heads.setText("")
-            return
-        for c, h in enumerate(["Recording", "Position", "Fixed", "Rate", "Compass heading"]):
-            self.grid.addWidget(_key(h), 0, c)
-        for r_, rec in enumerate(s.get("recordings", []), 1):
-            q = rec.get("quality_pct") or {}
-            for c, v in enumerate([rec["name"], rec["source_label"], "%.1f %%" % q.get("fixed", 0.0),
-                                   "%s Hz" % rec.get("rate_hz"), "%.1f %% of the time" % rec.get("compass_pct", 0.0)]):
-                self.grid.addWidget(_val(v), r_, c)
-        T = self.dock.marine_trajectory()
-        if T is not None and len(T):
-            x = T["t"] - GPS_EPOCH_UNIX + LEAP
-            cols = {1: "#2ecc71", 2: "#f0ad4e", 3: "#5bc0de", 4: "#5bc0de", 5: "#d9534f", 6: "#9b59b6", 9: "#9aa4ad"}
-            self.p_q.set_strip(x, T["q"].astype(int), {k: QColor(v) for k, v in cols.items()})
-            self.p_sd.add("horizontal", x, np.hypot(T["sdn"], T["sde"]), "#5bc0de")
-            self.p_sd.add("vertical", x, T["sdu"], "#f0ad4e")
-            self.p_v.add("speed", x, T["speed"], "#2ecc71")
-            self.p_v.add("COG limit", x[[0, -1]], np.full(2, float(s.get("cog_min_speed", 0.5))), "#d9534f", 1.0)
-            comp = np.flatnonzero(np.diff(np.r_[0, T["hsrc"].astype(int), 0]))
-            for a, b in zip(comp[::2], comp[1::2]):
-                self.p_v.add_band(x[a], x[min(b, len(x) - 1)], "#4d5a66")
-        lines = []
-        for did, h in sorted((s.get("heads") or {}).items()):
-            ck = h.get("check") or {}
-            lines.append("%s (id %s, looks %s): %s attitudes (the sonar's own, at every ping)%s" % (
-                h.get("nickname"), did, h.get("looks") or "?", "{:,}".format(h.get("attitudes", 0)),
-                "; its raw motion sensor (%s Hz) agrees to %.2f° in roll and %.2f° in pitch (68 %%)" % (
-                    ck.get("imu_505_rate_hz"), (ck.get("fused_505_vs_504_roll_deg") or [0, 0])[1],
-                    (ck.get("fused_505_vs_504_pitch_deg") or [0, 0])[1]) if ck else ""))
-        self.v_heads.setText("\n".join(lines + (s.get("notes") or [])))
+        self.dock.page[self.KEY].refresh()
 
     def state(self):
-        s = self.summary()
-        if not s:
-            return "todo", ""
-        fx = float(s.get("fixed_pct") or 0.0)
-        if "ppk" in (s.get("position_source") or []) and fx < 95:
-            return "warn", "%.1f %% fixed" % fx
-        return "done", ("%.1f %% fixed" % fx) if "ppk" in (s.get("position_source") or []) else \
-            ", ".join(s.get("position_source") or [])
+        return self.dock.page[self.KEY].state()
 
 
-# ------------------------------------------------------------------------------------------------- 6 Calibration
+class MQualityPage(_Hosted):
+    KEY = "quality"
+
+
 class MCalibPage(MPage):
     def __init__(self, dock):
         super().__init__(dock)
@@ -659,84 +659,12 @@ class MCalibPage(MPage):
 
 
 # ------------------------------------------------------------------------------------------------- 7 Review
-class MReviewPage(MPage):
-    def __init__(self, dock):
-        super().__init__(dock)
-        self.lay.addWidget(_title("Review"))
-        self.lay.addWidget(_val("The stretches of the trajectory to look at before AlignPro and CloudPro: where the "
-                                "position was not fixed and where the heading came from the compass (slow or "
-                                "stopped). Soundings recorded there are placed less accurately."))
-        self.t = _table(["From (UTC)", "To (UTC)", "Length", "What"])
-        self.lay.addWidget(self.t)
-        self.lay.addStretch(1)
-
-    def refresh(self):
-        T = self.dock.marine_trajectory()
-        rows = []
-        if T is not None and len(T):
-            for what, m in (("position not fixed", T["q"] != 1), ("heading from the compass", T["hsrc"] == 1)):
-                e = np.flatnonzero(np.diff(np.r_[0, m.astype(int), 0]))
-                for a, b in zip(e[::2], e[1::2]):
-                    t0, t1 = T["t"][a], T["t"][min(b, len(T) - 1)]
-                    if t1 - t0 >= 2.0:
-                        rows.append((t0, [_utc(t0)[11:], _utc(t1)[11:], "%.0f s" % (t1 - t0), what]))
-        rows.sort(key=lambda r: r[0])
-        _set_rows(self.t, [r[1] for r in rows[:500]])
-
-    def state(self):
-        return ("done", "optional") if self.summary() else ("todo", "")
+class MReviewPage(_Hosted):
+    KEY = "review"
 
 
-# ------------------------------------------------------------------------------------------------- 8 Export
-class MExportPage(MPage):
-    def __init__(self, dock):
-        super().__init__(dock)
-        self.lay.addWidget(_title("Export"))
-        self.lay.addWidget(_val("Only for other software: AlignPro and CloudPro already read the trajectory PosPro "
-                                "finalized. Writes the SBET and SMRMSG (at the GNSS antenna, GPS seconds of week) and "
-                                "a text file: UTC time, latitude, longitude, ellipsoidal height, heading, speed, "
-                                "solution."))
-        row = QHBoxLayout()
-        self.b_export = QPushButton("Export…")
-        self.b_export.clicked.connect(self._export)
-        row.addWidget(self.b_export)
-        row.addStretch(1)
-        self.lay.addLayout(row)
-        self.v_done = _val()
-        self.lay.addWidget(self.v_done)
-        self.lay.addStretch(1)
-
-    def _export(self):
-        p = self.project
-        T = self.dock.marine_trajectory()
-        if p is None or T is None:
-            return
-        d = QFileDialog.getExistingDirectory(self, "Export the boat's trajectory to", p.out_dir)
-        if not d:
-            return
-        written = []
-        for name in ("trajectory_sbet.out", "trajectory_smrmsg.out"):
-            src = os.path.join(p.out_dir, name)
-            if os.path.exists(src):
-                shutil.copyfile(src, os.path.join(d, "%s_%s" % (p.name, name)))
-                written.append("%s_%s" % (p.name, name))
-        txt = os.path.join(d, "%s_trajectory.txt" % p.name)
-        with open(txt, "w") as fh:
-            fh.write("utc,lat_deg,lon_deg,h_m,heading_deg,speed_m_s,solution\n")
-            for r in T:
-                fh.write("%s,%.9f,%.9f,%.3f,%.2f,%.2f,%s\n" % (
-                    datetime.datetime.fromtimestamp(r["t"], datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3],
-                    r["lat"], r["lon"], r["h"], np.degrees(r["heading"]) % 360, r["speed"],
-                    marine.Q_NAMES.get(int(r["q"]), str(int(r["q"])))))
-        written.append(os.path.basename(txt))
-        self.cfg()["exported"] = {"folder": d, "files": written}
-        p.save()
-        self.v_done.setText("Written in %s:\n%s" % (d, "\n".join(written)))
-        self.dock.update_steps()
-
-    def state(self):
-        e = self.cfg().get("exported") if self.project else None
-        return ("done", "exported") if e else ("todo", "optional")
+class MExportPage(_Hosted):
+    KEY = "export"
 
 
 PAGES = {"data": MDataPage, "install": MInstallPage, "base": MBasePage, "process": MProcessPage,
