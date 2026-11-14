@@ -36,6 +36,7 @@
 <div style="break-inside:avoid"><h2>What is new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>2.9.2</b></td><td>Slice and Plan: a selection shape (polygon, rectangle, lasso, above / below line) stays on the points while you zoom or pan during editing; points inside it but off screen are edited too.</td></tr>
 <tr><td><b>2.9.1</b></td><td>Interpolation in its own tab (INTERPOLATION, bottom right); fixed: interpolating again or deleting failed on Windows (a tile still mapped while being rewritten).</td></tr>
 <tr><td><b>2.9.0</b></td><td>Interpolation: fill holes in the grid with virtual points (inverse distance, triangulation, area triangulation, extrapolation; 1/4/16/64 points per cell) (<a href="#interpolate">Interpolation</a>).</td></tr>
 <tr><td><b>2.8.0</b></td><td>Marine: fan-edge limit in the sonar gates; the standard group keeps soundings within 65° of vertical and 40° of each head's beam centre (<a href="#marinefilters">Marine filters</a>).</td></tr>
@@ -409,6 +410,7 @@
 <figure class="h52"><img src="fig/line_tool.png"><figcaption><b>Figure {N}.1</b> Drawing a line with <i>Below a line</i> in the Slice: the shaded side below the dashed line will be edited when the line is finished.</figcaption></figure>
 
 <h2>Selecting</h2>
+<p>A shape you are drawing in the Slice or the Plan stays on the points while you zoom (wheel, <kbd>+</kbd>/<kbd>-</kbd>) or pan (middle button) in the middle of it: zoom in for the next vertex, pan along, and finish it; points inside the shape that are off screen are edited too.</p>
 <p>With Select, the points in the shape turn white and the status strip gives their number; hold <kbd>Shift</kbd> to add to the selection. Then right-click a view:</p>
 <figure class="fr"><img src="fig/selection_menu.png"><figcaption><b>Figure {N}.2</b> Right-click in the Slice with a selection: the Selection submenu, then the Slice's own items, the Tool list and Zoom to the points.</figcaption></figure>
 <p><span class="ui">Reject the selection</span>, <span class="ui">Accept the selection</span>, <span class="ui">Classify the selection as</span> (a class), <span class="ui">Run the filter group on the selection</span>, <span class="ui">Clear the selection</span>. <kbd>Delete</kbd> rejects the selection; <kbd>Ctrl+D</kbd> clears it.</p>
