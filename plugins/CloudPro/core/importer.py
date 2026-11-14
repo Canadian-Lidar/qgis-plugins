@@ -537,8 +537,10 @@ def import_marine(project, inp, opts, progress=None, cancel=None, keep_edits=Tru
             spans = _dm.split_passes(tr.t, tr.heading, max(a, tr.t[0]), min(b, tr.t[-1]) + 1e-3)
             spans[0] = (min(a, spans[0][0]), spans[0][1])
             spans[-1] = (spans[-1][0], max(b, spans[-1][1]) + 1.0)
+            sens = (inp.traj_doc or {}).get("sensors") or {}
+            used = [d for d in rec.heads if not sens or "sonar_%d" % int(d) in sens]   # switched off in PosPro
             for n, w in enumerate(spans, 1):
-                for did in rec.heads:
+                for did in used:
                     jobs.append((rec, did, w, n if len(spans) > 1 else None))
         for k, (rec, did, win, pno) in enumerate(jobs):
             if cancel and cancel():

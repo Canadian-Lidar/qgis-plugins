@@ -8,7 +8,8 @@ import shutil
 import numpy as np
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QColor
-from qgis.PyQt.QtWidgets import (QAbstractItemView, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGridLayout,
+from qgis.PyQt.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+                                 QGridLayout,
                                  QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableWidget, QTableWidgetItem,
                                  QVBoxLayout, QWidget)
 
@@ -162,11 +163,21 @@ class MInstallPage(MPage):
                                 "receiver. Each sonar head's offset goes from it to the head's acoustic centre, in "
                                 "metres forward, starboard, down. They come from the recording (SonarView's Mount "
                                 "Offset, as Cerulean documents it: X forward, Y starboard, Z down); type a value to "
-                                "use another one. AlignPro can check them against the seabed."))
+                                "use another one. Untick USE to leave a head out of the job (PosPro, AlignPro and "
+                                "CloudPro). 'Looks to' is measured from the head's own soundings; 'Mounted' follows "
+                                "the offsets in use."))
         self.lay.addWidget(_section("Sonar heads"))
-        self.t_heads = _table(["Head", "Looks to", "Mounted", "Forward (m)", "Starboard (m)", "Down (m)", "Source"])
+        self.t_heads = _table(["Use", "Head", "Looks to", "Mounted", "Forward (m)", "Starboard (m)", "Down (m)",
+                               "Source"])
         self.lay.addWidget(self.t_heads)
+        self.v_check = _val()
+        self.v_check.setStyleSheet("color: #f0ad4e;")
+        self.lay.addWidget(self.v_check)
         row = QHBoxLayout()
+        self.b_swap = QPushButton("Swap the two heads' offsets")
+        self.b_swap.setToolTip("Gives each head the other's offsets (the starboard offset sign follows)")
+        self.b_swap.clicked.connect(self._swap)
+        row.addWidget(self.b_swap)
         self.b_reset = QPushButton("Use the recorded offsets")
         self.b_reset.clicked.connect(self._reset)
         row.addWidget(self.b_reset)
@@ -184,35 +195,94 @@ class MInstallPage(MPage):
                     out.setdefault(did, h)
         return out
 
+    def _in_use(self, did, h):
+        lev = self.cfg().get("levers") or {}
+        return lev.get(str(did)) or h.get("lever_m") or None
+
+    @staticmethod
+    def _side(lv):
+        if not lv:
+            return "?"
+        return "starboard" if lv[1] > 0 else "port" if lv[1] < 0 else "centre"
+
+    def _mismatch(self):
+        """Heads (in use) whose offsets put them on the side opposite to the one they look to."""
+        off = set(self.cfg().get("heads_off") or [])
+        out = []
+        for did, h in sorted(self._heads().items()):
+            side = self._side(self._in_use(did, h))
+            if str(did) not in off and h.get("looks") in ("port", "starboard") and side in ("port", "starboard") \
+                    and side != h["looks"]:
+                out.append((did, h, side))
+        return out
+
     def refresh(self):
         self._loading = True
         lev = self.cfg().get("levers") or {}
+        off = set(self.cfg().get("heads_off") or [])
         rows = []
         self._spins = {}
-        for did, h in sorted(self._heads().items()):
-            vals = lev.get(str(did)) or h.get("lever_m") or [0.0, 0.0, 0.0]
+        heads = self._heads()
+        for did, h in sorted(heads.items()):
+            vals = self._in_use(did, h) or [0.0, 0.0, 0.0]
+            cb = QCheckBox()
+            cb.setChecked(str(did) not in off)
+            cb.toggled.connect(lambda on, d=did: self._use(d, on))
             spins = []
             for k in range(3):
-                s = QDoubleSpinBox()
-                s.setRange(-50, 50)
-                s.setDecimals(3)
-                s.setSingleStep(0.005)
-                s.setValue(float(vals[k]))
-                s.valueChanged.connect(lambda _v, d=did: self._edited(d))
-                spins.append(s)
+                sp = QDoubleSpinBox()
+                sp.setRange(-50, 50)
+                sp.setDecimals(3)
+                sp.setSingleStep(0.005)
+                sp.setValue(float(vals[k]))
+                sp.valueChanged.connect(lambda _v, d=did: self._edited(d))
+                spins.append(sp)
             self._spins[did] = spins
             src = "entered in PosPro" if str(did) in lev else (h.get("lever_source") or "not entered").split(" (")[0]
-            rows.append(["%s (id %d)" % (h["nickname"], did), h.get("looks") or "?", h.get("mount_side") or "?"]
+            rows.append([cb, "%s (id %d)" % (h["nickname"], did), h.get("looks") or "?", self._side(vals)]
                         + spins + [src])
         _set_rows(self.t_heads, rows)
+        mm = self._mismatch()
+        self.v_check.setText("" if not mm else "Check: %s. A head normally looks to the side it is mounted on: if so "
+                             "here, the offsets were entered for the other head in SonarView - SWAP THE TWO HEADS' "
+                             "OFFSETS." % "; ".join("%s looks %s but its offsets put it on the %s side" % (
+                                 h["nickname"], h["looks"], side) for _d, h, side in mm))
+        self.b_swap.setEnabled(len([d for d in heads if str(d) not in off]) == 2)
         self._loading = False
+
+    def _use(self, did, on):
+        if self._loading or self.project is None:
+            return
+        off = set(self.cfg().get("heads_off") or [])
+        off.discard(str(did)) if on else off.add(str(did))
+        if len(off) >= len(self._heads()):
+            self.refresh()                                  # keep at least one head
+            return
+        self.cfg()["heads_off"] = sorted(off)
+        self.project.save()
+        self.refresh()
+        self.dock.update_steps()
 
     def _edited(self, did):
         if self._loading or self.project is None:
             return
-        self.cfg().setdefault("levers", {})[str(did)] = [round(s.value(), 4) for s in self._spins[did]]
+        self.cfg().setdefault("levers", {})[str(did)] = [round(sp.value(), 4) for sp in self._spins[did]]
         self.project.save()
-        self.t_heads.setItem(list(sorted(self._spins)).index(did), 6, QTableWidgetItem("entered in PosPro"))
+        self.refresh()
+        self.dock.update_steps()
+
+    def _swap(self):
+        if self.project is None:
+            return
+        off = set(self.cfg().get("heads_off") or [])
+        heads = {d: h for d, h in self._heads().items() if str(d) not in off}
+        if len(heads) != 2:
+            return
+        (a, ha), (b, hb) = sorted(heads.items())
+        la, lb = self._in_use(a, ha) or [0.0, 0.0, 0.0], self._in_use(b, hb) or [0.0, 0.0, 0.0]
+        self.cfg().setdefault("levers", {}).update({str(a): [float(v) for v in lb], str(b): [float(v) for v in la]})
+        self.project.save()
+        self.refresh()
         self.dock.update_steps()
 
     def _reset(self):
@@ -227,11 +297,15 @@ class MInstallPage(MPage):
         heads = self._heads()
         if not heads:
             return "todo", ""
-        lev = self.cfg().get("levers") or {}
-        missing = [h["nickname"] for d, h in heads.items() if not (lev.get(str(d)) or h.get("lever_m"))]
+        off = set(self.cfg().get("heads_off") or [])
+        used = {d: h for d, h in heads.items() if str(d) not in off}
+        missing = [h["nickname"] for d, h in used.items() if not self._in_use(d, h)]
         if missing:
             return "warn", "offsets not entered: %s" % ", ".join(missing)
-        return "done", "%d head%s%s" % (len(heads), "s" if len(heads) > 1 else "", ", entered" if lev else "")
+        if self._mismatch():
+            return "warn", "check the offsets: mounted and looking sides differ"
+        lev = self.cfg().get("levers") or {}
+        return "done", "%d of %d heads%s" % (len(used), len(heads), ", offsets entered" if lev else "")
 
 
 # ------------------------------------------------------------------------------------------------- 3 Base

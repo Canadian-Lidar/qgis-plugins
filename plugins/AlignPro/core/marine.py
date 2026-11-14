@@ -58,6 +58,8 @@ def load(dcs, every=2, power="medium", rmax=RMAX):
     for _k, paths in groups.items():
         rec = marine.SonarRecording(paths)
         for did, h in rec.heads.items():
+            if doc.get("sensors") and "sonar_%d" % did not in doc["sensors"]:
+                continue                                  # switched off in PosPro
             att = None
             p = (doc.get("paths") or {}).get("sonar_%d_attitude" % did)
             if p and os.path.exists(p):

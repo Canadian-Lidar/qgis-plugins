@@ -65,7 +65,7 @@ def options(project):
 
 def settings_key(opts):
     """What a run depends on (Processing shows 'out of date' when it changed since)."""
-    return _jsonable({k: opts.get(k) for k in ("position", "cog_min_speed", "base", "levers")})
+    return _jsonable({k: opts.get(k) for k in ("position", "cog_min_speed", "base", "levers", "heads_off")})
 
 
 def base_of(rec, opts):
@@ -400,6 +400,8 @@ def process(project, ctx, atx=None):
                                         pos["sdu"], vn, ve, roll, pitch, hd, hsrc, spd],
                                        names="t,lat,lon,h,q,sdn,sde,sdu,vn,ve,roll,pitch,heading,hsrc,speed"))
         for did in rec.heads:
+            if str(did) in (opts.get("heads_off") or []):  # switched off on the Installation page
+                continue
             A, check = head_attitude(rec, did)
             info_h = dict(rec.heads[did])
             ent = (opts.get("levers") or {}).get(str(did))
