@@ -27,6 +27,8 @@ def test_marine_llh_process_and_finalize():
         os.makedirs(rec)
         TS.make_svlz(os.path.join(rec, "2026-09-21_survey.svlz"), seconds=20.0)
         TS.make_llh(os.path.join(rec, "reach.LLH"), TS.T0 - 600, TS.T0 + 600)
+        os.makedirs(os.path.join(tmp, "Base"))                     # beside the recording's folder, as on the boat
+        TS.make_rinex(os.path.join(tmp, "Base", "base_test.26O"), TS.T0, TS.T0 + 20)
         with open(os.path.join(rec, "sonar_offsets.json"), "w") as f:
             json.dump({"1": [-0.40, -0.31, 0.65], "2": [-0.40, 0.31, 0.65]}, f)
         items = sources.scan([rec])
@@ -53,6 +55,24 @@ def test_marine_llh_process_and_finalize():
         assert doc["sensors"]["sonar_1"]["lever_m"] == [-0.40, -0.31, 0.65]
         S = np.fromfile(os.path.join(p.out_dir, "trajectory_sbet.out"), sbet.SBET)
         assert len(S) > 10
+        # the Base page (same as mobile mapping): the recordings' base RINEX listed, the selected base used by PPK
+        found = marine.recording_base_files(p)
+        assert found and all(os.path.exists(f) for f in found[0][1]), found
+        files = found[0][1]
+        assert marine.selected_base(p) is None and marine.base_for(p, None) is None
+        k0 = marine.settings_key(marine.options(p), p)
+        b = p.add_base({"name": marine.RECORDING_BASE, "files": files, "xyz": list(marine.llh_to_ecef(45.96, -66.64, 20.0)),
+                        "pos_source": "manual", "frame": "NAD83(CSRS)", "epoch": "1997.0", "antenna": "EML_REACH_RS2 NONE",
+                        "delta_hen": [1.478, 0, 0], "from_recordings": True})
+        from dcs_core.marine import SonarRecording
+        rec = SonarRecording(marine.recordings(dcs)[0])
+        bf = marine.base_for(p, rec)
+        assert bf["obs"] in files and abs(bf["lat"] - 45.96) < 1e-9 and bf["delta_hen"][0] == 1.478, bf
+        assert bf["antenna"].startswith("EML_REACH_RS2") and not bf["approximate"]
+        assert marine.settings_key(marine.options(p), p) != k0          # Processing shows out of date
+        span, xyz = marine.rover_extent(p)
+        assert span[1] > span[0] > 1e9 and xyz is not None
+        p.remove_base(b["id"])
         # mounting check from the data: each head's tilt and side, and the strip both heads see
         m1 = s["heads"]["1"]["mounting"]
         # the simulated heads point straight down (504 roll -2, pitch -1): tilt 2.24 deg, "down", so no port /

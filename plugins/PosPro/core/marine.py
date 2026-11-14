@@ -15,6 +15,7 @@ checked against it.
 import json
 import math
 import os
+import re
 import shutil
 
 import numpy as np
@@ -63,9 +64,124 @@ def options(project):
     return o
 
 
-def settings_key(opts):
+def settings_key(opts, project=None):
     """What a run depends on (Processing shows 'out of date' when it changed since)."""
-    return _jsonable({k: opts.get(k) for k in ("position", "cog_min_speed", "base", "levers", "heads_off")})
+    out = {k: opts.get(k) for k in ("position", "cog_min_speed", "base", "levers", "heads_off")}
+    b = selected_base(project) if project is not None else None
+    if b:                                       # the Base page's selected base: what PPK uses
+        out["base_station"] = {k: b.get(k) for k in ("id", "xyz", "frame", "epoch", "antenna", "delta_hen", "files")}
+    return _jsonable(out)
+
+
+# ----------------------------------------------------------------------------- the Base page's bases
+RECORDING_BASE = "Recorded"           # the Base page name of the base RINEX stored in the recordings
+
+
+def recording_base_files(project):
+    """The base RINEX stored in the job's recordings, written once to work/marine/base/<recording>/ so the Base page
+    (the same page as for mobile mapping) can list and read them: [(recording name, [paths])]."""
+    from dcs_core.marine import SonarRecording
+    out = []
+    for paths in recordings(project.dcs):
+        rec = SonarRecording(paths)
+        files = rec.rinex("base")
+        if not files:
+            continue
+        folder = project.wpath("marine", "base", rec.name, "x")[:-2]
+        os.makedirs(folder, exist_ok=True)
+        got = []
+        for name, data in sorted(files.items()):
+            path = os.path.join(folder, os.path.basename(name))
+            if not os.path.exists(path) or os.path.getsize(path) != len(data):
+                with open(path, "wb") as f:
+                    f.write(data)
+            got.append(path)
+        out.append((rec.name, got))
+    return out
+
+
+def rover_extent(project):
+    """For the Base page on a marine job: the recordings' span in GPS seconds (engine time base, as
+    Project.capture_span) and the boat's approximate ECEF position (autopilot) -> ((t0, t1), xyz) or (None, None)."""
+    from dcs_core.marine import SonarRecording
+    t0 = t1 = None
+    xyz = None
+    for paths in recordings(project.dcs):
+        rec = SonarRecording(paths)
+        a, b = rec.span()
+        t0 = a if t0 is None else min(t0, a)
+        t1 = b if t1 is None else max(t1, b)
+        if xyz is None:
+            P = rec.vehicle()["pos"]
+            if len(P):
+                xyz = llh_to_ecef(float(np.median(P["lat"])), float(np.median(P["lon"])), float(np.median(P["alt"])))
+    if t0 is None:
+        return None, None
+    g = 315964800.0 - 18.0                      # UTC -> GPS seconds since 1980-01-06
+    return (t0 - g, t1 - g), xyz
+
+
+def recording_base_known(project):
+    """A position for the recordings' base that is better than the RINEX header's: the one entered on the old
+    marine Base page (PosPro 2.5-2.6), else the TidalCal project's surveyed base -> (lat, lon, h, frame, epoch, note)."""
+    from dcs_core.marine import SonarRecording
+    b = (project.cfg.get("marine") or {}).get("base")
+    if b and b.get("lat") is not None:
+        return b["lat"], b["lon"], b["h"], b.get("frame") or "NAD83(CSRS)", b.get("epoch") or "2010.0", \
+            "entered on the marine Base page"
+    for paths in recordings(project.dcs):
+        tc = SonarRecording(paths).tidalcal
+        llh = tc.get("surveyed_base_llh")
+        if llh and len(llh) == 3:
+            return float(llh[0]), float(llh[1]), float(llh[2]), "NAD83(CSRS)", "2010.0", "TidalCal project"
+    return None
+
+
+def selected_base(project):
+    """The base chosen on the Base page (cfg bases / base_selected), with a position, or None."""
+    try:
+        b = project.base()
+    except Exception:       # noqa: BLE001
+        return None
+    return b if b and b.get("xyz") and b.get("files") else None
+
+
+def base_for(project, rec):
+    """What PPK of one recording uses from the Base page's selected base: {obs, navs, xyz, antenna, delta_hen,
+    lat, lon, h, frame, epoch, source, name} or None (then the old way: the recording's own base + base_of)."""
+    from . import rinex
+    b = selected_base(project)
+    if b is None:
+        return None
+    obs = [f for f in b["files"] if pipeline_obs(f) and os.path.exists(f)]
+    if not obs:
+        return None
+    t0, t1 = rec.span()
+    pick = [f for f in obs if os.sep + rec.name + os.sep in f]          # this recording's own base file
+    if not pick:                                                          # a file the user added: the one that
+        best = None                                                       # starts last before the recording
+        for f in obs:
+            hi = rinex.header_info(f, scan_body=False) or {}
+            first = hi.get("first")
+            ts = first.replace(tzinfo=__import__("datetime").timezone.utc).timestamp() - 18 if first else None
+            if ts is not None and ts <= t0 + 60 and (best is None or ts > best[0]):
+                best = (ts, f)
+        pick = [best[1] if best else obs[0]]
+    folders = {os.path.dirname(f) for f in b["files"]}
+    navs = [f for f in b["files"] if not pipeline_obs(f) and os.path.exists(f)]
+    for d in folders:                                   # navigation files beside the observations
+        for n in sorted(os.listdir(d)):
+            q = os.path.join(d, n)
+            if q not in navs and not pipeline_obs(q) and re.search(r"\.(\d\d[nNgGlLpPbBcC]|nav|rnx)$", n):
+                navs.append(q)
+    lat, lon, h = ecef_to_llh(*[np.array([v]) for v in b["xyz"]])
+    src = {"rinex": "RINEX header (approximate)", "manual": "entered", "ppp": "built-in PPP",
+           "csrs": "NRCan CSRS-PPP"}.get(b.get("pos_source"), b.get("pos_source"))
+    return {"obs": pick[0], "navs": navs, "xyz": list(b["xyz"]), "antenna": (b.get("antenna") or "").strip(),
+            "delta_hen": list(b.get("delta_hen") or [0.0, 0.0, 0.0]), "lat": float(lat[0]), "lon": float(lon[0]),
+            "h": float(h[0]), "frame": b.get("frame") or "", "epoch": b.get("epoch") or None,
+            "source": "Base page: %s (%s)" % (b.get("name"), src), "name": b.get("name"),
+            "approximate": b.get("pos_source") == "rinex"}
 
 
 def base_of(rec, opts):
@@ -197,12 +313,13 @@ def positions_ppk(rec, wdir, base, ctx, atx=None):
     rov, bas = rec.rinex("rover"), rec.rinex("base")
     robs = [n for n in rov if pipeline_obs(n)]
     bobs = [n for n in bas if pipeline_obs(n)]
+    page = base is not None and "obs" in base            # the Base page's selected base
     if not robs:
         return None, "no rover RINEX observations in the recording"
-    if not bobs:
+    if not bobs and not page:
         return None, "no base RINEX observations in the recording"
     if base is None:
-        return None, "no base position (enter it on the Marine page, or use a TidalCal project's surveyed base)"
+        return None, "no base position (choose or add a base on the Base page)"
     os.makedirs(wdir, exist_ok=True)
 
     def put(name, data):
@@ -211,13 +328,22 @@ def positions_ppk(rec, wdir, base, ctx, atx=None):
             f.write(data)
         return p
     ro = put("rover.obs", rov[robs[0]])
-    bo = put("base.obs", bas[bobs[0]])
-    navs = [put("nav_%d_%s" % (i, n), d) for i, (n, d) in enumerate(list(rov.items()) + list(bas.items()))
-            if not pipeline_obs(n)]
-    hi = rinex.header_info(bo, scan_body=False) or {}
-    delta = list(hi.get("delta_hen") or [0.0, 0.0, 0.0])
-    ant = (hi.get("antenna") or "").strip()
-    note = "base antenna %.3f m to the ARP (base RINEX header)%s" % (delta[0], ", %s" % ant if ant else "")
+    if page:
+        bo = base["obs"]
+        navs = [put("nav_%d_%s" % (i, n), d) for i, (n, d) in enumerate(rov.items()) if not pipeline_obs(n)]
+        navs += list(base["navs"])
+        delta = list(base["delta_hen"])
+        ant = base["antenna"]
+        note = "base %s: antenna %.3f m to the ARP%s (Base page)" % (base.get("name"), delta[0],
+                                                                        ", %s" % ant if ant else "")
+    else:
+        bo = put("base.obs", bas[bobs[0]])
+        navs = [put("nav_%d_%s" % (i, n), d) for i, (n, d) in enumerate(list(rov.items()) + list(bas.items()))
+                if not pipeline_obs(n)]
+        hi = rinex.header_info(bo, scan_body=False) or {}
+        delta = list(hi.get("delta_hen") or [0.0, 0.0, 0.0])
+        ant = (hi.get("antenna") or "").strip()
+        note = "base antenna %.3f m to the ARP (base RINEX header)%s" % (delta[0], ", %s" % ant if ant else "")
     if not atx and ant.upper().startswith("EML_REACH_RS2"):
         delta[0] += RS2_PCO_UP_M            # no antenna calibrations: Emlid's ARP -> L1 phase centre
         note += "; no ANTEX: +%.3f m (Emlid RS2 ARP to L1 phase centre)" % RS2_PCO_UP_M
@@ -225,7 +351,7 @@ def positions_ppk(rec, wdir, base, ctx, atx=None):
     conf = os.path.join(wdir, "ppk.conf")
     with open(conf, "w", encoding="utf-8") as f:
         f.write(pipeline.rtklib_conf_ppk(proc, atx, delta, ant if atx else ""))
-    xyz = llh_to_ecef(base["lat"], base["lon"], base["h"])
+    xyz = base["xyz"] if page else llh_to_ecef(base["lat"], base["lon"], base["h"])
     t0, t1 = rec.span()
     g0 = 315964800.0 - 18.0                 # engine times: GPS seconds since 1980-01-06
     common = ["--ts", "%.3f" % (t0 - g0 - 120), "--te", "%.3f" % (t1 - g0 + 120), "--base"] + ["%.4f" % v for v in xyz]
@@ -245,6 +371,8 @@ def positions_ppk(rec, wdir, base, ctx, atx=None):
     pos = combine_passes(fwd, bwd)
     if not len(pos):
         return None, "PPK gave no solution"
+    if page:
+        base = {k: base[k] for k in ("lat", "lon", "h", "frame", "epoch", "source", "name", "approximate")}
     info = {"base": base, "note": note, "fixed_fwd_pct": _pct(fwd, 1), "fixed_bwd_pct": _pct(bwd, 1)}
     return pos, info
 
@@ -280,14 +408,14 @@ def positions_mavlink(rec):
     return out
 
 
-def choose_positions(rec, wdir, opts, ctx=None, atx=None):
+def choose_positions(rec, wdir, opts, ctx=None, atx=None, base=None):
     """(POS, source key, info, [notes]) by the order PPK > rover LLH > autopilot (or the one asked for)."""
     want = opts.get("position", "auto")
     notes = []
     order = ["ppk", "llh", "mavlink"] if want == "auto" else [want]
     for src in order:
         if src == "ppk":
-            pos, info = positions_ppk(rec, os.path.join(wdir, "ppk"), base_of(rec, opts), ctx, atx)
+            pos, info = positions_ppk(rec, os.path.join(wdir, "ppk"), base or base_of(rec, opts), ctx, atx)
             if pos is not None and _pct(pos, 1) >= 50:
                 return pos, "ppk", info, notes
             notes.append("PPK not used: %s" % (info if pos is None else "only %.0f %% fixed" % _pct(pos, 1)))
@@ -431,7 +559,11 @@ def process(project, ctx, atx=None):
     for i, paths in enumerate(recs):
         rec = SonarRecording(paths)
         sub = ctx.sub(i / len(recs), (i + 0.8) / len(recs)) if ctx else None
-        pos, src, info, notes = choose_positions(rec, os.path.join(wdir, rec.name), opts, sub, atx)
+        pos, src, info, notes = choose_positions(rec, os.path.join(wdir, rec.name), opts, sub, atx,
+                                                 base=base_for(project, rec))
+        if src == "ppk" and (info.get("base") or {}).get("approximate"):
+            notes.append("PPK against a base position from its RINEX header (approximate): every position is "
+                         "off by the same metres - enter the base mark or run PPP on the Base page")
         att = rec.vehicle()["att"]
         hd, spd, hsrc, vn, ve = heading_and_speed(pos, att, float(opts["cog_min_speed"]))
         roll = np.interp(pos["t"], att["t"], att["roll"]) if len(att) else np.zeros(len(pos))
@@ -481,7 +613,7 @@ def process(project, ctx, atx=None):
     summary["fixed_pct"] = round(100.0 * float((T["q"] == 1).mean()), 1)
     summary["compass_pct"] = round(100.0 * float(T["hsrc"].mean()), 1)
     summary["cog_min_speed"] = float(opts["cog_min_speed"])
-    summary["settings"] = settings_key(opts)
+    summary["settings"] = settings_key(opts, project)
     project.cfg.setdefault("results", {})["marine"] = summary
     if ctx:
         ctx.progress(1.0)
@@ -557,8 +689,13 @@ def publish(project, ctx):
                                      "mounting": h.get("mounting"), "check": h.get("check")}
     recs = summ["recordings"]
     base = next((r["info"].get("base") for r in recs if r["source"] == "ppk"), None)
+    ep = (base or {}).get("epoch")
+    try:
+        ep = float(ep) if ep not in (None, "") else None
+    except (TypeError, ValueError):
+        pass
     frame = {"name": (base or {}).get("frame") or ("NAD83(CSRS)" if base else "as the GNSS receiver gave it"),
-             "epoch": (base or {}).get("epoch"), "heights": "ellipsoidal"}
+             "epoch": ep, "heights": "ellipsoidal"}
     if base and not frame["epoch"] and "NAD83" in (frame["name"] or "").upper():
         frame["epoch"] = 2010.0
     span = (float(T["t"][0]), float(T["t"][-1]))

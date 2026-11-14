@@ -403,101 +403,94 @@ class MInstallPage(MPage):
 
 # ------------------------------------------------------------------------------------------------- 3 Base
 class MBasePage(MPage):
+    """The same Base page as for mobile mapping (dock.BasePage). The base RINEX stored in the recordings is added
+    to its list once; what is set there (position source, frame, epoch, antenna type, ARP height, PPP, CSRS-PPP)
+    is what marine PPK uses."""
+
     def __init__(self, dock):
         super().__init__(dock)
-        self.lay.addWidget(_title("Base"))
-        self.lay.addWidget(_val("PPK computes the rover against the base station recorded beside it. Enter the base "
-                                "mark (surveyed point, NAD83(CSRS), ellipsoidal height); the antenna height above the "
-                                "mark comes from the base RINEX header (to the antenna reference point, as entered in "
-                                "Emlid Flow) and PosPro adds the antenna's phase-centre offset."))
-        f = QFormLayout()
-        bw = QWidget()
-        bl = QHBoxLayout(bw)
-        bl.setContentsMargins(0, 0, 0, 0)
-        self.s_lat, self.s_lon, self.s_h = QDoubleSpinBox(), QDoubleSpinBox(), QDoubleSpinBox()
-        for s, lo, hi, dec, suf in ((self.s_lat, -90, 90, 9, "°"), (self.s_lon, -180, 180, 9, "°"),
-                                    (self.s_h, -500, 9000, 3, " m")):
-            s.setRange(lo, hi)
-            s.setDecimals(dec)
-            s.setSuffix(suf)
-            s.valueChanged.connect(self._store)
-            bl.addWidget(s, 1)
-        self.b_tidal = QPushButton("From TidalCal")
-        self.b_tidal.setToolTip("The surveyed base the TidalCal project holds")
-        self.b_tidal.clicked.connect(self._from_tidalcal)
-        bl.addWidget(self.b_tidal)
-        f.addRow(_key("Base mark"), bw)
-        self.v_ant = _val()
-        f.addRow(_key("Base antenna"), self.v_ant)
-        self.v_rinex = _val()
-        f.addRow(_key("Base RINEX"), self.v_rinex)
-        self.lay.addLayout(f)
-        self.lay.addStretch(1)
-        self._loading = False
+        from .dock import BasePage
+        self.lay.setContentsMargins(0, 0, 0, 0)
+        self.inner = BasePage(dock)
+        self.lay.addWidget(self.inner)
+        self._synced = None
 
-    def _first(self):
-        return next((r for r in self.recs() if not isinstance(r, Exception)), None)
+    def _sync(self):
+        """Add the recordings' base RINEX to the Base page's list (once per job and set of recordings)."""
+        p = self.project
+        if p is None:
+            return
+        if not p.cfg["rover"].get("marine_span"):
+            span, xyz = marine.rover_extent(p)
+            if span:
+                p.cfg["rover"]["marine_span"] = list(span)
+                p.cfg["rover"]["marine_xyz"] = list(xyz) if xyz else None
+                self.dock.save()
+        found = marine.recording_base_files(p)
+        files = [f for _n, fs in found for f in fs]
+        key = (p.path if hasattr(p, "path") else id(p), tuple(files))
+        if self._synced == key:
+            return
+        self._synced = key
+        if not files:
+            return
+        have = next((b for b in p.cfg["bases"] if b.get("from_recordings")), None)
+        if have is not None and have.get("name") != marine.RECORDING_BASE:
+            have["name"] = marine.RECORDING_BASE
+            self.dock.save()
+        if have is not None and sorted(have.get("files") or []) == sorted(files):
+            return
+        obs = [f for f in files if marine.pipeline_obs(f)]
+        if not obs:
+            return
+        known = marine.recording_base_known(p)
+
+        def added(b):
+            if b is None:
+                return
+            b["from_recordings"] = True
+            b.setdefault("note", "base RINEX stored in the sonar recordings")
+            b["files"] = files                         # every recording's base file and its navigation files
+            if have is not None:                       # recordings added: keep what was set on the old entry
+                for k in ("xyz", "pos_source", "frame", "epoch", "antenna", "delta_hen", "ppp", "csrs", "note"):
+                    if k in have:
+                        b[k] = have[k]
+                p.remove_base(have["id"])
+                p.cfg["base_selected"] = b["id"]
+            elif known:
+                from ..core import geo
+                lat, lon, h, frame, epoch, note = known
+                b["xyz"] = list(geo.llh2ecef(lat, lon, h))
+                b["pos_source"], b["frame"], b["epoch"], b["note"] = "manual", frame, epoch, note
+            if not p.cfg.get("base_selected"):
+                p.cfg["base_selected"] = b["id"]
+            self.dock.save()
+            self.inner.refresh()
+            self.dock.update_steps()
+        self.inner.add_base_file(obs + [f for f in files if f not in obs], marine.RECORDING_BASE, then=added)
 
     def refresh(self):
-        rec = self._first()
-        o = marine.options(self.project) if self.project else {}
-        b = o.get("base") or (marine.base_of(rec, {}) if rec is not None else None)
-        self._loading = True
-        if b:
-            self.s_lat.setValue(b["lat"])
-            self.s_lon.setValue(b["lon"])
-            self.s_h.setValue(b["h"])
-        self._loading = False
-        self.v_ant.setText("")
-        if rec is None:
-            self.v_rinex.setText("")
-            return
-        base = rec.rinex("base")
-        obs = [n for n in base if marine.pipeline_obs(n)]
-        self.v_rinex.setText(", ".join(sorted(base)) or "none in the recordings (PPK not possible: the Reach log or "
-                                                        "the autopilot is used)")
-        if obs:
-            import tempfile
-            from ..core import rinex
-            tmp = os.path.join(tempfile.gettempdir(), "pospro_base_head.obs")
-            with open(tmp, "wb") as fh:
-                fh.write(base[obs[0]][:20000])
-            hi = rinex.header_info(tmp, scan_body=False) or {}
-            d = hi.get("delta_hen") or (0, 0, 0)
-            ant = " ".join(x for x in (hi.get("antenna") or "").split() if x != "NONE")
-            self.v_ant.setText("%.3f m mark to ARP, %s" % (d[0], ant or "antenna type not given"))
-
-    def _store(self, *_):
-        p = self.project
-        if p is None or self._loading:
-            return
-        if self.s_lat.value() or self.s_lon.value():
-            self.cfg()["base"] = {"lat": self.s_lat.value(), "lon": self.s_lon.value(), "h": self.s_h.value(),
-                                  "frame": "NAD83(CSRS)", "epoch": 2010.0}
-            p.save()
-            self.dock.update_steps()
-
-    def _from_tidalcal(self):
-        rec = self._first()
-        b = marine.base_of(rec, {}) if rec is not None else None
-        if not b:
-            self.v_ant.setText("No TidalCal base in the recordings: enter the base mark.")
-            return
-        self._loading = True
-        self.s_lat.setValue(b["lat"])
-        self.s_lon.setValue(b["lon"])
-        self.s_h.setValue(b["h"])
-        self._loading = False
-        self._store()
+        try:
+            self._sync()
+        except Exception as e:      # noqa: BLE001
+            self.dock.log("warning", "base RINEX from the recordings: %s" % e)
+        self.inner.refresh()
 
     def state(self):
-        rec = self._first()
-        if rec is None:
+        p = self.project
+        if p is None:
             return "todo", ""
-        if not rec.rinex("base"):
-            return "warn", "no base in the recordings (no PPK)"
-        b = marine.options(self.project).get("base") or marine.base_of(rec, {})
-        return ("done", "base mark set") if b else ("todo", "enter the base mark")
+        b = p.base()
+        if not p.cfg["bases"]:
+            return "warn", "no base (no PPK): add one with ADD RINEX… or DOWNLOAD…"
+        if b is None or not b.get("xyz"):
+            return "todo", "choose a base and its position"
+        if b.get("pos_source") == "rinex":
+            return "warn", "base position from the RINEX header (approximate): enter the mark or run PPP"
+        if not float((b.get("delta_hen") or [0])[0]) or not (b.get("antenna") or "").strip():
+            return "warn", "check the base antenna type and ARP height"
+        return "done", "%s (%s)" % (b.get("name"), {"manual": "entered", "ppp": "built-in PPP",
+                                                     "csrs": "CSRS-PPP"}.get(b.get("pos_source"), ""))
 
 
 # ------------------------------------------------------------------------------------------------- 4 Processing
@@ -564,7 +557,7 @@ class MProcessPage(MPage):
         s = self.summary()
         if not s:
             return "todo", ""
-        if s.get("settings") is not None and s["settings"] != marine.settings_key(marine.options(self.project)):
+        if s.get("settings") is not None and s["settings"] != marine.settings_key(marine.options(self.project), self.project):
             return "warn", "settings changed since: process again"
         if st == "stale":
             return "warn", "out of date: %s" % "; ".join(why)
