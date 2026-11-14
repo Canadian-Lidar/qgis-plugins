@@ -17,6 +17,8 @@ import json
 import os
 import time
 
+import numpy as np
+
 from qgis.core import Qgis, QgsApplication, QgsCoordinateReferenceSystem, QgsProject
 from qgis.PyQt.QtCore import QDateTime, QSettings, Qt, QTimer, pyqtSignal
 from qgis.PyQt.QtGui import QColor
@@ -36,7 +38,7 @@ from dcs_core.window import PluginWindow
 
 from .widgets import VEHICLE_PRESETS, Card, CoverageView, Section, StepButton, Toast, VehicleView
 from . import antennacheck
-from .marinepage import MarinePage
+from .marinepages import PAGES as MARINE_PAGES
 from .plots import Donut
 
 
@@ -2730,13 +2732,18 @@ class PosProDock(PluginWindow):
             sb.clicked.connect(lambda _=False, k=i: self.goto_page(k))
             self.stack.addWidget(_scroll(pg))
         sl.addStretch(1)
-        # marine jobs (sonar recordings from the survey boat): one page instead of the Lidar workflow
+        # marine jobs (sonar recordings from the survey boat): the same steps with the marine page of each
         self._side = side
         self._marine = False
-        self.marine_page = MarinePage(self)
-        self._marine_scroll = _scroll(self.marine_page)
-        self.stack.addWidget(self._marine_scroll)
-        theme.mapperize(self.marine_page)
+        self._mrecs = None
+        self.mpage = {k: MARINE_PAGES[k](self) for k in self.keys}
+        self.mpages = [self.mpage[k] for k in self.keys]
+        self._mscroll = []
+        for pg in self.mpages:
+            sc = _scroll(pg)
+            self._mscroll.append(sc)
+            self.stack.addWidget(sc)
+            theme.mapperize(pg)
         for pg in self.pages:
             theme.mapperize(pg)
             for cb in pg.findChildren(QComboBox):
@@ -2811,15 +2818,28 @@ class PosProDock(PluginWindow):
     def index_of(self, key):
         return self.keys.index(key)
 
+    def active_pages(self):
+        return self.mpages if self._marine else self.pages
+
+    def current_index(self):
+        w = self.stack.currentWidget()
+        if self._marine and w in self._mscroll:
+            return self._mscroll.index(w)
+        return self.stack.currentIndex()
+
     def goto_page(self, k):
-        if self._marine:
-            self.stack.setCurrentWidget(self._marine_scroll)
-            if self.project:
-                self.marine_page.refresh()
-            self.update_header_steps()
-            return
         if isinstance(k, str):
             k = self.index_of(k)
+        if self._marine:
+            self.stack.setCurrentWidget(self._mscroll[k])
+            self.step_buttons[k].setChecked(True)
+            if self.project:
+                try:
+                    self.mpages[k].refresh()
+                except Exception as e:      # noqa: BLE001
+                    self.log("warning", "marine page: %s" % e)
+            self.update_steps()
+            return
         self.stack.setCurrentIndex(k)
         self.step_buttons[k].setChecked(True)
         if self.project:
@@ -2842,31 +2862,21 @@ class PosProDock(PluginWindow):
     def update_header_steps(self):
         """Prepare › Process › Finalize in the header, by the pages' states (DCS Core 1.11.0)."""
         from dcs_core.stepnav import crumbs
-        if self._marine:
-            st = self.marine_page.state()[0] if self.project else "todo"
-            if getattr(self, "task", None) is not None:
-                st = "running"
-            items, cur = crumbs([("Marine", "Marine", [0])], ["Marine trajectory"], [(st, "")], 0)
-            self.header.set_steps(items, cur)
-            return
         states = []
-        for pg in self.pages:
+        for pg in self.active_pages():
             try:
                 states.append(pg.state() if self.project else ("todo", ""))
             except Exception:       # noqa: BLE001
                 states.append(("todo", ""))
         if getattr(self, "task", None) is not None:
-            k = self.stack.currentIndex()
+            k = self.current_index()
             states[k] = ("running", states[k][1])
-        items, cur = crumbs(self._phases(), [t for _k, t, _p in STEPS], states, self.stack.currentIndex(),
+        items, cur = crumbs(self._phases(), [t for _k, t, _p in STEPS], states, self.current_index(),
                             optional={"Review", "Calibration"})
         self.header.set_steps(items, cur)
 
     def update_steps(self):
-        if self._marine:
-            self.update_header_steps()
-            return
-        for pg, sb in zip(self.pages, self.step_buttons):
+        for pg, sb in zip(self.active_pages(), self.step_buttons):
             try:
                 st, sub = pg.state()
             except Exception:       # noqa: BLE001
@@ -2878,7 +2888,7 @@ class PosProDock(PluginWindow):
     def update_actions(self):
         """Buttons that cannot work yet are off (with the reason as their tooltip)."""
         p = self.project
-        if p is None or self.task is not None:
+        if p is None or self.task is not None or self._marine:
             return
         have_files = bool(p.cfg["rover"].get("files"))
         have_ex = bool(p.cfg["rover"].get("extract"))
@@ -2907,22 +2917,25 @@ class PosProDock(PluginWindow):
         """Back / Next under the pages: is the current step done, what is next."""
         if not hasattr(self, "nav"):
             return
-        if self._marine:
-            self.update_header_steps()
-            return
         self.update_header_steps()
-        k = self.stack.currentIndex()
+        k = self.current_index()
         if not self.project:
             self.nav.update(k, "todo", "open or create a project (project box, top right)")
             return
         try:
-            st, sub = self.pages[k].state()
+            st, sub = self.active_pages()[k].state()
         except Exception:           # noqa: BLE001
             st, sub = "todo", ""
         if getattr(self, "task", None) is not None:
             st = "running"
         todo = None
         key = self.keys[k]
+        if self._marine:
+            todo = {"data": "make the sonar recordings into .clraw with RemixPro and put them in the job",
+                    "install": "check each sonar head's offsets", "base": "enter the base mark (FROM TIDALCAL)",
+                    "process": "press PROCESS", "quality": "process first", "calib": "",
+                    "review": "optional", "export": "EXPORT is only for other software"}.get(key)
+            key = "_marine"
         if key == "data":
             todo = "press READ FILES" if self.project.cfg["rover"]["files"] else "add the rover files (ADD FILES\u2026)"
         elif key == "install":
@@ -3170,8 +3183,8 @@ class PosProDock(PluginWindow):
         self.set_enabled(True)
         from ..core import marine
         self._marine = marine.is_marine(p)
-        self._side.setVisible(not self._marine)
-        self.nav.setVisible(not self._marine)
+        self._mrecs = None
+        self.nav.setVisible(True)
         if self._marine:
             self.qc = None
             self.goto_page(0)
@@ -3415,6 +3428,32 @@ class PosProDock(PluginWindow):
         if self.start_task("Processing", work, done) is None:
             self._release_run(False, "not started")
 
+    def marine_recordings(self):
+        """The job's sonar recordings (dcs_core.marine.SonarRecording, or the exception that stopped one), read
+        once per project."""
+        if self._mrecs is None:
+            from dcs_core.marine import SonarRecording
+            from ..core import marine
+            out = []
+            for paths in marine.recordings(self.project.dcs) if self.project and self.project.dcs else []:
+                try:
+                    out.append(SonarRecording(paths))
+                except Exception as e:      # noqa: BLE001
+                    out.append(e)
+            self._mrecs = out
+        return self._mrecs
+
+    def marine_trajectory(self):
+        """The last processed boat trajectory (work/marine/trajectory.npy) or None."""
+        p = self.project
+        if p is None:
+            return None
+        f = os.path.join(p.wpath("marine", "x")[:-2], "trajectory.npy")
+        try:
+            return np.load(f) if os.path.exists(f) else None
+        except Exception:       # noqa: BLE001
+            return None
+
     def run_marine(self):
         """Marine job: trajectory of the GNSS antenna and each head's attitude, finalized for AlignPro and CloudPro."""
         p = self.project
@@ -3459,8 +3498,8 @@ class PosProDock(PluginWindow):
             for r in res.get("recordings", []):
                 self.log("info", "%s: %s, %.1f %% fixed" % (r["name"], r["source_label"],
                                                            (r.get("quality_pct") or {}).get("fixed", 0.0)))
-            self.marine_page.refresh()
-            self.update_header_steps()
+            self._mrecs = None
+            self.goto_page("quality")
         if self.start_task("Marine trajectory", work, done) is None:
             self._release_run(False, "not started")
 

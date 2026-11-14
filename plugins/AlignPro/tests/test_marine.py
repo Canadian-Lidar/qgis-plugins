@@ -122,7 +122,31 @@ def test_georef_local_matches_rays():
     assert abs(P[0, 2] + 10 * math.cos(math.radians(30))) < 1e-6
 
 
+def test_review_tools():
+    """Pairs, residual profiles, the disagreement map and live sections see a roll error and its correction."""
+    data = simulate(roll_err=(0.6, -0.4))
+    wrong = {}
+    right = {"1": {"roll": 0.6}, "2": {"roll": -0.4}}
+    pt0, pt1 = M.pair_table(data, wrong), M.pair_table(data, right)
+    assert pt0 and any(e["kind"] == "reciprocal" for e in pt0)
+    med = lambda pt: np.average([e["median_cm"] for e in pt], weights=[e["n"] for e in pt])
+    assert med(pt1) < med(pt0)
+    g0, g1 = M.difference_grid(data, wrong)[3], M.difference_grid(data, right)[3]
+    assert np.nanmedian(g1) < np.nanmedian(g0)
+    pr = M.residual_profiles(data, right)
+    assert set(pr) == {1, 2} and len(pr[1]["angle"][0]) >= 3
+    xs, ys = M.plan(data, right, M.view_sample(data, 20000))[:2]
+    c = np.array([np.median(xs), np.median(ys)])
+    sec = M.Section(data, wrong, c - [0, 60], c + [0, 60], 2.0)
+    a0 = sec.place(wrong)
+    a1 = sec.place(dict(right, **{"1": {"roll": 0.6, "lever_m": [0.0, -0.06, 0.6]}}))
+    assert len(a0[0]) > 100 and len(a1[0]) > 100
+    pub = M.with_levers(data, {"1": {"lever_m": [1.0, 2.0, 3.0]}})
+    assert pub["heads"][1]["lever"] == [1.0, 2.0, 3.0] and data["heads"][1]["lever"] != [1.0, 2.0, 3.0]
+
+
 if __name__ == "__main__":
+    test_review_tools()
     test_split_passes_lawnmower()
     test_georef_local_matches_rays()
     test_patch_test_no_error_stays_zero()

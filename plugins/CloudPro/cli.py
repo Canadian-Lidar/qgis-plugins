@@ -158,7 +158,7 @@ def main(argv=None):
         prj.save()
         return 0
     if a.cmd == "filter":
-        groups = F.default_groups()
+        groups = F.default_groups(any(l.get("kind") == "sonar" for l in prj.lines))
         gp = os.path.join(prj.root, "filters", "groups.json")
         if os.path.exists(gp):
             with open(gp) as fh:
@@ -233,7 +233,7 @@ def _dcs_cmd(a, prj):
             print("\r%d line(s), %s points%s" % (len(out), "{:,}".format(sum(s["points"] for _, s in out)),
                                                ("; %s edited points carried over" % "{:,}".format(rest)) if rest else ""))
         elif a.cmd == "filter":
-            groups = F.default_groups()
+            groups = F.default_groups(any(l.get("kind") == "sonar" for l in prj.lines))
             gp = os.path.join(prj.filters_dir, "groups.json")
             if os.path.exists(gp):
                 with open(gp) as fh:

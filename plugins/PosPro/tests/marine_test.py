@@ -55,6 +55,14 @@ def test_marine_llh_process_and_finalize():
         assert len(S) > 10
         att = np.load(os.path.join(p.out_dir, "sonar_1_attitude.npy"))
         assert len(att) > 0 and att["up"].shape[1] == 3
+        # a head switched off on the Installation page is left out of the trajectory's sensors
+        p.cfg.setdefault("marine", {})["heads_off"] = ["2"]
+        with dcs.run("pospro", "PosPro", "test"):
+            s2 = marine.process(p, ctx)
+            h2 = marine.publish(p, ctx)
+        assert sorted(str(k) for k in s2["heads"]) == ["1"]
+        assert sorted(json.load(open(h2["path"]))["sensors"]) == ["sonar_1"]
+        assert s2["settings"]["heads_off"] == ["2"]
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
