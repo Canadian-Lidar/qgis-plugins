@@ -880,30 +880,28 @@ class ScaleDialog(QtWidgets.QDialog):
         self.accept()
 
 
-class InterpolateDialog(QtWidgets.QDialog):
-    """Interpolation (fill holes in the grid with virtual points), as AutoClean's: area, method, virtual points per
-    cell, cell size, search range, which points give the heights, the class of the new points, append."""
+class InterpolatePanel(QtWidgets.QWidget):
+    """The INTERPOLATION tab (fill holes in the grid with virtual points, as AutoClean's Interpolation): area,
+    method, virtual points per cell, cell size, search range, which points give the heights, the class of the new
+    points, append; INTERPOLATE and DELETE INTERPOLATION."""
+    run_requested = Signal()
+    delete_requested = Signal()
 
-    def __init__(self, parent, have_box, existing, class_counts=None, last=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
         from ..core import filters as F, interpolate as I
-        self.I = I
-        last = dict(last or {})
-        self.setWindowTitle("CloudPro - interpolation")
-        lay = QtWidgets.QFormLayout(self)
+        self.I, self.F = I, F
+        v = QtWidgets.QVBoxLayout(self)
+        v.setContentsMargins(10, 8, 10, 8)
+        lay = QtWidgets.QFormLayout()
+        v.addLayout(lay)
         self.area = QtWidgets.QComboBox()
         self.area.addItem("Inspection Area", "box")
         self.area.addItem("Entire project", "project")
-        if not have_box:
-            self.area.model().item(0).setEnabled(False)
-            self.area.setCurrentIndex(1)
-        else:
-            self.area.setCurrentIndex(max(0, self.area.findData(last.get("area", "box"))))
         lay.addRow("Area", self.area)
         self.method = QtWidgets.QComboBox()
         for k, label in I.METHODS:
             self.method.addItem(label, k)
-        self.method.setCurrentIndex(max(0, self.method.findData(last.get("method", "hole_idw"))))
         self.method.setToolTip("Hole - inverse distance: an empty cell with filled cells in 6 of the 8 directions "
                                "(within the search range) gets their inverse-distance mean.\nHole - triangulation: "
                                "each hole closed by data is filled on straight lines between the cells around it.\n"
@@ -914,60 +912,95 @@ class InterpolateDialog(QtWidgets.QDialog):
         self.ppc = QtWidgets.QComboBox()
         for n in I.POINTS_PER_CELL:
             self.ppc.addItem("%d" % n, n)
-        self.ppc.setCurrentIndex(max(0, self.ppc.findData(int(last.get("points_per_cell", 4)))))
         self.ppc.setToolTip("Virtual points made in each filled cell, spread evenly over it (1 = the cell centre)")
         lay.addRow("Virtual points per cell", self.ppc)
         self.cell = QtWidgets.QComboBox()
         for c in I.CELLS:
             self.cell.addItem("%g m" % c, c)
-        self.cell.setCurrentIndex(max(0, self.cell.findData(float(last.get("cell", 1.0)))))
         lay.addRow("Cell size", self.cell)
         self.search = QtWidgets.QSpinBox()
         self.search.setRange(1, 200)
-        self.search.setValue(int(last.get("search", 10)))
         self.search.setSuffix(" cells")
         self.search.setToolTip("How far to look for a filled cell (Area - triangulation: the longest gap bridged)")
         lay.addRow("Search range", self.search)
         self.src = QtWidgets.QComboBox()
-        self.src.addItem("Every accepted point", ())
-        counts = class_counts[0] if class_counts is not None else None
-        for c, name in sorted(F.ASPRS.items()):
-            if counts is None or (c < len(counts) and counts[c] > 0):
-                self.src.addItem("%s only" % name, (c,))
-        self.src.setCurrentIndex(max(0, self.src.findData(tuple(last.get("classes") or ()))))
         lay.addRow("Heights from", self.src)
         self.cls = QtWidgets.QComboBox()
         for c, name in sorted(F.ASPRS.items()):
             self.cls.addItem(name, c)
-        self.cls.setCurrentIndex(max(0, self.cls.findData(int(last.get("new_class", 2)))))
         lay.addRow("Class of the new points", self.cls)
-        self.append = QtWidgets.QCheckBox("Keep the interpolated points made before (%s)" % "{:,}".format(existing))
-        self.append.setVisible(existing > 0)
-        self._existing = existing
+        self.append = QtWidgets.QCheckBox("Keep the interpolated points made before")
         lay.addRow("", self.append)
+        row = QtWidgets.QHBoxLayout()
+        self.b_run = QtWidgets.QPushButton("Interpolate")
+        self.b_run.setObjectName("ppPrimary")
+        self.b_del = QtWidgets.QPushButton("Delete interpolation")
+        row.addWidget(self.b_run)
+        row.addWidget(self.b_del)
+        row.addStretch(1)
+        v.addLayout(row)
         self.note = QtWidgets.QLabel("")
         self.note.setWordWrap(True)
-        self.note.setMaximumWidth(420)
-        lay.addRow(self.note)
-        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok |
-                                        QtWidgets.QDialogButtonBox.StandardButton.Cancel)
-        bb.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).setText("Interpolate")
-        bb.accepted.connect(self._ok)
-        bb.rejected.connect(self.reject)
-        lay.addRow(bb)
+        v.addWidget(self.note)
+        v.addStretch(1)
+        self.b_run.clicked.connect(self._run)
+        self.b_del.clicked.connect(self.delete_requested.emit)
         self.method.currentIndexChanged.connect(self._check)
         self.area.currentIndexChanged.connect(self._check)
+        self._existing = 0
+        self._have_box = False
+        self._filling = False
+        self.set_state(False, 0, None, None)
+
+    def set_state(self, have_box, existing, class_counts, last, busy=False):
+        """Fill the tab from the project (box drawn?, virtual points now, class counts, last settings)."""
+        self._filling = True
+        last = dict(last or {})
+        self._have_box, self._existing = have_box, existing
+        self.area.model().item(0).setEnabled(have_box)
+        want = last.get("area", "box") if have_box else "project"
+        if self.area.currentData() != want or not have_box:
+            self.area.setCurrentIndex(max(0, self.area.findData(want)))
+        for w, key, default in ((self.method, "method", "hole_idw"), (self.ppc, "points_per_cell", 4),
+                                (self.cell, "cell", 1.0), (self.cls, "new_class", 2)):
+            if key in last or w.currentIndex() < 0:
+                w.setCurrentIndex(max(0, w.findData(type(default)(last.get(key, default)))))
+        if "search" in last:
+            self.search.setValue(int(last["search"]))
+        elif self.search.value() == 1:
+            self.search.setValue(10)
+        cur = tuple(self.src.currentData() or ()) if self.src.count() else tuple(last.get("classes") or ())
+        self.src.clear()
+        self.src.addItem("Every accepted point", ())
+        counts = class_counts[0] if class_counts is not None else None
+        for c, name in sorted(self.F.ASPRS.items()):
+            if counts is None or (c < len(counts) and counts[c] > 0):
+                self.src.addItem("%s only" % name, (c,))
+        self.src.setCurrentIndex(max(0, self.src.findData(cur)))
+        self.append.setText("Keep the interpolated points made before (%s)" % "{:,}".format(existing))
+        self.append.setEnabled(existing > 0)
+        if not existing:
+            self.append.setChecked(False)
+        self._busy = busy
+        self.b_del.setEnabled(existing > 0 and not busy)
+        self._filling = False
         self._check()
-        theme.polish_dialog(self)
 
     def _check(self):
         need = self.method.currentData() in self.I.AREA_ONLY and self.area.currentData() == "project"
-        self.note.setText("This method needs an area: choose the Inspection Area." if need else "")
+        if need:
+            self.note.setText("This method needs an area: draw an Inspection Area and choose it.")
+        elif self._existing:
+            self.note.setText("%s interpolated points in the project (line Interpolated points)."
+                              % "{:,}".format(self._existing))
+        else:
+            self.note.setText("")
+        self.b_run.setEnabled(not need and not getattr(self, "_busy", False))
 
-    def _ok(self):
+    def _run(self):
         if self.method.currentData() in self.I.AREA_ONLY and self.area.currentData() == "project":
             return
-        self.accept()
+        self.run_requested.emit()
 
     def settings(self):
         """(interpolate.Settings, area key)."""

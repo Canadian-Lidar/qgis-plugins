@@ -244,7 +244,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._make_dock(key, title, pane, pane.head, pane.hl)
         for key, title, w in (("filters", "AUTOMATIC FILTERS", self.filters),
                               ("info", "LINES · CLASSES · INFO", self.infop), ("history", "HISTORY", self.history),
-                              ("separation", "LINE SEPARATION", self._sep_panel())):
+                              ("separation", "LINE SEPARATION", self._sep_panel()),
+                              ("interpolate", "INTERPOLATION", self._interp_panel())):
             head = chrome.Strip()
             head.setFixedHeight(34)
             hl = QtWidgets.QHBoxLayout(head)
@@ -254,6 +255,7 @@ class MainWindow(QtWidgets.QMainWindow):
             hl.addWidget(_title(title))
             hl.addStretch(1)
             self._make_dock(key, title, w, head, hl)
+        self.docks["interpolate"].visibilityChanged.connect(lambda on: on and self.refresh_interp())
         self._default_layout()
         self.top_host = QtWidgets.QWidget()
         tl = QtWidgets.QVBoxLayout(self.top_host)
@@ -273,7 +275,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_tool()
 
     # ------------------------------------------------------------------ dock windows
-    LAYOUT_VERSION = 3                          # 2.0.0: views and panels never float; 2.3.0: LINE SEPARATION tab
+    LAYOUT_VERSION = 4      # 2.0.0: views and panels never float; 2.3.0: LINE SEPARATION tab; 2.9.1: INTERPOLATION tab
 
     def _make_dock(self, key, title, widget, head, head_layout):
         d = QtWidgets.QDockWidget(title, self)
@@ -315,6 +317,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabifyDockWidget(D["filters"], D["info"])
         self.tabifyDockWidget(D["info"], D["history"])
         self.tabifyDockWidget(D["history"], D["separation"])
+        self.tabifyDockWidget(D["separation"], D["interpolate"])
         D["filters"].raise_()
         self.resizeDocks([D["plan"], D["3d"]], [840, 840], Qt.Orientation.Horizontal)
         self.resizeDocks([D["plan"], D["slice"]], [500, 500], Qt.Orientation.Vertical)
@@ -404,8 +407,7 @@ class MainWindow(QtWidgets.QMainWindow):
                              self.show_properties, "Ctrl+R"), (None, None, None),
                             ("Georeference / update the points...", self.georeference, "Ctrl+I"),
                             ("Check line separation...", self.check_separation, ""),
-                            ("Interpolate (fill holes in the grid)...", self.interpolate, ""),
-                            ("Delete interpolation", self.delete_interpolation, ""),
+                            ("Interpolation (fill holes in the grid)", self.interpolate, ""),
                             ("Finalize for the job (LAS, ground grid, cloud.json)...", self.publish_dialog, "Ctrl+P"),
                             ("Export (LAS, XYZ, grid) anywhere...", self.export, "Ctrl+E"),
                             ("Save", self.save_project, "Ctrl+S"), (None, None, None),
@@ -433,7 +435,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _fill_windows(self, w):
         w.clear()
-        for k in ("plan", "slice", "3d", "filters", "info", "history", "separation"):
+        for k in ("plan", "slice", "3d", "filters", "info", "history", "separation", "interpolate"):
             w.addAction(self.docks[k].toggleViewAction())
         w.addSeparator()
         w.addAction("Reset the window layout", self.reset_layout)
@@ -959,21 +961,36 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as ex:        # noqa: BLE001
             self._error("Cannot save the QGIS project", ex)
 
+    def _interp_panel(self):
+        from .dialogs import InterpolatePanel
+        self.interp = InterpolatePanel()
+        self.interp.run_requested.connect(self.run_interpolation)
+        self.interp.delete_requested.connect(self.delete_interpolation)
+        return self.interp
+
+    def refresh_interp(self):
+        """The INTERPOLATION tab from the project (box drawn?, virtual points now, classes present)."""
+        p = self.project
+        if p is None or not hasattr(self, "interp"):
+            return
+        from ..core import interpolate as I
+        try:
+            counts = p.store.class_counts()
+        except Exception:       # noqa: BLE001
+            counts = None
+        self.interp.set_state(self.box is not None, I.count(p), counts, p.data.get("interpolate"), busy=self._busy)
+
     def interpolate(self):
-        """Fill holes in the grid with virtual points (AutoClean's Interpolation)."""
+        """Menu: the INTERPOLATION tab."""
+        self.refresh_interp()
+        self.show_dock("interpolate")
+
+    def run_interpolation(self):
+        """Fill holes in the grid with virtual points (AutoClean's Interpolation), with the tab's settings."""
         if self.project is None or self._guard("interpolating"):
             return
         from ..core import interpolate as I
-        from .dialogs import InterpolateDialog
-        try:
-            counts = self.project.store.class_counts()
-        except Exception:       # noqa: BLE001
-            counts = None
-        d = InterpolateDialog(self, self.box is not None, I.count(self.project), counts,
-                              self.project.data.get("interpolate"))
-        if exec_(d) != QtWidgets.QDialog.DialogCode.Accepted:
-            return
-        s, area = d.settings()
+        s, area = self.interp.settings()
         box = dict(self.box) if area == "box" and self.box is not None else None
         from dataclasses import asdict
         self.project.data["interpolate"] = dict(asdict(s), area=area)
@@ -984,6 +1001,7 @@ class MainWindow(QtWidgets.QMainWindow):
             IM.rebuild_grids(prj, res["keys"])
             return res, s, area
         self._run("interpolate", job, "Interpolating")
+        self.refresh_interp()
 
     def delete_interpolation(self):
         if self.project is None or self._guard("deleting the interpolation"):
@@ -1564,6 +1582,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def set_box(self, box, load=True, fit=False):
         box = self.whole_metres(box)
         self.box = dict(box)
+        self.refresh_interp()
         self.plan.box = dict(box)
         self.v3d.box_bearing = box["bearing"]
         self.v3d.set_area(box)                       # 3D turns around the area's centre
@@ -1580,6 +1599,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         box = self.whole_metres(box)
         self.box = dict(box)
+        self.refresh_interp()
         if self._area is not None:
             self._area.set_box(box, self._origin())
         if final:
@@ -3307,6 +3327,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log_job(tag, res)
         self._lock_actions(False)
         self.header.set_busy(False)
+        self.refresh_interp()
         self.prog.hide()
         self.btn_cancel.hide()
         self.status("", 1)
@@ -3462,6 +3483,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "{:,}".format(n), "cells" if kind == "grid" else "points", where,
                 "\n\nThe first 50 tiles were added to the map." if add and len(files) > 50 else ""))
         self._refresh_history()
+        self.refresh_interp()
 
     def _error(self, title, ex):
         theme.msg_warn(self, "CloudPro", "%s:\n%s" % (title, ex))

@@ -85,7 +85,11 @@ def count(project):
 
 
 def _remove(project, lid):
-    """Take every point of line lid out of the store (tiles rewritten); -> keys changed."""
+    """Take every point of line lid out of the store (tiles rewritten); -> keys changed. Windows refuses to replace
+    a file while a memory map of it is open, so every map of the tile is dropped first and the replace is retried
+    for a few seconds (another reader finishing)."""
+    import gc
+    from dcs_core import files as dfiles
     st = project.store
     st.flush()
     changed = []
@@ -93,12 +97,20 @@ def _remove(project, lid):
         a = st.tile_array(k)
         m = a["line"] == lid
         if not m.any():
+            del a, m
             continue
         keep = np.array(a[~m])
-        st._close_mm(k)
+        del a, m                                # no reference to the map may stay
+        with st.lock:
+            st._close_mm(k)
+        gc.collect()
         p = st.tile_path(k)
         keep.tofile(p + ".tmp")
-        os.replace(p + ".tmp", p)
+        try:
+            dfiles.replace(p + ".tmp", p)
+        except PermissionError:                 # still held by another reader after the retries
+            os.remove(p + ".tmp")
+            raise InterpolationError("the tile %s is in use by another task; try again in a moment" % k)
         st.counts[k] = len(keep)
         changed.append(k)
     st.save_meta()
