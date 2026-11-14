@@ -333,6 +333,46 @@ def heading_and_speed(pos, att, min_speed=COG_MIN_SPEED, smooth_s=COG_SMOOTH_S):
     return hd, spd, src, vn, ve
 
 
+# ----------------------------------------------------------------------------- mounting check
+TILT_DIFF_WARN_DEG = 1.5       # the two heads' tilts differ by more than this: the strip under the boat is lopsided
+
+
+def _mount_of(checks):
+    """One head's mounting check over the recordings: the one with the most soundings."""
+    return max(checks, key=lambda m: m.get("soundings", 0)) if checks else None
+
+
+def mounting_summary(heads, levers=None):
+    """The pair of heads in use looking to opposite sides: how far apart across the boat, the tilt difference and
+    the seabed both see at the job's depth -- dict, or {} when there is no such pair. levers = {head: [F, S, D]}
+    to use instead of the heads' own (what the Installation page shows now)."""
+    from dcs_core import marine as dmarine
+    side = {}
+    for d, h in heads.items():
+        m = h.get("mounting") or {}
+        if m.get("looks") in ("port", "starboard") and m.get("looks") not in side:
+            side[m["looks"]] = d
+    if len(side) < 2:
+        return {}
+    P, S = heads[side["port"]], heads[side["starboard"]]
+    mp, ms = P["mounting"], S["mounting"]
+    lv = levers or {}
+    lp = lv.get(side["port"]) or P.get("lever_m")
+    ls = lv.get(side["starboard"]) or S.get("lever_m")
+    spacing = abs(float(ls[1]) - float(lp[1])) if lp and ls else 0.0
+    depths = [m["depth_m"] for m in (mp, ms) if m.get("depth_m")]
+    depth = float(np.median(depths)) if depths else None
+    w, meet = dmarine.shared_strip(mp["reach_deg"], ms["reach_deg"], spacing, depth)
+    wn, meetn = dmarine.shared_strip(mp["nominal_reach_deg"], ms["nominal_reach_deg"], spacing, depth)
+    diff = abs(mp["tilt_deg"] - ms["tilt_deg"])
+    return {"port": side["port"], "starboard": side["starboard"], "spacing_m": round(spacing, 3),
+            "depth_m": None if depth is None else round(depth, 2),
+            "tilt_diff_deg": round(diff, 2), "tilt_diff_warn": diff > TILT_DIFF_WARN_DEG,
+            "shared_m": None if w is None else round(w, 2), "meet_depth_m": None if meet is None else round(meet, 2),
+            "shared_nominal_m": None if wn is None else round(wn, 2),
+            "meet_depth_nominal_m": None if meetn is None else round(meetn, 2)}
+
+
 def head_attitude(rec, head):
     """Each head's attitude for CloudPro and AlignPro: the sonar's own fused attitude (504) at every ping,
     as (t UTC, up[3], roll, pitch) -- plus the check against its raw IMU (505)."""
@@ -407,9 +447,16 @@ def process(project, ctx, atx=None):
             ent = (opts.get("levers") or {}).get(str(did))
             if ent:                                       # typed on the Installation page
                 info_h.update(lever_m=[float(v) for v in ent], lever_source="entered in PosPro")
-            heads.setdefault(did, {"parts": [], "checks": [], "info": info_h})
+            heads.setdefault(did, {"parts": [], "checks": [], "info": info_h, "mounting": []})
             heads[did]["parts"].append(A)
             heads[did]["checks"].append(check)
+            try:
+                from dcs_core import marine as dmarine
+                m = dmarine.mounting_check(rec, did, every=10, attitude=A)
+            except Exception:       # noqa: BLE001 - a check only: never stops the processing
+                m = None
+            if m:
+                heads[did]["mounting"].append(m)
         q = {Q_NAMES.get(int(k), str(int(k))): round(100.0 * float((pos["q"] == k).mean()), 1) for k in np.unique(pos["q"])}
         summary["recordings"].append({"name": rec.name, "source": src, "source_label": SOURCES[src], "epochs": len(pos),
                                       "quality_pct": q, "rate_hz": round(1 / float(np.median(np.diff(pos["t"]))), 1)
@@ -427,8 +474,9 @@ def process(project, ctx, atx=None):
         h["n"] = len(A)
     summary["heads"] = {str(d): {"nickname": h["info"].get("nickname"), "lever_m": h["info"].get("lever_m"),
                                  "lever_source": h["info"].get("lever_source"), "looks": h["info"].get("looks"),
-                                 "attitudes": h["n"],
+                                 "attitudes": h["n"], "mounting": _mount_of(h["mounting"]),
                                  "check": h["checks"][0] if h["checks"] else {}} for d, h in heads.items()}
+    summary["mounting"] = mounting_summary(summary["heads"])
     summary["position_source"] = sorted({r["source"] for r in summary["recordings"]})
     summary["fixed_pct"] = round(100.0 * float((T["q"] == 1).mean()), 1)
     summary["compass_pct"] = round(100.0 * float(T["hsrc"].mean()), 1)
@@ -506,7 +554,7 @@ def publish(project, ctx):
                                      "source": "the sonar's own fused attitude (packet 504) at every ping",
                                      "nickname": h.get("nickname"), "lever_m": h.get("lever_m"),
                                      "lever_source": h.get("lever_source"), "looks": h.get("looks"),
-                                     "check": h.get("check")}
+                                     "mounting": h.get("mounting"), "check": h.get("check")}
     recs = summ["recordings"]
     base = next((r["info"].get("base") for r in recs if r["source"] == "ppk"), None)
     frame = {"name": (base or {}).get("frame") or ("NAD83(CSRS)" if base else "as the GNSS receiver gave it"),
@@ -534,7 +582,8 @@ def publish(project, ctx):
                                 for r in recs],
                    "heading": {"course_over_ground_above_m_s": summ["cog_min_speed"],
                                "below": "autopilot compass (MAVLink ATTITUDE yaw)", "compass_pct": summ["compass_pct"]},
-                   "vessel_attitude": "autopilot (MAVLink ATTITUDE)", "notes": summ.get("notes", [])},
+                   "vessel_attitude": "autopilot (MAVLink ATTITUDE)", "notes": summ.get("notes", []),
+                   "mounting": summ.get("mounting") or {}},
         "sensors": sensors,
         "attitude": "vessel roll / pitch from the autopilot; each sonar's own attitude in sensors",
     }

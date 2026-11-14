@@ -276,7 +276,10 @@ class MPairsPage(MPage):
         row.addWidget(self.b_measure)
         row.addStretch(1)
         self.lay.addLayout(row)
-        self.t = _table(["First", "Second", "Kind", "Compared", "Apart (median)", "Signed"])
+        self.t = _table(["First", "Second", "Kind", "Compared", "Apart (median)", "Signed", "Beam angle",
+                         "At the fan edge"])
+        self.t.setToolTip("Beam angle: median angle of the compared soundings from each head's beam centre. At the fan "
+                          "edge: share of them more than %d° from it, where the fan is weakest." % int(marine.EDGE_DEG))
         self.t.cellDoubleClicked.connect(self._open)
         self.lay.addWidget(self.t)
         self.v_note = _val()
@@ -287,18 +290,37 @@ class MPairsPage(MPage):
         rows = []
         pt = self.dock.mpairs or []
         for e in pt:
+            hs = [h for h in dict.fromkeys((e["a"][0], e["b"][0])) if h in (e.get("beam_deg") or {})]
             rows.append(["%s pass %d" % (head_name(self.dock, e["a"][0]), e["a"][1] + 1),
                          "%s pass %d" % (head_name(self.dock, e["b"][0]), e["b"][1] + 1), e["kind"],
-                         "{:,}".format(e["n"]), "%.1f cm" % e["median_cm"], "%+.1f cm" % e["signed_cm"]])
+                         "{:,}".format(e["n"]), "%.1f cm" % e["median_cm"], "%+.1f cm" % e["signed_cm"],
+                         " / ".join("%.0f°" % e["beam_deg"][h] for h in hs),
+                         " / ".join("%.0f %%" % e["edge_pct"][h] for h in hs)])
         _set_rows(self.t, rows, 520)
         self.b_measure.setEnabled(self.dock.mdata is not None)
         if pt:
             kinds = {k: sum(e["n"] for e in pt if e["kind"] == k) for k in ("reciprocal", "same direction",
                                                                              "between heads", "crossing")}
-            self.v_note.setText("Compared soundings: " + ", ".join("%s %s" % (k, "{:,}".format(v))
-                                                                  for k, v in kinds.items() if v))
+            text = "Compared soundings: " + ", ".join("%s %s" % (k, "{:,}".format(v)) for k, v in kinds.items() if v)
+            bh = [e for e in pt if e["kind"] == "between heads"]
+            if bh:
+                edge = sum(e["n"] * max(e["edge_pct"].values()) / 100.0 for e in bh) / max(1, sum(e["n"] for e in bh))
+                text += ". Between the heads, %.0f %% of the compared soundings are at the edge of a fan%s" % (
+                    100 * edge, ": treat that comparison with care" if edge > 0.5 else "")
+            text += "." + self._strip_text()
+            self.v_note.setText(text)
         else:
-            self.v_note.setText("")
+            self.v_note.setText(self._strip_text().strip())
+
+    def _strip_text(self):
+        data = self.dock.mdata
+        st = marine.head_strip(data, self.dock.marine_values()) if data else None
+        if not st or st["depth_m"] is None:
+            return ""
+        if not st["width_m"]:
+            return " The heads do not meet under the boat at %.1f m (PosPro's mounting check)." % st["depth_m"]
+        return " Both heads see %.1f m of seabed under the boat at %.1f m (PosPro's mounting check)." % (
+            st["width_m"], st["depth_m"])
 
     def _open(self, r, _c):
         pt = self.dock.mpairs or []

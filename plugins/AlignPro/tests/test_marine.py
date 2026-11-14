@@ -131,6 +131,19 @@ def test_review_tools():
     assert pt0 and any(e["kind"] == "reciprocal" for e in pt0)
     med = lambda pt: np.average([e["median_cm"] for e in pt], weights=[e["n"] for e in pt])
     assert med(pt1) < med(pt0)
+    for e in pt1:                                     # each compared head's beam angles and fan-edge share
+        assert e["beam_deg"] and all(0 <= v <= 90 for v in e["beam_deg"].values())
+        assert all(0 <= v <= 100 for v in e["edge_pct"].values())
+    assert all(len(e["beam_deg"]) == 2 for e in pt1 if e["kind"] == "between heads")
+    # the strip both heads see, from PosPro's mounting check and the offsets in use
+    d1, d2 = sorted(data["heads"])
+    dd = dict(data, heads={d1: dict(data["heads"][d1], lever=[0, -0.076, 0.5], mounting={
+        "looks": "port", "reach_deg": 1.6, "depth_m": 12.9}), d2: dict(data["heads"][d2], lever=[0, 0.076, 0.5],
+        mounting={"looks": "starboard", "reach_deg": 6.8, "depth_m": 13.5})})
+    st = M.head_strip(dd)
+    assert st["port"] == d1 and abs(st["spacing_m"] - 0.152) < 1e-9 and 1.5 < st["width_m"] < 2.0, st
+    assert M.head_strip(dd, {str(d2): {"lever_m": [0, 3.0, 0.5]}})["width_m"] < st["width_m"]
+    assert M.head_strip(data) is None or "width_m" in M.head_strip(data)
     g0, g1 = M.difference_grid(data, wrong)[3], M.difference_grid(data, right)[3]
     assert np.nanmedian(g1) < np.nanmedian(g0)
     pr = M.residual_profiles(data, right)

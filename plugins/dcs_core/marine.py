@@ -90,8 +90,20 @@ class SonarRecording:
         return out
 
     def looks(self, head, pings=40):
-        """The side the head's fan looks to ("port" / "starboard" / "down") from its first pings' beam angles."""
+        """The side the head's fan looks to ("port" / "starboard" / "down"): its levelled beam centre from its own
+        attitude (504) over the first pings; without attitude, from its first pings' beam angles."""
         if head in self._looks:
+            return self._looks[head]
+        up = []
+        for _mid, _lt, pl in self._packets(head, (ping.ATTITUDE_REPORT,)):
+            try:
+                up.append(ping.attitude_report(pl)["up"])
+            except _struct.error:
+                continue
+            if len(up) >= 4 * pings:
+                break
+        if up:
+            self._looks[head] = frames.cerulean_beam_centre(up)[0]
             return self._looks[head]
         ang = []
         n = 0
@@ -348,6 +360,43 @@ def sample_soundings(rec, head, every=2, power="medium", rmin=0.5, rmax=200.0, a
     if not out["t"]:
         return None
     return {k: np.concatenate(v) for k, v in out.items()}
+
+
+# ----------------------------------------------------------------------------- mounting check
+def mounting_check(rec, head, every=10, attitude=None):
+    """How a head is mounted and what its fan covers, from the data alone (no trajectory): dict
+    looks, tilt_deg (beam centre from vertical, the head's own 504), nominal_reach_deg (how far the 90 deg fan
+    reaches past vertical toward the other side on paper), reach_deg (measured: 0.5 % of its soundings are further
+    past vertical; negative = it stops short of vertical), past_vertical_pct (share of soundings past vertical),
+    nominal_outer_deg, outer_deg (99.5 %), depth_m (median depth below the head within 15 deg of vertical),
+    soundings. None when the head has no soundings."""
+    A = attitude if attitude is not None else rec.attitude(head)
+    if A is None or not len(A):
+        return None
+    looks, tilt = frames.cerulean_beam_centre(A["up"])
+    S = sample_soundings(rec, head, every=every, power="medium", attitude=A)
+    if S is None or looks is None:
+        return None
+    v = level_vectors(rays(S["angle"], S["tof"], S["sos"]), S["up"])
+    side = -1.0 if looks == "starboard" else 1.0                   # level frame: + left = port
+    out = np.degrees(np.arctan2(v[:, 1] * side, np.maximum(-v[:, 2], 1e-6)))
+    near = np.abs(out) < 15.0
+    half = frames.CERULEAN_FAN_HALF_DEG
+    return {"looks": looks, "tilt_deg": round(tilt, 2),
+            "nominal_reach_deg": round(half - tilt, 1), "reach_deg": round(float(-np.percentile(out, 0.5)), 1),
+            "past_vertical_pct": round(100.0 * float((out < 0).mean()), 2),
+            "nominal_outer_deg": round(half + tilt, 1), "outer_deg": round(float(np.percentile(out, 99.5)), 1),
+            "depth_m": round(float(np.median(-v[near, 2])), 2) if near.any() else None,
+            "soundings": int(len(out))}
+
+
+def shared_strip(reach_a_deg, reach_b_deg, spacing_m, depth_m):
+    """Two heads looking to opposite sides, spacing_m apart across the boat, each reaching reach_*_deg past
+    vertical toward the other: (width of seabed both see at depth_m, the depth from which they meet or None)."""
+    t = math.tan(math.radians(reach_a_deg)) + math.tan(math.radians(reach_b_deg))
+    meet = spacing_m / t if t > 0 else None
+    width = max(0.0, depth_m * t - spacing_m) if depth_m is not None else None
+    return width, meet
 
 
 class LocalTrajectory:
