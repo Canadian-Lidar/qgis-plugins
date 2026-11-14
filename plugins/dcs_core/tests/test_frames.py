@@ -64,6 +64,29 @@ def test_cerulean_device_frame():
     assert F.cerulean_looks(np.radians([20, 35])) == "starboard"
 
 
+def test_beam_centre_side_and_tilt():
+    import math
+    # Lumston device 1: 504 up (0.018, 0.637, 0.771) -> looks port, 39.6 deg from vertical
+    looks, tilt = F.cerulean_beam_centre([[0.018, 0.637, 0.771]])
+    assert looks == "port" and abs(tilt - 39.56) < 0.05
+    assert F.cerulean_beam_centre([[0.0, -0.5, 0.866]])[0] == "starboard"
+    # steep mounting (29 deg): the beam centre still gives the side, where the beam angles alone may read "down"
+    r = math.radians(29)
+    assert F.cerulean_beam_centre([[0, math.sin(r), math.cos(r)]]) == ("port", F.cerulean_beam_centre(
+        [[0, math.sin(r), math.cos(r)]])[1]) and abs(F.cerulean_beam_centre([[0, math.sin(r), math.cos(r)]])[1] - 29) < 1e-6
+    assert F.cerulean_looks([math.radians(a) for a in (-20, 15, -3, 10, -8)]) == "down"
+    assert F.cerulean_beam_centre([[0.02, 0.0, 1.0]])[0] == "down"
+    assert F.cerulean_beam_centre([]) == (None, None)
+
+
+def test_shared_strip():
+    from dcs_core import marine
+    w, meet = marine.shared_strip(1.6, 6.8, 0.152, 13.0)
+    assert abs(meet - 0.152 / (math.tan(math.radians(1.6)) + math.tan(math.radians(6.8)))) < 1e-9
+    assert 1.5 < w < 2.0
+    assert marine.shared_strip(-4.0, 1.0, 0.152, 13.0) == (0.0, None)
+
+
 def test_export_frames():
     assert F.frd_to_inertial_explorer([1.0, 2.0, 3.0]) == [2.0, 1.0, -3.0]
     assert F.frd_to_qinertia([1, 2, 3]) == [1.0, 2.0, 3.0]

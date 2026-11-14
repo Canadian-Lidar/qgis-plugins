@@ -53,6 +53,22 @@ def test_marine_llh_process_and_finalize():
         assert doc["sensors"]["sonar_1"]["lever_m"] == [-0.40, -0.31, 0.65]
         S = np.fromfile(os.path.join(p.out_dir, "trajectory_sbet.out"), sbet.SBET)
         assert len(S) > 10
+        # mounting check from the data: each head's tilt and side, and the strip both heads see
+        m1 = s["heads"]["1"]["mounting"]
+        # the simulated heads point straight down (504 roll -2, pitch -1): tilt 2.24 deg, "down", so no port /
+        # starboard pair
+        assert m1 and m1["looks"] == "down" and abs(m1["tilt_deg"] - 2.24) < 0.05, m1
+        assert s["mounting"] == {}, s["mounting"]
+        # a port / starboard pair (Lumston's numbers): spacing from the levers, strip at the depth, tilt warning
+        pair = marine.mounting_summary({
+            "1": {"lever_m": [-0.12, -0.076, 0.549], "mounting": {"looks": "port", "tilt_deg": 39.56, "reach_deg": 1.6,
+                                                              "nominal_reach_deg": 5.4, "depth_m": 12.9}},
+            "2": {"lever_m": [-0.12, 0.076, 0.549], "mounting": {"looks": "starboard", "tilt_deg": 36.94, "reach_deg": 6.8,
+                                                             "nominal_reach_deg": 8.1, "depth_m": 13.5}}})
+        assert pair["port"] == "1" and pair["spacing_m"] == 0.152 and pair["tilt_diff_warn"], pair
+        assert 1.5 < pair["shared_m"] < 2.0 and 0.9 < pair["meet_depth_m"] < 1.2, pair
+        assert doc["sensors"]["sonar_1"]["mounting"]["tilt_deg"] == m1["tilt_deg"]
+        print("mounting", m1, s["mounting"])
         att = np.load(os.path.join(p.out_dir, "sonar_1_attitude.npy"))
         assert len(att) > 0 and att["up"].shape[1] == 3
         # a head switched off on the Installation page is left out of the trajectory's sensors

@@ -56,6 +56,12 @@ def depth_below_transducer(ctx, idx):
     return np.where(np.isfinite(d), np.maximum(d, 0.0), 10.0)
 
 
+def beam_angle(az):
+    """A sounding's angle from its head's beam centre (deg, signed) from the stored az (0.01 deg, wrapped)."""
+    a = np.asarray(az, np.float64) * 0.01
+    return np.where(a > 180.0, a - 360.0, a)
+
+
 def outboard_angle(ctx, idx):
     """Angle from the vertical of each sounding seen from its head (deg): positive toward the side the head looks
     to (outboard), negative under the boat toward the other side (inboard). The side each line looks to is the side
@@ -84,12 +90,16 @@ class SonarGates(Filter):
     ref = "HYPACK MBMAX64 basic and beam-angle filters; acquisition gates"
     help = ("Rejects soundings by what the sonar measured: power above the ping's low threshold, slant range, angle "
             "from the vertical toward the side the head looks to (outboard) and under the boat toward the other side "
-            "(inboard, where the two heads see the edge of their fans), and depth below the transducer.")
+            "(inboard, where the two heads see the edge of their fans), angle from the head's own beam centre (the "
+            "weak edges of its fan) and depth below the transducer.")
     params = [P("db", "Min. power above the low threshold", "float", 0.0, 0, 60, 1, " dB"),
               P("rmin", "Min. slant range", "float", 0.5, 0, 500, 0.1, " m"),
               P("rmax", "Max. slant range", "float", 200.0, 0, 500, 1, " m"),
               P("outboard", "Max. angle outboard", "float", 80.0, 0, 90, 1, " deg"),
               P("inboard", "Max. angle inboard (under the boat)", "float", 90.0, 0, 90, 1, " deg"),
+              P("edge", "Max. angle from the beam centre (fan edge)", "float", 90.0, 0, 90, 1, " deg",
+                help="The fan is 90 deg wide (-10 dB): its outer 5-10 deg on each side are the weakest soundings. "
+                     "40 deg keeps the strong middle 80 deg. 90 = off."),
               P("dmin", "Min. depth below transducer", "float", 0.0, 0, 1000, 0.1, " m"),
               P("dmax", "Max. depth below transducer", "float", 1000.0, 0, 1000, 1, " m")]
     needs_tracks = True
@@ -103,6 +113,8 @@ class SonarGates(Filter):
         if ctx.tracks and (self.v("outboard") < 90 or self.v("inboard") < 90):
             a = outboard_angle(ctx, sel)
             bad |= np.isfinite(a) & ((a > self.v("outboard")) | (a < -self.v("inboard")))
+        if self.v("edge") < 90:
+            bad |= np.abs(beam_angle(ctx.ps.az[sel])) > self.v("edge")
         if ctx.tracks and (self.v("dmin") > 0 or self.v("dmax") < 1000):
             d = depth_below_transducer(ctx, sel)
             bad |= (d < self.v("dmin")) | (d > self.v("dmax"))
@@ -308,7 +320,8 @@ def marine_groups(make, FilterGroup):
     """The ready-made marine groups (IHO Order 1a unless named otherwise)."""
     G = []
     g = FilterGroup("Marine - standard clean (IHO Order 1a)")
-    g.filters = [make("reset"), make("m_gates", inboard=20.0), make("isolated", interval=1.0, min_pts=10),
+    g.filters = [make("reset"), make("m_gates", inboard=20.0, outboard=65.0, edge=40.0),
+                 make("isolated", interval=1.0, min_pts=10),
                  make("m_cube"), make("m_outliers"), make("m_spline")]
     G.append(g)
     g = FilterGroup("Marine - light clean (reconnaissance)")
@@ -316,7 +329,7 @@ def marine_groups(make, FilterGroup):
                  make("m_outliers", factor=2.0)]
     G.append(g)
     g = FilterGroup("Marine - strict (IHO Special Order)")
-    g.filters = [make("reset"), make("m_gates", inboard=10.0, outboard=70.0),
+    g.filters = [make("reset"), make("m_gates", inboard=10.0, outboard=60.0, edge=40.0),
                  make("isolated", interval=0.75, min_pts=10), make("m_cube", order="Special"),
                  make("m_outliers", order="Special"), make("m_spline", order="Special")]
     G.append(g)

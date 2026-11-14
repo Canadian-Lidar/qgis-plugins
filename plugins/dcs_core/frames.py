@@ -130,8 +130,37 @@ def cerulean_attitude(up):
     return np.degrees(np.arctan2(u[..., 1], u[..., 2])), np.degrees(np.arcsin(np.clip(-u[..., 0], -1, 1)))
 
 
+# Omniscan 3D fan: 90 deg across track at -10 dB (Cerulean, Omniscan 3D specifications), centred on the face normal
+# (beam angle 0 = the device's -z axis).
+CERULEAN_FAN_HALF_DEG = 45.0
+
+
+def cerulean_beam_centre(up):
+    """The head's beam centre from packet 504's world-up vector(s) in the device frame (the median is used):
+    (looks, tilt) = the side the beam centre points to ("port" / "starboard", "down" within 5 deg of vertical) and
+    its angle from the vertical (deg). Uses the levelled beam centre, so it holds at any mounting angle."""
+    u = np.asarray(up, float).reshape(-1, 3)
+    if not len(u):
+        return None, None
+    u = np.median(u, axis=0)
+    n = np.linalg.norm(u)
+    if not np.isfinite(n) or n == 0:
+        return None, None
+    u = u / n
+    tilt = math.degrees(math.acos(max(-1.0, min(1.0, u[2]))))       # beam centre = -z; vertical = -u
+    f = np.array([1.0, 0.0, 0.0]) - u[0] * u
+    f /= np.linalg.norm(f)
+    left = np.cross(u, f)                                              # level left (port) direction
+    side = float(np.dot([0.0, 0.0, -1.0], left))
+    if tilt < 5.0:
+        return "down", tilt
+    return ("port" if side > 0 else "starboard"), tilt
+
+
 def cerulean_looks(angles):
-    """Which side a head looks to, from its beam angles (rad): "starboard" / "port" / "down"."""
+    """Which side a head looks to, from its beam angles (rad): "starboard" / "port" / "down". Fallback for a head
+    without attitude packets: at steep mountings the soundings spread on both sides of the beam centre and this
+    reads "down"; `cerulean_beam_centre` is the one to use."""
     a = np.asarray(angles, float)
     if not a.size:
         return None

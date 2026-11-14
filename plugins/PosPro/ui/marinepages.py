@@ -164,7 +164,7 @@ class MInstallPage(MPage):
                                 "metres forward, starboard, down. They come from the recording (SonarView's Mount "
                                 "Offset, as Cerulean documents it: X forward, Y starboard, Z down); type a value to "
                                 "use another one. Untick USE to leave a head out of the job (PosPro, AlignPro and "
-                                "CloudPro). 'Looks to' is measured from the head's own soundings; 'Mounted' follows "
+                                "CloudPro). 'Looks to' comes from the head's own tilt sensor; 'Mounted' follows "
                                 "the offsets in use."))
         self.lay.addWidget(_section("Sonar heads"))
         self.t_heads = _table(["Use", "Head", "Looks to", "Mounted", "Forward (m)", "Starboard (m)", "Down (m)",
@@ -183,9 +183,94 @@ class MInstallPage(MPage):
         row.addWidget(self.b_reset)
         row.addStretch(1)
         self.lay.addLayout(row)
+        self.lay.addWidget(_section("Mounting (from the data)"))
+        self.t_mount = _table(["Head", "Looks to", "Tilt from vertical", "Past vertical (spec / data)",
+                               "Outer edge (spec / data)", "Depth"])
+        self.t_mount.setToolTip("Tilt: the beam centre's angle from vertical, from the head's own tilt sensor. Past "
+                                "vertical: how far the 90° fan reaches under the boat toward the other side - spec "
+                                "from the tilt, data from where 99.5 % of the soundings stop. Outer edge: how far out "
+                                "from vertical the fan reaches.")
+        self.lay.addWidget(self.t_mount)
+        self.v_strip = _val()
+        self.lay.addWidget(self.v_strip)
+        self.v_mwarn = _val()
+        self.v_mwarn.setStyleSheet("color: #f0ad4e;")
+        self.lay.addWidget(self.v_mwarn)
+        row = QHBoxLayout()
+        self.b_measure = QPushButton("Measure from the data")
+        self.b_measure.setToolTip("Reads each head's tilt and soundings (a few seconds per head); PROCESS does it too")
+        self.b_measure.clicked.connect(self._measure)
+        row.addWidget(self.b_measure)
+        row.addStretch(1)
+        self.lay.addLayout(row)
         self.lay.addStretch(1)
         self._spins = {}
         self._loading = False
+
+    def _mounting(self):
+        """{head id str: mounting check} from the last processing run, else from MEASURE FROM THE DATA."""
+        s = self.summary() or {}
+        got = {d: h.get("mounting") for d, h in (s.get("heads") or {}).items() if h.get("mounting")}
+        return got or dict(self.cfg().get("mounting_measured") or {})
+
+    def _measure(self):
+        if self.project is None:
+            return
+        from dcs_core import marine as dmarine
+        best = {}
+        for r in self.recs():
+            if isinstance(r, Exception):
+                continue
+            for did in r.heads:
+                m = dmarine.mounting_check(r, did, every=10)
+                if m and m["soundings"] > (best.get(str(did)) or {}).get("soundings", 0):
+                    best[str(did)] = m
+        self.cfg()["mounting_measured"] = best
+        res = (self.project.cfg.get("results") or {}).get("marine") or {}
+        for d, m in best.items():                           # newer than the last run's: show these
+            if d in (res.get("heads") or {}):
+                res["heads"][d]["mounting"] = m
+        self.project.save()
+        self.refresh()
+
+    def _show_mounting(self, heads):
+        mnt = self._mounting()
+        off = set(self.cfg().get("heads_off") or [])
+        rows = []
+        for did, h in sorted(heads.items()):
+            m = mnt.get(str(did))
+            if not m:
+                continue
+            rows.append(["%s (id %d)" % (h["nickname"], did), m["looks"], "%.1f°" % m["tilt_deg"],
+                         "%.1f° / %.1f°" % (m["nominal_reach_deg"], m["reach_deg"]),
+                         "%.1f° / %.1f°" % (m["nominal_outer_deg"], m["outer_deg"]),
+                         "—" if m.get("depth_m") is None else "%.1f m" % m["depth_m"]])
+        _set_rows(self.t_mount, rows)
+        used = {str(d): {"mounting": mnt.get(str(d)), "lever_m": self._in_use(d, h)}
+                for d, h in heads.items() if str(d) not in off and mnt.get(str(d))}
+        pair = marine.mounting_summary(used) if len(used) >= 2 else {}
+        if not mnt:
+            self.v_strip.setText("Not measured yet.")
+        elif not pair:
+            self.v_strip.setText("No pair of heads in use looking to opposite sides.")
+        else:
+            if pair["shared_m"]:
+                strip = "Both heads see %.1f m of seabed under the boat at %.1f m (they meet from %.1f m of water " \
+                        "down; %.1f m by the spec)." % (pair["shared_m"], pair["depth_m"], pair["meet_depth_m"],
+                                                       pair["shared_nominal_m"] or 0.0)
+            else:
+                strip = "The heads do not meet under the boat at %.1f m: a gap along every line." % pair["depth_m"]
+            self.v_strip.setText("%s Heads %.0f cm apart across the boat; tilts differ by %.1f°." % (
+                strip, 100 * pair["spacing_m"], pair["tilt_diff_deg"]))
+        warn = []
+        if pair.get("tilt_diff_warn"):
+            warn.append("the heads' tilts differ by %.1f°: set both to the same angle so the strip under the boat "
+                        "is even" % pair["tilt_diff_deg"])
+        if pair and not pair.get("shared_m"):
+            warn.append("no seabed seen by both heads: tilt the heads steeper (smaller angle from vertical)")
+        self.v_mwarn.setText("" if not warn else "Check: %s." % "; ".join(warn))
+        self.v_mwarn.setVisible(bool(warn))
+        return pair
 
     def _heads(self):
         out = {}
@@ -248,6 +333,7 @@ class MInstallPage(MPage):
                              "OFFSETS." % "; ".join("%s looks %s but its offsets put it on the %s side" % (
                                  h["nickname"], h["looks"], side) for _d, h, side in mm))
         self.b_swap.setEnabled(len([d for d in heads if str(d) not in off]) == 2)
+        self._show_mounting(heads)
         self._loading = False
 
     def _use(self, did, on):
@@ -304,6 +390,13 @@ class MInstallPage(MPage):
             return "warn", "offsets not entered: %s" % ", ".join(missing)
         if self._mismatch():
             return "warn", "check the offsets: mounted and looking sides differ"
+        mnt = self._mounting()
+        pair = marine.mounting_summary({str(d): {"mounting": mnt.get(str(d)), "lever_m": self._in_use(d, h)}
+                                        for d, h in used.items() if mnt.get(str(d))}) if len(used) >= 2 else {}
+        if pair.get("tilt_diff_warn"):
+            return "warn", "the two heads are tilted %.1f° differently" % pair["tilt_diff_deg"]
+        if pair and not pair.get("shared_m"):
+            return "warn", "the two heads do not meet under the boat"
         lev = self.cfg().get("levers") or {}
         return "done", "%d of %d heads%s" % (len(used), len(heads), ", offsets entered" if lev else "")
 

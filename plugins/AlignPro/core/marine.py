@@ -71,7 +71,7 @@ def load(dcs, every=2, power="medium", rmax=RMAX):
             e = heads.setdefault(did, {"parts": [], "lever": sens.get("lever_m") or h.get("lever_m") or [0.0, 0.0, 0.0],
                                        "lever_source": sens.get("lever_source") or h.get("lever_source"),
                                        "nickname": h.get("nickname"), "side": h.get("looks") or h.get("side"),
-                                       "recordings": []})
+                                       "mounting": sens.get("mounting"), "recordings": []})
             e["parts"].append(s)
             e["recordings"].append(rec.name)
     for did, e in heads.items():
@@ -522,9 +522,35 @@ def _x_of(values, heads):
     return _cal_vector({str(d): {k: (values.get(str(d)) or {}).get(k, 0.0) for k in PARAMS} for d in heads}, heads)
 
 
+EDGE_DEG = 40.0          # soundings further than this from their head's beam centre are at the weak edge of the fan
+
+
+def head_strip(data, values=None):
+    """The seabed both heads see under the boat, from PosPro's mounting check (each head's tilt and reach past
+    vertical) with the offsets in use: {port, starboard, width_m, depth_m, meet_depth_m, spacing_m} or None."""
+    from dcs_core import marine
+    side = {}
+    for d, h in data["heads"].items():
+        m = h.get("mounting") or {}
+        if m.get("looks") in ("port", "starboard"):
+            side.setdefault(m["looks"], d)
+    if len(side) < 2:
+        return None
+    dv = with_levers(data, values)
+    P, S = dv["heads"][side["port"]], dv["heads"][side["starboard"]]
+    spacing = abs(float(S["lever"][1]) - float(P["lever"][1]))
+    depths = [h["mounting"]["depth_m"] for h in (P, S) if h["mounting"].get("depth_m")]
+    depth = float(np.median(depths)) if depths else None
+    w, meet = marine.shared_strip(P["mounting"]["reach_deg"], S["mounting"]["reach_deg"], spacing, depth)
+    return {"port": side["port"], "starboard": side["starboard"], "width_m": w, "depth_m": depth,
+            "meet_depth_m": meet, "spacing_m": spacing}
+
+
 def pair_table(data, values):
-    """Overlapping pairs of (head, pass): [{a, b, kind, n, median_cm, signed_cm}] at values; signed = how far b's
-    seabed lies above a's. kind: 'between heads' / 'reciprocal' (passes > 120 deg apart) / 'same direction'."""
+    """Overlapping pairs of (head, pass): [{a, b, kind, n, median_cm, signed_cm, beam_deg, edge_pct}] at values;
+    signed = how far b's seabed lies above a's. kind: 'between heads' / 'reciprocal' (passes > 120 deg apart) /
+    'same direction'. beam_deg {head: median angle of its compared soundings from its beam centre}, edge_pct
+    {head: share of them more than EDGE_DEG from the beam centre, where the fan is weakest}."""
     heads = sorted(data["heads"])
     dv = with_levers(data, values)
     x = _x_of(values, heads)
@@ -535,6 +561,7 @@ def pair_table(data, values):
     grp_pl = obs["plane_group"][obs["opl"]]
     spans = pass_spans(data)
     hdg = {i: s[2] for i, s in enumerate(spans)}
+    ang_all = np.abs(np.degrees(np.concatenate([np.asarray(dv["heads"][d]["S"]["angle"], float) for d in heads])))
     rows = []
     key = grp_pl * 100000 + grp_pt
     for k in np.unique(key):
@@ -551,18 +578,26 @@ def pair_table(data, values):
         n_ = obs["normals"][obs["opl"]][m][:, 2]
         rows.append({"a": (ha, pa), "b": (hb, pb), "kind": kind, "n": int(m.sum()),
                      "median_cm": 100 * float(np.median(np.abs(r[m]))),
-                     "signed_cm": 100 * float(np.median(r[m] * np.sign(n_)))})
+                     "signed_cm": 100 * float(np.median(r[m] * np.sign(n_))),
+                     "angles": (hb, ang_all[obs["op"][m]])})
     # each unordered pair once (merge a/b and b/a, flipping the sign)
     merged = {}
     for row in rows:
         k = tuple(sorted([row["a"], row["b"]]))
         s = 1 if (row["a"], row["b"]) == k else -1
-        e = merged.setdefault(k, {"a": k[0], "b": k[1], "kind": row["kind"], "n": 0, "w_med": 0.0, "w_sig": 0.0})
+        e = merged.setdefault(k, {"a": k[0], "b": k[1], "kind": row["kind"], "n": 0, "w_med": 0.0, "w_sig": 0.0,
+                                  "ang": {}})
+        e["ang"].setdefault(row["angles"][0], []).append(row["angles"][1])
         e["n"] += row["n"]
         e["w_med"] += row["n"] * row["median_cm"]
         e["w_sig"] += row["n"] * row["signed_cm"] * s
-    out = [{"a": e["a"], "b": e["b"], "kind": e["kind"], "n": e["n"], "median_cm": e["w_med"] / e["n"],
-            "signed_cm": e["w_sig"] / e["n"]} for e in merged.values()]
+    out = []
+    for e in merged.values():
+        ang = {h: np.concatenate(v) for h, v in e["ang"].items()}
+        out.append({"a": e["a"], "b": e["b"], "kind": e["kind"], "n": e["n"], "median_cm": e["w_med"] / e["n"],
+                    "signed_cm": e["w_sig"] / e["n"],
+                    "beam_deg": {h: round(float(np.median(v)), 1) for h, v in ang.items()},
+                    "edge_pct": {h: round(100.0 * float((v > EDGE_DEG).mean()), 1) for h, v in ang.items()}})
     return sorted(out, key=lambda e: (-e["n"]))
 
 

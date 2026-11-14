@@ -89,8 +89,26 @@ def test_angle_gate_and_marine_first():
     assert not F.default_groups()[0].name.startswith("Marine")
 
 
+def test_fan_edge():
+    ps, kind, tracks = survey()
+    a = rng.uniform(-45, 45, len(ps.x))                           # beam angle from the head's beam centre
+    ps.az[:] = np.mod(np.round(a * 100), 36000).astype(np.uint16)
+    assert np.allclose(MF.beam_angle(ps.az), np.round(a * 100) / 100)
+    ctx = F.Ctx(ps, tracks=tracks)
+    sel = np.arange(len(ps.x))
+    r = F.make("m_gates", edge=40.0, rmax=500.0, outboard=90.0).run(ctx, sel)
+    assert set(r["reject"]) == set(np.flatnonzero(np.abs(np.round(a * 100) / 100) > 40.0))
+    assert len(F.make("m_gates", rmax=500.0, outboard=90.0).run(ctx, sel)["reject"]) == 0      # 90 = off
+    std = [x for x in F.default_groups(marine=True) if x.name.startswith("Marine - standard")][0]
+    gate = [f for f in std.filters if f.key == "m_gates"][0]
+    assert gate.v("edge") == 40.0 and gate.v("outboard") == 65.0
+    light = [x for x in F.default_groups(marine=True) if x.name.startswith("Marine - light")][0]
+    assert [f for f in light.filters if f.key == "m_gates"][0].v("edge") == 90.0
+
+
 if __name__ == "__main__":
     test_tvu()
+    test_fan_edge()
     test_angle_gate_and_marine_first()
     test_standard_group()
     print("test_marine_filters: OK")
