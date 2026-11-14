@@ -409,7 +409,8 @@ class Project:
         except (TypeError, ValueError):
             pass
         if not ex:
-            return None
+            m = self.cfg["rover"].get("marine_span")           # marine job: the sonar recordings' span
+            return tuple(m) if m else None
         from . import results
         return results.rt_span(os.path.join(self.work_dir, "extract", "rt.bin"))
 
@@ -436,6 +437,8 @@ class Project:
 
     def approx_xyz(self):
         ex = self.cfg["rover"].get("extract") or {}
+        if not ex and self.cfg["rover"].get("marine_xyz"):    # marine job: the boat (autopilot position)
+            return tuple(self.cfg["rover"]["marine_xyz"])
         try:
             v = [float(x) for x in ex.get("approx_xyz", "").split(",")]
             if len(v) == 3 and sum(q * q for q in v) > 1e12:

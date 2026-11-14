@@ -3513,7 +3513,16 @@ class PosProDock(PluginWindow):
         try:
             key = (path, os.path.getmtime(path))
         except OSError:
-            view.set_data([], 0, 1)
+            span = p.cfg["rover"].get("marine_span") if self._marine else None
+            if not span:
+                view.set_data([], 0, 1)
+                return
+            t0, t1 = span                               # marine job: the sonar recordings against each base
+            rows = [("Recordings", [[t0, t1, "#00e5aa", "sonar recordings"]])]
+            if bases:
+                for b in p.cfg["bases"]:
+                    rows.append(("Base " + str(b.get("name", "?"))[:8], results.base_runs(b, t0, t1)))
+            view.set_data(rows, t0, t1, (t0, t1))
             return
         if getattr(self, "_cov_key", None) != key:
             ex = p.cfg["rover"].get("extract") or {}
