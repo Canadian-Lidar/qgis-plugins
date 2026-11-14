@@ -65,6 +65,7 @@ class FilterPanel(QtWidgets.QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.marine = False
         self.groups = F.default_groups()
         self.folder = None
         self._building = False
@@ -223,7 +224,7 @@ class FilterPanel(QtWidgets.QWidget):
         m.addAction("New empty group", self.new_group)
         m.addAction("Duplicate this group", self.clone_group)
         dm = m.addMenu("Add a ready-made group")
-        for g in F.default_groups():
+        for g in F.default_groups(self.marine):
             dm.addAction(g.name, lambda gg=g: self._add_group(F.FilterGroup.from_dict(gg.to_dict())))
         m.addAction("Rename...", self._rename)
         mm = m.addMenu("Mode")
@@ -300,8 +301,10 @@ class FilterPanel(QtWidgets.QWidget):
             with open(p, "w") as f:
                 json.dump(self.group.to_dict(), f, indent=1)
 
-    def load(self, folder):
+    def load(self, folder, marine=False):
         self.folder = folder
+        self.marine = bool(marine)
+        self.groups = F.default_groups(self.marine)
         p = os.path.join(folder, "groups.json") if folder else None
         if p and os.path.exists(p):
             try:
@@ -311,7 +314,7 @@ class FilterPanel(QtWidgets.QWidget):
                 if gs:
                     self.groups = gs
                     names = {g.name for g in gs}
-                    for g in F.default_groups():           # ready-made groups added in later versions
+                    for g in F.default_groups(self.marine):           # ready-made groups added in later versions
                         if g.name not in names:
                             self.groups.append(g)
             except Exception:       # noqa: BLE001

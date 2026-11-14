@@ -51,7 +51,7 @@ def power_to_intensity(pwr, low):
 
 
 def import_sonar_head(project, rec, did, traj, attitude, cal, opts, progress=None, cancel=None, line_name=None,
-                      window=None, pass_no=None):
+                      window=None, pass_no=None, lever=None, lever_source=None):
     """One head of one SonarRecording (or of one pass of it: window = (start, end) UTC s) -> a new line. attitude: structured (t, up[3], ...) for this head (PosPro's
     finalized file, else the recording's 504). cal: {"roll", "pitch", "heading" deg, "latency_s"} corrections.
     Returns (line id, stats)."""
@@ -59,7 +59,7 @@ def import_sonar_head(project, rec, did, traj, attitude, cal, opts, progress=Non
     store = project.store
     proj = Projector(project.crs, source=opts.source_crs)
     info_h = rec.heads[did]
-    lever = info_h.get("lever_m") or [0.0, 0.0, 0.0]
+    lever = list(lever) if lever else (info_h.get("lever_m") or [0.0, 0.0, 0.0])
     cal = dict({"roll": 0.0, "pitch": 0.0, "heading": 0.0, "latency_s": 0.0}, **(cal or {}))
     started = time.time()
     pings = rec.pings(did, every=max(1, int(opts.decimate)))
@@ -81,7 +81,7 @@ def import_sonar_head(project, rec, did, traj, attitude, cal, opts, progress=Non
     info = {"name": line_name or label, "line": len(project.lines) + 1,
             "files": [f.path for f in rec.files], "kind": "sonar", "head": int(did), "nickname": info_h.get("nickname"),
             "pass": pass_no, "window": list(window) if window is not None else None,
-            "trajectory": traj.source, "lever": list(lever), "lever_source": info_h.get("lever_source"),
+            "trajectory": traj.source, "lever": list(lever), "lever_source": lever_source or info_h.get("lever_source"),
             "calibration_deg": {k: cal[k] for k in ("roll", "pitch", "heading")}, "latency_s": cal["latency_s"],
             "power": opts.power, "rmin": opts.rmin, "rmax": opts.rmax, "sound_speed": opts.sound_speed,
             "decimate": opts.decimate, "crs": project.crs, "projector": proj.backend}

@@ -756,7 +756,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.set_point_size(k, sz)
         self.plan.lut = self.luts["plan"]
         self._col_cache = {}
-        self.filters.load(p.filters_dir)
+        self.filters.load(p.filters_dir, marine=bool((p.data.get("inputs") or {}).get("marine")) or
+                          any(l.get("kind") == "sonar" for l in p.lines))
         self._fill_lines()
         self.plan.set_project(p.store, self.tracks, {l["id"]: l["colour"] for l in p.lines})
         self._load_separation()

@@ -545,12 +545,19 @@ def import_marine(project, inp, opts, progress=None, cancel=None, keep_edits=Tru
                 raise Cancelled()
             att, att_src = SN.head_attitude(inp.traj_doc, did, rec)
             cal = (inp.heads_cal or {}).get(str(did)) or {}
+            sens = ((inp.traj_doc or {}).get("sensors") or {}).get("sonar_%d" % int(did)) or {}
+            lev, lev_src = None, None
+            if cal.get("lever_m"):                       # adjusted in AlignPro's sonar patch test
+                lev, lev_src = cal["lever_m"], "AlignPro (sonar patch test)"
+            elif sens.get("lever_m"):                    # PosPro's (recorded, or entered on its Installation page)
+                lev, lev_src = sens["lever_m"], sens.get("lever_source")
             prev = old.get((tuple(sorted(f.path for f in rec.files)), int(did), pno))
             lid, st = SN.import_sonar_head(
                 project, rec, did, inp.traj, att, cal, sopts,
                 progress=(lambda f, s, k=k: progress((k + f) / len(jobs) * 0.9, "%s points" % "{:,}".format(
                     s["points"]))) if progress else None,
-                cancel=cancel, line_name=prev.get("name") if prev else None, window=win, pass_no=pno)
+                cancel=cancel, line_name=prev.get("name") if prev else None, window=win, pass_no=pno,
+                lever=lev, lever_source=lev_src)
             if lid is None:
                 continue
             project.lines[lid]["attitude_source"] = att_src

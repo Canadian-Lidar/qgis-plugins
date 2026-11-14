@@ -36,6 +36,7 @@
 <div style="break-inside:avoid"><h2>What is new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>2.7.0</b></td><td><b>Marine filters</b> with IHO S-44 tolerances and four ready-made marine groups (<a href="#marinefilters">Marine filters</a>); sonar offsets from AlignPro when adjusted there, else PosPro.</td></tr>
 <tr><td><b>2.6.1</b></td><td>Sonar lines are named by the side each head looks to, with SonarView's offsets read as Cerulean documents them (X forward, Y starboard, Z down). The Lidar mounting convention comes from DCS Core's shared coordinate frames. Needs DCS Core 1.15.0.</td></tr>
 <tr><td><b>2.6.0</b></td><td><b>Marine jobs:</b> the soundings of each straight pass of each sonar head become a line, placed with PosPro's boat trajectory, each head's own attitude and AlignPro's corrections per head; the Georeference window gives the sonar's options (<a href="#marine">Marine jobs</a>). Line separation uses settings for the seabed. Needs DCS Core 1.14.0.</td></tr>
 <tr><td><b>2.5.1</b></td><td><b>Entire-project filter runs:</b> the ground filter (SMRF) no longer fails on a piece of the job one cell wide (a strip of points at a tile edge), and Geometric features not on a piece of one or two points; every filter is now tested on such pieces. If a filter still fails on a piece, that piece is left as it was, the rest of the run is written, and CloudPro says where (east and north range) with the details in the run log, instead of losing the whole run.</td></tr>
@@ -562,6 +563,18 @@
 <tr><td>Manhole covers (intensity blobs) (70)</td><td>Round blobs of the road's intensity image that differ from the background, of a cover's size (Guan et al. 2014).</td><td>Image cell (0.08 m); Contrast (20); Covers appear: Brighter, Darker, Either; Diameter 0.4–1.2 m; Roundness (0.55); Road up to (0.1 m); Distance from the drive line (0–10 m).</td></tr>
 <tr><td>Guardrails (straight band) (71)</td><td>A long, straight band of points at rail height beside the road, parallel to the drive line, with nothing above it (Gao et al. 2022).</td><td>Height above ground 0.4–1.2 m; Cluster distance (0.5 m); Minimum length (4 m); Line fit RMS (0.1 m); Occupied slices (60%); Parallel within (20°); Points above at most (15%); Distance (0.5–15 m).</td></tr>
 </table>
+
+<h2 id="marinefilters">Marine filters (sonar soundings)</h2>
+<p>For marine jobs the group <b>Marine</b> holds filters modelled on those of the hydrographic processing packages and the published comparisons, with tolerances from IHO S-44 (6th edition): TVU<sub>max</sub>(d) = √(a² + (b·d)²) at 95 %, d the depth below the transducer — Exclusive a 0.15 m b 0.0075, Special a 0.25 m b 0.0075, Order 1a/1b a 0.5 m b 0.013, Order 2 a 1.0 m b 0.023.</p>
+<table>
+<tr><th>Filter</th><th>What it does</th><th>After</th></tr>
+<tr><td>Sonar gates</td><td>Power above the ping's low threshold, slant range, angle from the vertical outboard and under the boat (inboard, where the heads see the edge of their fans), depth below the transducer.</td><td>HYPACK MBMAX64 basic and beam-angle filters</td></tr>
+<tr><td>Reject outliers (cell statistics, IHO TVU)</td><td>Rejects soundings further than the gate from their cell's median (or mean), cells recomputed until nothing changes. Gate: TVU × factor, robust σ × k, or fixed.</td><td>QPS Qimera <i>Reject Outliers (1D)</i> — the most consistent method in Włodarczyk-Sielicka et al. 2023 (Sensors 23(11):5076); BeamworX AutoClean <i>Detailed</i>; Guenther's statistical filter</td></tr>
+<tr><td>Depth hypotheses (CUBE-style)</td><td>Per cell, depths split into hypotheses where neighbouring depths are further apart than the TVU; the hypothesis with most soundings (or closest to the neighbouring cells) is kept. Removes water-column returns and multipath.</td><td>CUBE, Calder &amp; Mayer 2003 (G³ 4(6):1048); HYPACK CUBE (prior disambiguation)</td></tr>
+<tr><td>Surface spline (robust surface, IHO TVU)</td><td>A robust local surface (Tukey biweight) through each sounding's neighbours; rejects soundings further than TVU × factor, above, below or both. Stiffness from Very weak (follows the seabed closely) to Very strong.</td><td>Qimera surface spline; BeamworX spline; robust fitting methods reviewed by Le Deunf et al. 2020 (Geosciences 10(7):254)</td></tr>
+<tr><td>Isolated cluster (general)</td><td>Rejects small clusters away from the seabed.</td><td>BeamworX <i>Coarse</i>; EIVA EC-3D neighbour methods</td></tr>
+</table>
+<p>Ready-made groups (first in the list on a marine job): <b>Marine – standard clean (IHO Order 1a)</b>: reset, sonar gates (20° inboard), isolated clusters, depth hypotheses, reject outliers, surface spline; <b>light clean (reconnaissance)</b>: gates, isolated, reject outliers at 2 × TVU; <b>strict (IHO Special Order)</b>; <b>water column and multipath</b>: depth hypotheses and the spline above only, then below at 2 × TVU. On a 300 × 120 m area at Lumston the standard group rejected 13 % (second-bottom ghosts 15–25 m down, deep noise) in 11 s.</p>
 
 <h1 id="tabs"><span class="num">{N}</span>Lines · Classes · Info and History</h1>
 <figure class="h58"><img src="fig/info_tab.png"><figcaption><b>Figure {N}.1</b> The Lines · Classes · Info tab after clicking a pole point with the i tool (the right-hand windows widened by dragging the line between them).</figcaption></figure>

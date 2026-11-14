@@ -63,6 +63,11 @@ def options(project):
     return o
 
 
+def settings_key(opts):
+    """What a run depends on (Processing shows 'out of date' when it changed since)."""
+    return _jsonable({k: opts.get(k) for k in ("position", "cog_min_speed", "base", "levers")})
+
+
 def base_of(rec, opts):
     """The base station for PPK: entered on PosPro's marine page, else TidalCal's surveyed base."""
     b = opts.get("base")
@@ -396,7 +401,11 @@ def process(project, ctx, atx=None):
                                        names="t,lat,lon,h,q,sdn,sde,sdu,vn,ve,roll,pitch,heading,hsrc,speed"))
         for did in rec.heads:
             A, check = head_attitude(rec, did)
-            heads.setdefault(did, {"parts": [], "checks": [], "info": rec.heads[did]})
+            info_h = dict(rec.heads[did])
+            ent = (opts.get("levers") or {}).get(str(did))
+            if ent:                                       # typed on the Installation page
+                info_h.update(lever_m=[float(v) for v in ent], lever_source="entered in PosPro")
+            heads.setdefault(did, {"parts": [], "checks": [], "info": info_h})
             heads[did]["parts"].append(A)
             heads[did]["checks"].append(check)
         q = {Q_NAMES.get(int(k), str(int(k))): round(100.0 * float((pos["q"] == k).mean()), 1) for k in np.unique(pos["q"])}
@@ -422,6 +431,7 @@ def process(project, ctx, atx=None):
     summary["fixed_pct"] = round(100.0 * float((T["q"] == 1).mean()), 1)
     summary["compass_pct"] = round(100.0 * float(T["hsrc"].mean()), 1)
     summary["cog_min_speed"] = float(opts["cog_min_speed"])
+    summary["settings"] = settings_key(opts)
     project.cfg.setdefault("results", {})["marine"] = summary
     if ctx:
         ctx.progress(1.0)

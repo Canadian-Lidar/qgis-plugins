@@ -65,7 +65,9 @@ def load(dcs, every=2, power="medium", rmax=RMAX):
             s = marine.sample_soundings(rec, did, every=every, power=power, rmax=rmax, attitude=att)
             if s is None:
                 continue
-            e = heads.setdefault(did, {"parts": [], "lever": h.get("lever_m") or [0.0, 0.0, 0.0],
+            sens = (doc.get("sensors") or {}).get("sonar_%d" % did) or {}
+            e = heads.setdefault(did, {"parts": [], "lever": sens.get("lever_m") or h.get("lever_m") or [0.0, 0.0, 0.0],
+                                       "lever_source": sens.get("lever_source") or h.get("lever_source"),
                                        "nickname": h.get("nickname"), "side": h.get("looks") or h.get("side"),
                                        "recordings": []})
             e["parts"].append(s)
@@ -166,7 +168,7 @@ def build_observations(data, x, heads, rng=None):
     pl_head = np.array([pl[1] // 10000 for pl in planes])
     between = head_of[op] != pl_head[opl]
     return {"op": op, "opl": opl, "members": members, "normals": normals, "n_planes": len(planes),
-            "between": between,
+            "between": between, "group": group, "plane_group": np.array([pl[1] for pl in planes]),
             "between_heads_share": float(between.mean()), "passes": int(pas.max() + 1)}
 
 
@@ -373,25 +375,268 @@ def solve(data, init=None, latency=False, progress=None, cancelled=None, log=Non
             "between_heads_share": obs["between_heads_share"], "latency_tried": bool(latency)}
 
 
-def publish(dcs, result, data, applied=None):
-    """Finalize the per-head corrections (dcs.alignment/1, platform marine, heads section) for CloudPro."""
+def publish(dcs, result, data, applied=None, accepted=None):
+    """Finalize the per-head values in use (dcs.alignment/1, platform marine, heads section) for CloudPro. applied:
+    {d: {roll, pitch, heading, latency_s, lever_m (optional)}} - the values in use (default: the solution);
+    accepted: {d: {param: bool}} which solved values the user accepted."""
     from dcs_core import handover
     from .project import PLUGIN, VERSION
-    heads = applied or {d: {k: v[k] for k in PARAMS} for d, v in result["heads"].items()}
-    fields = {"platform": "marine",
-              "heads": {d: dict(heads[d], nickname=data["heads"][int(d)].get("nickname"),
-                                side=data["heads"][int(d)].get("side"),
-                                sd={k: result["heads"][d].get(k + "_sd") for k in PARAMS} if d in result["heads"] else {},
-                                determined={k: result["heads"][d].get(k + "_determined") for k in PARAMS}
-                                if d in result["heads"] else {})
-                        for d in heads},
+    result = result or {"heads": {}}
+    rh = result.get("heads") or {}
+    heads = applied or {d: {k: v[k] for k in PARAMS} for d, v in rh.items()}
+    out = {}
+    for d, vals in heads.items():
+        h = data["heads"].get(int(d)) or data["heads"].get(d) or {}
+        e = dict(vals, nickname=h.get("nickname"), side=h.get("side"))
+        if d in rh:
+            e["solved"] = {k: rh[d].get(k) for k in PARAMS if k in (result.get("estimated") or {}).get(d, [])}
+            e["sd"] = {k: rh[d].get(k + "_sd") for k in PARAMS}
+            e["determined"] = {k: rh[d].get(k + "_determined") for k in PARAMS}
+        e["accepted"] = {k: bool(((accepted or {}).get(d) or {}).get(k)) for k in PARAMS}
+        if vals.get("lever_m"):
+            e["lever_source"] = "adjusted in AlignPro (PosPro: %s)" % ", ".join("%+.3f" % v for v in h.get("lever") or [])
+        out[d] = e
+    fields = {"platform": "marine", "heads": out,
               "convention": {"name": "marine heads: corrections added to each sonar's own attitude and to the "
-                                     "vessel heading; latency added to the ping time"},
+                                     "vessel heading; latency added to the ping time; lever_m replaces PosPro's offset"},
               "trajectory": {"handover_id": (data.get("doc") or {}).get("id")},
               "quality": {"before_cm": result.get("before_cm"), "after_cm": result.get("after_cm"),
                           "observations": result.get("observations"), "passes": result.get("passes"),
                           "between_heads_share": result.get("between_heads_share")},
-              "method": "per-head patch test: seabed point-to-plane between passes and between heads"}
+              "method": "per-head patch test: seabed point-to-plane between passes and between heads; values "
+                        "reviewed and accepted in AlignPro"}
     used = {"pospro": (data.get("doc") or {}).get("id")} if (data.get("doc") or {}).get("id") else None
     return handover.publish(dcs, "alignpro", {}, fields, PLUGIN, VERSION, "marine patch test", used=used,
                             inputs=sorted(dcs.sonar_clraw_files()))
+
+
+# ============================================================================= manual review (AlignPro 1.11.0)
+# values = {"<device id>": {"roll", "pitch", "heading" (deg), "latency_s", "lever_m" [F, S, D] (optional)}}: the
+# corrections being looked at. Absent keys are 0 (lever: PosPro's).
+
+def with_levers(data, values):
+    """data with each head's lever replaced by values[d]["lever_m"] when given (a shallow copy)."""
+    out = dict(data)
+    out["heads"] = {}
+    for d, h in data["heads"].items():
+        v = (values or {}).get(str(d)) or {}
+        out["heads"][d] = dict(h, lever=list(v["lever_m"])) if v.get("lever_m") else h
+    return out
+
+
+def georef_head(data, d, values, idx=None):
+    """Soundings of head d (all, or idx) placed with values -> (n, 3) local east / north / up."""
+    from dcs_core import marine
+    h = data["heads"][d]
+    v = (values or {}).get(str(d)) or {}
+    S = h["S"] if idx is None else {k: a[idx] for k, a in h["S"].items()}
+    return marine.georef_local(S, data["traj"], v.get("lever_m") or h["lever"], {k: v.get(k, 0.0) for k in PARAMS})
+
+
+def pass_ids(data, d):
+    h = data["heads"][d]
+    if "pass" not in h:
+        h["pass"] = passes(data["traj"], h["S"]["t"])
+    return h["pass"]
+
+
+def pass_spans(data):
+    """[(start, end, heading deg, length m, speed m/s)] of the boat's passes over the soundings' time."""
+    from dcs_core import marine as dm
+    tr = data["traj"]
+    t = np.concatenate([h["S"]["t"] for h in data["heads"].values()])
+    out = []
+    for a, b in dm.split_passes(tr.t, tr.heading, float(t.min()), float(t.max()) + 1e-3):
+        m = (tr.t >= a) & (tr.t < b)
+        if m.sum() < 2:
+            out.append((a, b, float("nan"), 0.0, 0.0))
+            continue
+        L = float(np.sum(np.hypot(np.diff(tr.E[m]), np.diff(tr.N[m]))))
+        out.append((a, b, float(np.degrees(np.median(tr.heading[m])) % 360), L, L / max(b - a, 1e-3)))
+    return out
+
+
+def view_sample(data, per_head=300000, seed=4):
+    """Indices of a fixed random sample of each head's soundings, for the plan view."""
+    rng = np.random.default_rng(seed)
+    out = {}
+    for d, h in data["heads"].items():
+        n = len(h["S"]["t"])
+        out[d] = np.sort(rng.choice(n, min(n, per_head), replace=False))
+    return out
+
+
+def plan(data, values, sample):
+    """x, y, z, head, pass of the sampled soundings placed with values."""
+    xs, ys, zs, hs, ps = [], [], [], [], []
+    for d, idx in sample.items():
+        P = georef_head(data, d, values, idx)
+        xs.append(P[:, 0]); ys.append(P[:, 1]); zs.append(P[:, 2])
+        hs.append(np.full(len(idx), d)); ps.append(pass_ids(data, d)[idx])
+    out = [np.concatenate(v) for v in (xs, ys, zs, hs, ps)]
+    ok = np.isfinite(out[0]) & np.isfinite(out[1]) & np.isfinite(out[2])
+    return tuple(v[ok] for v in out)
+
+
+class Section:
+    """The soundings within `width` of the line p0-p1 (picked with the values when the line was drawn); place()
+    re-places only those with other values, so nudging a correction redraws at once."""
+
+    def __init__(self, data, values, p0, p1, width=2.0, cap=150000):
+        self.data, self.p0, self.p1, self.width = data, np.asarray(p0, float), np.asarray(p1, float), float(width)
+        u = self.p1 - self.p0
+        self.L = float(np.hypot(*u)) or 1.0
+        self.u = u / self.L
+        self.idx = {}
+        for d in data["heads"]:
+            P = georef_head(data, d, values)
+            a, c = self._ac(P)
+            m = np.flatnonzero((a >= -self.width) & (a <= self.L + self.width) & (np.abs(c) <= self.width * 3))
+            if len(m) > cap:
+                m = np.sort(np.random.default_rng(1).choice(m, cap, replace=False))
+            self.idx[d] = m
+
+    def _ac(self, P):
+        r = P[:, :2] - self.p0
+        return r @ self.u, r @ np.array([-self.u[1], self.u[0]])
+
+    def place(self, values):
+        """-> along, height, head, pass, across of the section's soundings with values (|across| <= width)."""
+        out = [[], [], [], [], []]
+        for d, idx in self.idx.items():
+            if not len(idx):
+                continue
+            P = georef_head(self.data, d, values, idx)
+            a, c = self._ac(P)
+            m = (np.abs(c) <= self.width) & np.isfinite(a) & np.isfinite(P[:, 2])
+            out[0].append(a[m]); out[1].append(P[m, 2]); out[2].append(np.full(int(m.sum()), d))
+            out[3].append(pass_ids(self.data, d)[idx][m]); out[4].append(c[m])
+        if not out[0]:
+            return tuple(np.zeros(0) for _ in range(5))
+        return tuple(np.concatenate(o) for o in out)
+
+
+def _x_of(values, heads):
+    return _cal_vector({str(d): {k: (values.get(str(d)) or {}).get(k, 0.0) for k in PARAMS} for d in heads}, heads)
+
+
+def pair_table(data, values):
+    """Overlapping pairs of (head, pass): [{a, b, kind, n, median_cm, signed_cm}] at values; signed = how far b's
+    seabed lies above a's. kind: 'between heads' / 'reciprocal' (passes > 120 deg apart) / 'same direction'."""
+    heads = sorted(data["heads"])
+    dv = with_levers(data, values)
+    x = _x_of(values, heads)
+    obs = build_observations(dv, x, heads)
+    C = compact(dv, heads, obs)
+    r = residuals(dv, x, heads, C)
+    grp_pt = obs["group"][obs["op"]]
+    grp_pl = obs["plane_group"][obs["opl"]]
+    spans = pass_spans(data)
+    hdg = {i: s[2] for i, s in enumerate(spans)}
+    rows = []
+    key = grp_pl * 100000 + grp_pt
+    for k in np.unique(key):
+        m = (key == k) & (np.abs(r) <= MAX_SEP)
+        if m.sum() < 30:
+            continue
+        ga, gb = int(k // 100000), int(k % 100000)
+        ha, pa, hb, pb = heads[ga // 10000], ga % 10000, heads[gb // 10000], gb % 10000
+        if ha != hb:
+            kind = "between heads"
+        else:
+            dh = abs((hdg.get(pa, 0) - hdg.get(pb, 0) + 180) % 360 - 180)
+            kind = "reciprocal" if dh > 120 else "same direction" if dh < 60 else "crossing"
+        n_ = obs["normals"][obs["opl"]][m][:, 2]
+        rows.append({"a": (ha, pa), "b": (hb, pb), "kind": kind, "n": int(m.sum()),
+                     "median_cm": 100 * float(np.median(np.abs(r[m]))),
+                     "signed_cm": 100 * float(np.median(r[m] * np.sign(n_)))})
+    # each unordered pair once (merge a/b and b/a, flipping the sign)
+    merged = {}
+    for row in rows:
+        k = tuple(sorted([row["a"], row["b"]]))
+        s = 1 if (row["a"], row["b"]) == k else -1
+        e = merged.setdefault(k, {"a": k[0], "b": k[1], "kind": row["kind"], "n": 0, "w_med": 0.0, "w_sig": 0.0})
+        e["n"] += row["n"]
+        e["w_med"] += row["n"] * row["median_cm"]
+        e["w_sig"] += row["n"] * row["signed_cm"] * s
+    out = [{"a": e["a"], "b": e["b"], "kind": e["kind"], "n": e["n"], "median_cm": e["w_med"] / e["n"],
+            "signed_cm": e["w_sig"] / e["n"]} for e in merged.values()]
+    return sorted(out, key=lambda e: (-e["n"]))
+
+
+def residual_profiles(data, values, angle_bin=5.0, time_bin=30.0):
+    """Per head: the median disagreement against the beam's angle from the vertical (+ outboard: roll and sound
+    speed show here) and against time (pitch / latency / heading show as steps between passes).
+    -> {d: {"angle": (centres, median_cm, count), "time": (centres, median_cm, count)}}"""
+    from dcs_core import marine
+    heads = sorted(data["heads"])
+    dv = with_levers(data, values)
+    x = _x_of(values, heads)
+    obs = build_observations(dv, x, heads)
+    C = compact(dv, heads, obs)
+    r = residuals(dv, x, heads, C)
+    sizes = [len(dv["heads"][d]["S"]["t"]) for d in heads]
+    off = np.r_[0, np.cumsum(sizes)]
+    sgn = np.sign(obs["normals"][obs["opl"]][:, 2])
+    out = {}
+    for i, d in enumerate(heads):
+        m = (obs["op"] >= off[i]) & (obs["op"] < off[i + 1]) & (np.abs(r) <= MAX_SEP)
+        j = obs["op"][m] - off[i]
+        S = dv["heads"][d]["S"]
+        v = marine.level_vectors(marine.rays(S["angle"][j], S["tof"][j], S["sos"][j]), S["up"][j])
+        side = 1.0 if np.median(v[:, 1]) >= 0 else -1.0
+        ang = np.degrees(np.arctan2(v[:, 1] * side, -v[:, 2]))
+        rr = 100 * r[m] * sgn[m]
+        prof = {}
+        for name, val, w in (("angle", ang, angle_bin), ("time", S["t"][j] - S["t"].min(), time_bin)):
+            b = np.floor(val / w).astype(int)
+            cen, med, cnt = [], [], []
+            for k in np.unique(b):
+                mm = b == k
+                if mm.sum() >= 20:
+                    cen.append((k + 0.5) * w); med.append(float(np.median(rr[mm]))); cnt.append(int(mm.sum()))
+            prof[name] = (np.array(cen), np.array(med), np.array(cnt))
+        out[d] = prof
+    return out
+
+
+def difference_grid(data, values, cell=2.0, sample=None):
+    """Plan grid of how far the seabed seen by different passes / heads disagrees: per cell the range (max - min)
+    of the (head, pass) medians where at least two of them have >= 5 soundings. -> (x0, y0, cell, grid) with NaN
+    where nothing overlaps."""
+    xs, ys, zs, hs, ps = plan(data, values, sample or view_sample(data, 400000))
+    ok = np.isfinite(xs) & np.isfinite(ys) & np.isfinite(zs)
+    if ok.any():                          # the extent from the bulk of the soundings (a stray one is left out)
+        x_lo, x_hi = np.percentile(xs[ok], [0.1, 99.9])
+        y_lo, y_hi = np.percentile(ys[ok], [0.1, 99.9])
+        ok &= (xs >= x_lo) & (xs <= x_hi) & (ys >= y_lo) & (ys <= y_hi)
+    xs, ys, zs, hs, ps = xs[ok], ys[ok], zs[ok], hs[ok], ps[ok]
+    if not len(xs):
+        return 0.0, 0.0, float(cell), np.full((1, 1), np.nan)
+    while ((xs.max() - xs.min()) / cell + 1) * ((ys.max() - ys.min()) / cell + 1) > 25e6:
+        cell *= 2.0
+    g = hs.astype(np.int64) * 10000 + ps
+    ix = np.floor((xs - xs.min()) / cell).astype(np.int64)
+    iy = np.floor((ys - ys.min()) / cell).astype(np.int64)
+    nx = int(ix.max()) + 1
+    key = (iy * nx + ix) * 1000000 + g
+    o = np.lexsort((zs, key))
+    ks, zz = key[o], zs[o]
+    brk = np.flatnonzero(np.diff(ks)) + 1
+    st, en = np.r_[0, brk], np.r_[brk, len(ks)]
+    cnt = en - st
+    med = 0.5 * (zz[st + (cnt - 1) // 2] + zz[st + cnt // 2])
+    cellk = ks[st] // 1000000
+    ok = cnt >= 5
+    cellk, med = cellk[ok], med[ok]
+    G = np.full((int(iy.max()) + 1, nx), np.nan)
+    if len(cellk):
+        o2 = np.argsort(cellk, kind="stable")
+        ck, mv = cellk[o2], med[o2]
+        b2 = np.flatnonzero(np.diff(ck)) + 1
+        s2, e2 = np.r_[0, b2], np.r_[b2, len(ck)]
+        multi = (e2 - s2) >= 2
+        rng_ = np.maximum.reduceat(mv, s2) - np.minimum.reduceat(mv, s2)
+        c = ck[s2][multi]
+        G[c // nx, c % nx] = rng_[multi]
+    return float(xs.min()), float(ys.min()), float(cell), G

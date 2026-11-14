@@ -24,6 +24,7 @@
 <h2>What's new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>1.11.0</b></td><td><b>Marine jobs on the normal steps, reviewed by you</b>: Pairs, accept each solved value or type your own (offsets included), Analyze (by beam angle, by time, disagreement map), Report, and the sonar Data View with live sections (<a href="#marine">Marine jobs</a>).</td></tr>
 <tr><td><b>1.10.1</b></td><td>Sonar heads are named by the side their fan looks to. The Lidar mounting convention comes from DCS Core's shared coordinate frames. Needs DCS Core 1.15.0.</td></tr>
 <tr><td><b>1.10.0</b></td><td><b>Sonar patch test:</b> a marine job opens on one page that solves, per sonar head, the roll, pitch, heading and (when asked) latency corrections that make the seabed agree between passes and between the two heads, keeps a correction only when the survey lines show it, and finalizes them for CloudPro (<a href="#marine">Marine jobs</a>). Needs DCS Core 1.14.0.</td></tr>
 <tr><td><b>1.9.0</b></td><td><b>One calibration flow:</b> the Calibration page reads <span class="ui">1 Auto calibrate</span> › <span class="ui">2 Check / fine tune…</span> › <span class="ui">3 Apply advised &amp; finalize</span>, and shows the recorded, advised and in-use angles side by side with whether the advised ones are in use and whether the ones in use are finalized; the second, typed-angles Apply is gone (type values in the Data View). The Data View has <span class="ui">Auto calibrate</span> and <span class="ui">Apply &amp; finalize these values</span>. Every button that applies also finalizes and says so. Continue goes to StripPro when it is installed. </td></tr>
@@ -514,24 +515,22 @@
 </ul>
 
 <h1 id="marine"><span class="num">{N}</span>Marine jobs: the sonar patch test</h1>
-<p>A job of sonar recordings (finalized in PosPro's Marine page) opens on one page, <b>Sonar patch test</b>, instead of the seven Lidar steps.</p>
-<figure><img src="fig/marine.png" style="max-height:110mm"><figcaption><b>Figure {N}.1</b> The Lumston survey after Solve and Finalize: the lines show a roll correction for each head; pitch, heading and latency are not determined by them.</figcaption></figure>
-<h2>How it works</h2>
-<p>The soundings are placed with PosPro's boat trajectory, each head's own attitude and its offsets. The track is cut into passes (the boat's straight runs). In 2 m cells the seabed of one head on one pass gives a plane, and the soundings of the other passes and of the other head in the same cell are compared with it. The corrections are solved one step at a time:</p>
-<ol class="steps">
-<li><b>Roll</b> for every head: it tilts the seabed one way on a pass and the other way on the reciprocal pass.</li>
-<li><b>Pitch and heading</b> per head: both move the seabed along the track, so each is kept only when it makes the seabed agree at least 0.3 cm better, and one is preferred when they cannot be told apart. They need a slope or a feature crossed in opposite directions (pitch) or a feature off to the side (heading).</li>
-<li><b>Latency</b> only with <span class="ui">Also solve the latency</span>: it moves the seabed along the track as the pitch does, and is told apart only with lines run at different speeds.</li>
-</ol>
-<p>The comparisons between passes of one head and between the two heads count equally, although there are far fewer of the second kind.</p>
-<h2>Settings</h2>
+<p>A job of sonar recordings (processed in PosPro) uses the same seven steps and phases as a Lidar job. Nothing is applied blind: every value can be looked at in sections through the seabed, each solved value is used only when you accept it, and every value in use can be typed or nudged.</p>
 <table>
-<tr><th>Setting</th><th>Meaning</th></tr>
-<tr><td>Soundings used</td><td>Every ping, every 2nd (default), 3rd or 5th.</td></tr>
-<tr><td>Returns</td><td>Strong only, medium and strong (default), or all above the sonar's low threshold. Soundings farther than 40 m are left out: at grazing angles a small sound-speed error moves the seabed by decimetres.</td></tr>
+<tr><th>Step</th><th>Marine content</th></tr>
+<tr><td>1 Data</td><td>Which soundings the patch test reads (every Nth ping, returns by power, slant range up to 40 m by default: far soundings meet the seabed at grazing angles where a small sound-speed error moves them by decimetres), then <span class="ui">Read soundings</span>.</td></tr>
+<tr><td>2 Installation</td><td>Each head's offsets as PosPro finalized them, and the ones in use here.</td></tr>
+<tr><td>3 Quality</td><td>The boat's passes (straight runs): start, length, duration, heading, speed. A patch test needs reciprocal passes over the same seabed.</td></tr>
+<tr><td>4 Pairs</td><td><span class="ui">Measure pairs</span>: for each pair of (head, pass) that see the same seabed, how many soundings were compared, how far apart the seabed is (median) and signed. Double-click a pair to open it in the Data View.</td></tr>
+<tr><td>5 Calibration</td><td><span class="ui">1 Solve</span> suggests roll, pitch, heading (and latency when ticked) per head, keeping a correction only when the seabed agrees at least 0.3 cm better; each with its uncertainty and whether the lines show it. Tick <span class="ui">Accept</span> to use a solved value, or type values (and offsets) under <span class="ui">In use</span>. <span class="ui">2 Check / fine tune</span> opens the Data View. <span class="ui">3 Finalize the values in use</span> writes them for CloudPro; the step says when they changed since.</td></tr>
+<tr><td>6 Analyze</td><td>The disagreement against the beam's angle from the vertical (a slope that changes sign between heads is roll, a smile is sound speed) and against time (steps between passes are pitch, heading or latency), as recorded and with the values in use, and a map of how far the seabed seen by different passes and heads disagrees.</td></tr>
+<tr><td>7 Report</td><td>A text report and the Analyze plots in <code>02_AlignPro/out/sonar_patch_test_&lt;time&gt;/</code>.</td></tr>
 </table>
-<h2>Result and Finalize</h2>
-<p>The table gives each correction with its uncertainty, or <i>not determined (0)</i>. The steps list how well the seabed agrees as recorded and after each correction kept. The values under <b>Values used</b> are what <span class="ui">Finalize</span> writes; type others to override. CloudPro uses them when it georeferences (<span class="ui">Continue in CloudPro ›</span>). StripPro is for Lidar lines and does not take part in a marine job.</p>
+<figure><img src="fig/marine_calib.png" style="max-height:110mm"><figcaption><b>Figure {N}.1</b> Calibration on Lumston: roll solved and accepted for both heads; pitch, heading and latency not determined by these lines; offsets as PosPro finalized them.</figcaption></figure>
+<h2>The sonar Data View</h2>
+<p><span class="ui">CHECK / FINE TUNE</span> shows a plan of the soundings (coloured by head, pass or height) and a section: right-drag on the plan to draw one, set its width. Under them, each head's roll, pitch, heading, latency and offsets: change one and the section is placed again at once. Opened from a pair, the section crosses the middle of the pair's overlap and shows only those two. <span class="ui">Use these values</span> makes them the values in use on the Calibration page.</p>
+<figure><img src="fig/marine_view.png" style="max-height:105mm"><figcaption><b>Figure {N}.2</b> A reciprocal pair of head 30053: the two passes (red, blue) lie on one seabed; below it, multipath ghosts that CloudPro's marine filters remove.</figcaption></figure>
+<figure><img src="fig/marine_analyze.png" style="max-height:110mm"><figcaption><b>Figure {N}.3</b> Analyze: disagreement by beam angle and by time, before (dots) and with the values in use (lines), and the disagreement map.</figcaption></figure>
 
 <h1 id="reference"><span class="num">{N}</span>Reference</h1>
 <h2>Conventions</h2>

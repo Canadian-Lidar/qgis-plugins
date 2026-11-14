@@ -1358,8 +1358,11 @@ for _c in (ResetModifications, ClipHeight, ClipIntensity, ClipRange, ClipChannel
 from .features import FEATURE_FILTERS  # noqa: E402  (features.py uses the classes above)
 for _c in FEATURE_FILTERS:
     REGISTRY[_c.key] = _c
+from .marinefilters import MARINE_FILTERS, marine_groups  # noqa: E402  (sonar soundings)
+for _c in MARINE_FILTERS:
+    REGISTRY[_c.key] = _c
 GROUPS_ORDER = ["Edit", "Clip", "Cell statistics", "Reduce", "Outliers", "Structure", "Ground", "Multi-pass",
-                "Height", "Features"]
+                "Height", "Features", "Marine"]
 
 
 def make(key, **values):
@@ -1473,7 +1476,14 @@ def apply_result(ctx, r):
 # =============================================================================
 # default groups
 # =============================================================================
-def default_groups():
+def default_groups(marine=False):
+    """The ready-made groups: the marine ones first on a marine job (sonar soundings), else last."""
+    L = _lidar_groups()
+    M = marine_groups(make, FilterGroup)
+    return M + L if marine else L + M
+
+
+def _lidar_groups():
     G = []
     g = FilterGroup("Mobile mapping - standard clean")
     g.filters = [make("reset"), make("vehicle_box"), make("isolated", interval=0.5, min_pts=8),

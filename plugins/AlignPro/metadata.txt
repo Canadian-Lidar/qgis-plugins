@@ -5,7 +5,7 @@ qgisMaximumVersion=4.99
 supportsQt6=True
 description=Lidar boresight calibration (patch test) for the Canadian Lidar mobile mapper: stage 02 of the Data Collection Systems chain (PosPro, AlignPro, CloudPro).
 about=AlignPro calibrates the Lidar mounting angles of the mobile mapper from its .clraw captures. It opens the job's shared processing project, uses the trajectory PosPro published, pairs the passes, finds planar surfaces seen by several passes and solves roll, pitch and heading with a point-to-plane adjustment; leaving each line out in turn gives the SDEV. A Data View shows plan, profile and section of the points live while roll, pitch, heading, lever arm and latency are adjusted by hand. The applied values are published for CloudPro (alignment.json) and given in the mapper's mounting convention, ready for Settings > Hardware > Survey sensor. Quality control, sweeps, PDF and text reports and calibration history. Needs the DCS Core plugin. Menu: Plugins > Canadian Lidar > Data Systems.
-version=1.10.1
+version=1.11.0
 author=Canadian Lidar
 email=seantobrien@gmail.com
 category=Plugins
@@ -15,7 +15,8 @@ experimental=False
 deprecated=False
 hasProcessingProvider=no
 plugin_dependencies=DCS Core
-changelog=1.10.1 Sonar heads are named by the side they look to; the Lidar mounting convention comes from DCS Core's shared frames. Needs DCS Core 1.15.0.
+changelog=1.11.0 Marine jobs use the normal steps, with tools to check every value yourself: Data (read the soundings), Installation, Quality (the passes), Pairs (how far apart the seabed is for each pair of passes and heads), Calibration (solve, accept each solved value one by one or type your own, offsets included, then finalize), Analyze (disagreement against beam angle and time, and a map before and with the values in use), Report. CHECK / FINE TUNE opens the sonar Data View: draw a section on the plan and nudge each head's roll, pitch, heading, latency and offsets while it redraws.
+    1.10.1 Sonar heads are named by the side they look to; the Lidar mounting convention comes from DCS Core's shared frames. Needs DCS Core 1.15.0.
     1.10.0 Marine jobs: the sonar patch test. For each sonar head, roll, pitch, heading and (when asked) latency corrections that make the seabed agree between passes of the head and between the two heads, solved one step at a time so a correction is kept only when the survey lines show it; the result with its uncertainty, values you can edit, Finalize for CloudPro. Needs DCS Core 1.14.0.
     1.9.0 One calibration flow (Sean, 11 Nov): Calibration page buttons 1 Auto calibrate, 2 Check / fine tune, 3 Apply advised & finalize; the recorded, advised and in-use angles side by side (advised: in use / not applied; in use: finalized / not finalized / out of date); the separate Apply for typed angles is gone (the Data View does that); Finalize for CloudPro shows only when something is not finalized. Data View: Auto calibrate button, Apply & finalize these values. Every apply button says it finalizes. Continue in StripPro when StripPro is installed. Needs DCS Core 1.13.0 for that; with older DCS Core Continue goes to CloudPro.
     1.8.2 From the point cloud: a pair measured across recording holes says Recording holes instead of Calibration or Trajectory.
