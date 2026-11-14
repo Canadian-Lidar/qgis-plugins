@@ -71,12 +71,14 @@ def signature(project):
 
 
 # --------------------------------------------------------------------------------------------- one tile
-def _tile_patches(a, x0, y0, T, patch, tbase=0.0):
+def _tile_patches(a, x0, y0, T, patch, tbase=0.0, skip_lines=()):
     """Patch pairs in one tile: (la, lb, n[k,3], d[k], col[k], n, ta[k], tb[k]) with col the cell index
     (iy * n + ix) in the tile and ta / tb the mean time (s after tbase) of each line's points in the cube."""
     m = (a["flag"] & REJECTED) == 0
     for c in NOISE_CLASSES:
         m &= a["cls"] != c
+    for lid in skip_lines:                  # interpolated (virtual) points are not a survey line
+        m &= a["line"] != lid
     idx = np.flatnonzero(m)
     if len(idx) > TILE_POINTS:
         idx = idx[:: int(math.ceil(len(idx) / TILE_POINTS))]
@@ -454,6 +456,7 @@ def _run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
     t0 = time.time()
     t_starts = [float(l["t0"]) for l in project.lines if l.get("t0")]
     tbase = math.floor(min(t_starts)) if t_starts else 0.0
+    skip = tuple(l["id"] for l in project.lines if l.get("kind") == "interpolated")
     grids = {}
     pair_cells = {}
     pair_rows = {}                          # (a, b) -> [normals, d]: a sample of at most 2 x PAIR_SAMPLE
@@ -468,7 +471,7 @@ def _run(project, progress=None, cancelled=None, patch=PATCH, workers=None):
             return k, None
         i, j = parse_key(k)
         a = st.tile_array(k)
-        return k, _tile_patches(a, i * T, j * T, T, patch, tbase)
+        return k, _tile_patches(a, i * T, j * T, T, patch, tbase, skip)
 
     if not workers:
         # threads while their memory fits in half the free memory (~150 B per point read, TILE_POINTS a tile)

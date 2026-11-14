@@ -436,6 +436,8 @@ def import_chain(project, inp, opts, files=None, progress=None, cancel=None, kee
         want = "%.1f" % epochs.default_epoch(target_crs)
     datum = move_epoch(inp, fr, datum, want, target_crs) or datum
     ed = collect_edits(project) if keep_edits and project.lines else None
+    from . import interpolate as _interp
+    keep_interp = _interp.snapshot(project) if project.lines else None   # virtual points survive the rebuild
     project.begin_rebuild()
     try:
         project.data.update(settings)
@@ -483,6 +485,7 @@ def import_chain(project, inp, opts, files=None, progress=None, cancel=None, kee
             raise ValueError("No line could be georeferenced: the trajectory (%s) covers none of the %d line(s)"
                              % (inp.traj_info.get("description") or "?", n))
         restored = apply_edits(project, ed, progress, cancel) if ed is not None else 0
+        _interp.restore(project, keep_interp)
         if progress:
             progress(0.95, "building the project grids")
         rebuild_grids(project)
@@ -522,6 +525,8 @@ def import_marine(project, inp, opts, progress=None, cancel=None, keep_edits=Tru
     sopts.geoid = opts.geoid
     sopts.source_crs = inp.source_crs
     ed = collect_edits(project) if keep_edits and project.lines else None
+    from . import interpolate as _interp
+    keep_interp = _interp.snapshot(project) if project.lines else None   # virtual points survive the rebuild
     project.begin_rebuild()
     try:
         project.data.update(settings)
@@ -566,6 +571,7 @@ def import_marine(project, inp, opts, progress=None, cancel=None, keep_edits=Tru
             project.lines[lid]["calibration"] = inp.align_info.get("calibration")
             out.append((lid, st))
         restored = apply_edits(project, ed, progress, cancel) if ed is not None else 0
+        _interp.restore(project, keep_interp)
         if progress:
             progress(0.95, "building the project grids")
         rebuild_grids(project)
