@@ -9,9 +9,18 @@ from ..core import sidescan as SS
 
 
 def grey(v, lo, hi):
-    """dB -> 8-bit grey (NaN = black)."""
-    g = np.clip((v - lo) / max(hi - lo, 1e-6) * 255.0, 0, 255)
+    """dB -> 8-bit index 1-255 (0 = NaN, no data)."""
+    g = np.clip(1 + (v - lo) / max(hi - lo, 1e-6) * 254.0, 1, 255)
     return np.where(np.isfinite(v), g, 0).astype(np.uint8)
+
+
+def indexed_image(a, palette):
+    """8-bit array -> QImage in a side-scan palette (index 0 black: no data)."""
+    a = np.ascontiguousarray(a)
+    q = QtGui.QImage(a.data, a.shape[1], a.shape[0], a.shape[1], QtGui.QImage.Format.Format_Indexed8)
+    lut = SS.palette_lut(palette)
+    q.setColorTable([QtGui.qRgb(0, 0, 0)] + [QtGui.qRgb(int(r), int(g), int(b)) for r, g, b in lut[1:]])
+    return q.copy()
 
 
 def fit_columns(D, w):
@@ -26,6 +35,13 @@ def fit_columns(D, w):
     c = np.add.reduceat(ok.astype(np.float32), edges[:-1], axis=1)
     with np.errstate(invalid="ignore", divide="ignore"):
         return np.where(c > 0, s / c, np.nan)
+
+
+def palette_icon(key, w=48, h=12):
+    lut = SS.palette_lut(key)
+    a = np.ascontiguousarray(np.repeat(lut[np.linspace(0, 255, w).astype(int)][None], h, 0))
+    q = QtGui.QImage(a.data, w, h, 3 * w, QtGui.QImage.Format.Format_RGB888)
+    return QtGui.QIcon(QtGui.QPixmap.fromImage(q.copy()))
 
 
 class Waterfall(QtWidgets.QWidget):
@@ -45,9 +61,16 @@ class Waterfall(QtWidgets.QWidget):
         self.rows_per_px = 1.0
         self.contrast = 1.0
         self.levelled = True
+        self.palette = "grey"
+        self.trim = True                  # the static past the data limit left black
+        self.ground = False               # slant range corrected (water column taken out)
+        self.gmax = 1.0
+        self._trim_cache = {}
         self.contacts = []
         self._drag = None
         self._img = None
+        self.mark = None
+        self._trees = {}
         self.scroll = QtWidgets.QScrollBar(Qt.Orientation.Vertical, self)
         self.scroll.valueChanged.connect(self._scrolled)
 
@@ -56,6 +79,12 @@ class Waterfall(QtWidgets.QWidget):
         """A: port LineSS (or None), B: starboard LineSS (or None)."""
         self.A, self.B = A, B
         self.lv = {}
+        self.mark = None
+        self._trees = {}
+        self._trim_cache = {}
+        g = [np.nanmax(L.ground_ranges(int(L.n // 2))) for L in (A, B) if L is not None]
+        g = [x for x in g if np.isfinite(x)]
+        self.gmax = max(g) * 1.05 if g else 1.0
         for L in (A, B):
             if L is not None:
                 d = L.levelled()
@@ -67,6 +96,12 @@ class Waterfall(QtWidgets.QWidget):
         self._sync_scroll()
         self._img = None
         self.update()
+
+    def _trimmed(self, L, data, levelled):
+        k = (L.lid, levelled)
+        if k not in self._trim_cache:
+            self._trim_cache[k] = L.trimmed(data)
+        return self._trim_cache[k]
 
     @property
     def main(self):
@@ -110,11 +145,61 @@ class Waterfall(QtWidgets.QWidget):
         self._img = None
         self.update()
 
+    # -- linked cursor
+    def mark_xy(self, xy, radius=3.0):
+        """Cross the sample nearest to xy (local E, N) when one of this pass's samples is within radius m;
+        None: no cross."""
+        old = self.mark
+        self.mark = None
+        if xy is not None:
+            best = None
+            for L in (self.A, self.B):
+                if L is None:
+                    continue
+                tree = self._trees.get(L.lid)
+                if tree is None:
+                    from scipy.spatial import cKDTree
+                    ok = np.isfinite(L.E)
+                    ii, kk = np.nonzero(ok)
+                    tree = (cKDTree(np.column_stack([L.E[ok], L.N[ok]])), ii, kk)
+                    self._trees[L.lid] = tree
+                d, j = tree[0].query(xy, distance_upper_bound=radius)
+                if np.isfinite(d) and (best is None or d < best[0]):
+                    best = (d, L, int(tree[1][j]), int(L.knots[tree[2][j]]))
+            if best is not None:
+                self.mark = best[1:]
+                m = self.main
+                i = best[2] if best[1] is m else int(np.clip(np.searchsorted(m.t, best[1].t[best[2]]), 0, m.n - 1))
+                vis = self.height() * self.rows_per_px
+                if not (self.top - vis < i <= self.top):          # off screen: bring it into view
+                    self.go_to(best[1].lid, best[2])
+        if self.mark != old:
+            self.update()
+
     # -- geometry
     def _layout(self):
         w = self.width() - self.scroll.width()
         half = (w - 6) // 2
         return w, half
+
+    def _frac_to_sample(self, L, i, f):
+        """Across-track position f (0 at the head's side of the panel, 1 at the far edge) -> sample of ping i."""
+        ns = L.db.shape[1]
+        if not self.ground:
+            return int(np.clip(f * ns, 0, ns - 1))
+        g = L.ground_ranges(i)
+        ok = np.flatnonzero(np.isfinite(g))
+        if not len(ok):
+            return 0
+        k = int(np.searchsorted(g[ok], f * self.gmax))
+        return int(ok[min(k, len(ok) - 1)])
+
+    def _sample_to_frac(self, L, i, s):
+        ns = L.db.shape[1]
+        if not self.ground:
+            return s / ns
+        g = L.ground_ranges(i)[int(np.clip(s, 0, ns - 1))]
+        return float(g) / self.gmax if np.isfinite(g) else 0.0
 
     def _at(self, x, y):
         """(LineSS, ping index, sample index) under the widget point x, y, or None."""
@@ -125,29 +210,26 @@ class Waterfall(QtWidgets.QWidget):
         i = int(round(self.top - y * self.rows_per_px))
         if i < 0 or i >= m.n:
             return None
-        ns = m.db.shape[1]
         if x < half:
             if self.A is None:
                 return None
-            s = int((half - 1 - x) / half * ns)
-            return self.A, i, int(np.clip(s, 0, ns - 1))
+            return self.A, i, self._frac_to_sample(self.A, i, (half - 1 - x) / half)
         if x >= half + 6 and self.B is not None:
             j = i if self.A is None else self._other_index(i)
             if j is None:
                 return None
-            s = int((x - half - 6) / half * ns)
-            return self.B, j, int(np.clip(s, 0, ns - 1))
+            return self.B, j, self._frac_to_sample(self.B, j, (x - half - 6) / half)
         return None
 
     def _xy(self, L, i, s):
         """Widget point of sample s of ping i of line L (i in L's own pings)."""
         m = self.main
         w, half = self._layout()
-        ns = L.db.shape[1]
+        f = self._sample_to_frac(L, i, s)
         if L is self.B and self.A is not None:
             i = int(np.clip(np.searchsorted(m.t, L.t[i]), 0, m.n - 1))
         y = (self.top - i) / self.rows_per_px
-        x = half - 1 - s / ns * half if L is self.A else half + 6 + s / ns * half
+        x = half - 1 - f * half if L is self.A else half + 6 + f * half
         return x, y
 
     # -- drawing
@@ -166,6 +248,8 @@ class Waterfall(QtWidgets.QWidget):
                 continue
             d, raw, lo, hi, rp = self.lv[L.lid]
             data = d if self.levelled else raw
+            if self.trim:
+                data = self._trimmed(L, data, self.levelled)
             if not self.levelled:
                 lo, hi = float(rp[0]), float(rp[1])
             mid = (lo + hi) / 2
@@ -177,7 +261,19 @@ class Waterfall(QtWidgets.QWidget):
                 idx = np.array([self._other_index(i) if v else -1 for i, v in zip(rows_c, valid)])
                 ok = idx >= 0
                 idx = np.where(ok, idx, 0)
-            img = grey(fit_columns(data[idx], half), mid - span, mid + span)
+            if self.ground:                          # slant range corrected: across = distance from the head
+                tg = (np.arange(half) + 0.5) / half * self.gmax
+                rows_v = np.full((len(idx), half), np.nan, np.float32)
+                for r_, i in enumerate(idx):
+                    if not ok[r_]:
+                        continue
+                    g = L.ground_ranges(int(i))
+                    v = np.isfinite(g) & np.isfinite(data[i])
+                    if v.sum() >= 2:
+                        rows_v[r_] = np.interp(tg, g[v], data[i][v], left=np.nan, right=np.nan)
+                img = grey(rows_v, mid - span, mid + span)
+            else:
+                img = grey(fit_columns(data[idx], half), mid - span, mid + span)
             img[~ok] = 0
             if side == "port":
                 out[:, :half] = img[:, ::-1]
@@ -192,8 +288,8 @@ class Waterfall(QtWidgets.QWidget):
         if self._img is None:
             a = self._render()
             if a is not None:
-                q = QtGui.QImage(a.data, a.shape[1], a.shape[0], a.shape[1], QtGui.QImage.Format.Format_Grayscale8)
-                self._img = (q.copy(), a)
+                q = indexed_image(a, self.palette)
+                self._img = (q, a)
         if self._img is not None:
             p.drawImage(0, 0, self._img[0])
         else:
@@ -224,6 +320,13 @@ class Waterfall(QtWidgets.QWidget):
                 p.setPen(QtGui.QColor(0, 229, 170))
                 p.drawText(r, Qt.AlignmentFlag.AlignCenter, txt)
             p.setPen(QtGui.QPen(QtGui.QColor(255, 196, 0), 1.5))
+        if self.mark is not None and m is not None:
+            x, y = self._xy(*self.mark)
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))
+            p.drawLine(QtCore.QPointF(x - 9, y), QtCore.QPointF(x + 9, y))
+            p.drawLine(QtCore.QPointF(x, y - 9), QtCore.QPointF(x, y + 9))
+            p.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0), 1))
+            p.drawEllipse(QtCore.QPointF(x, y), 11, 11)
         if self._drag is not None:
             p.setPen(QtGui.QPen(QtGui.QColor(0, 229, 170), 1.5, Qt.PenStyle.DashLine))
             p.drawRect(QtCore.QRectF(self._drag[0], self._drag[1]).normalized())
@@ -320,13 +423,29 @@ class SideScanPanel(QtWidgets.QWidget):
         self.levelled.setChecked(True)
         self.levelled.setToolTip("Even out the image from nadir to the far range (the sonar's raw dB when off)")
         row2.addWidget(self.levelled)
+        self.trim = QtWidgets.QCheckBox("Hide static")
+        self.trim.setChecked(True)
+        self.trim.setToolTip("Black past each ping's data limit: where the sonar records only its noise floor")
+        row2.addWidget(self.trim)
+        self.ground = QtWidgets.QCheckBox("Slant range corrected")
+        self.ground.setToolTip("Across the waterfall: distance from the head over the seabed (the water column "
+                               "taken out); off: slant range as recorded")
+        row2.addWidget(self.ground)
+        row2.addStretch(1)
+        self.info = QtWidgets.QLabel("")
+        row2.addWidget(self.info)
+        v.addLayout(row2)
+        row2 = QtWidgets.QHBoxLayout()
+        row2.addWidget(QtWidgets.QLabel("Colours"))
+        self.palette = QtWidgets.QComboBox()
+        for k, name, _st in SS.PALETTES:
+            self.palette.addItem(palette_icon(k), name, k)
+        row2.addWidget(self.palette)
         row2.addWidget(QtWidgets.QLabel("Contrast"))
         self.contrast = QtWidgets.QSlider(Qt.Orientation.Horizontal)
         self.contrast.setRange(50, 400)
         self.contrast.setValue(100)
         row2.addWidget(self.contrast, 1)
-        self.info = QtWidgets.QLabel("")
-        row2.addWidget(self.info)
         v.addLayout(row2)
         split = QtWidgets.QSplitter(Qt.Orientation.Vertical)
         self.wf = Waterfall()
@@ -360,6 +479,9 @@ class SideScanPanel(QtWidgets.QWidget):
         self.pass_cb.currentIndexChanged.connect(self._load_pass)
         self.levelled.toggled.connect(self._display)
         self.contrast.valueChanged.connect(self._display)
+        self.palette.currentIndexChanged.connect(self._display)
+        self.trim.toggled.connect(self._display)
+        self.ground.toggled.connect(self._display)
         self.wf.hovered.connect(self._hover)
         self.wf.boxed.connect(self._boxed)
         self.table.itemDoubleClicked.connect(self._go)
@@ -370,6 +492,12 @@ class SideScanPanel(QtWidgets.QWidget):
     # -- state
     def set_project(self, project, busy=False):
         self.project = project
+        if project is not None:
+            pk = (project.data.get("sidescan") or {}).get("palette")
+            if pk and self.palette.findData(pk) >= 0:
+                self.palette.blockSignals(True)
+                self.palette.setCurrentIndex(self.palette.findData(pk))
+                self.palette.blockSignals(False)
         cur = self.pass_cb.currentData()
         self._passes = SS.passes(project) if project is not None else []
         self.pass_cb.blockSignals(True)
@@ -384,6 +512,8 @@ class SideScanPanel(QtWidgets.QWidget):
         self.b_process.setEnabled(bool(self._passes) and not busy)
         self.b_mosaic.setEnabled(n_done > 0 and not busy)
         self.b_xtf.setEnabled(n_done > 0 and not busy)
+        self._status = ("%d of %d passes processed" % (n_done, len(self._passes)) if self._passes else
+                        "No sonar lines in this job")
         self.info.setText("%d of %d passes processed" % (n_done, len(self._passes)) if self._passes else
                           "No sonar lines in this job")
         self._load_pass()
@@ -405,11 +535,23 @@ class SideScanPanel(QtWidgets.QWidget):
                     else:
                         B = L
         self.wf.set_lines(A, B)
+        lim = []
+        for L, nm in ((A, "port"), (B, "stbd")):
+            if L is not None:
+                c = L.coverage_m()
+                lim.append("%s %s" % (nm, "to the end" if c is None else "%.0f m" % c))
+        self.cov = "Data limit: " + ", ".join(lim) if lim else getattr(self, "_status", "")
+        self.info.setText(self.cov)
         self._display()
 
     def _display(self):
         self.wf.levelled = self.levelled.isChecked()
         self.wf.contrast = self.contrast.value() / 100.0
+        self.wf.palette = self.palette.currentData() or "grey"
+        self.wf.trim = self.trim.isChecked()
+        self.wf.ground = self.ground.isChecked()
+        if self.project is not None:
+            self.project.data.setdefault("sidescan", {})["palette"] = self.wf.palette
         self.wf.contacts = SS.contacts(self.project) if self.project is not None else []
         self.wf._img = None
         self.wf.update()
@@ -434,10 +576,11 @@ class SideScanPanel(QtWidgets.QWidget):
     # -- events
     def _hover(self, h):
         if h is None:
+            self.info.setText(getattr(self, "cov", ""))
             self.hovered.emit(None)
             return
         e, n, z, L, i, s = h
-        self.info.setText("ping %d · %s %.1f m slant · Z %.2f" % (int(L.ping[i]), "port" if L.side > 0 else
+        self.info.setText(self.cov + "   ·   ping %d · %s %.1f m slant · Z %.2f" % (int(L.ping[i]), "port" if L.side > 0 else
                                                                    "starboard", float(L.r[s]), z))
         self.hovered.emit((e, n, z))
 
@@ -461,11 +604,11 @@ class SideScanPanel(QtWidgets.QWidget):
             g = np.ascontiguousarray(grey(a, lo, hi)[::-1])
             if L.side > 0:
                 g = np.ascontiguousarray(g[:, ::-1])
-            q = QtGui.QImage(g.data, g.shape[1], g.shape[0], g.shape[1], QtGui.QImage.Format.Format_Grayscale8)
+            q = indexed_image(g, self.wf.palette)
             d = os.path.join(SS.folder(self.project), "contacts")
             os.makedirs(d, exist_ok=True)
             f = os.path.join(d, "%s.png" % c["name"])
-            q.copy().scaled(max(200, g.shape[1] * 2), max(200, g.shape[0] * 2)).save(f)
+            q.scaled(max(200, g.shape[1] * 2), max(200, g.shape[0] * 2)).save(f)
             c["image"] = f
         except Exception:       # noqa: BLE001 - the picture is a convenience
             pass
@@ -508,7 +651,7 @@ class SideScanPanel(QtWidgets.QWidget):
 class MosaicDialog(QtWidgets.QDialog):
     """Mosaic settings: passes, cell size, overlap priority, gain levelling, gap fill, the output file."""
 
-    def __init__(self, parent, default_path, has_pass):
+    def __init__(self, parent, default_path, has_pass, palette="grey"):
         super().__init__(parent)
         self.setWindowTitle("Side-scan mosaic")
         f = QtWidgets.QFormLayout(self)
@@ -535,6 +678,9 @@ class MosaicDialog(QtWidgets.QDialog):
         self.fill.setValue(2)
         self.fill.setSuffix(" cells")
         f.addRow("Fill gaps up to", self.fill)
+        self.trimc = QtWidgets.QCheckBox("Leave out the static past each ping's data limit")
+        self.trimc.setChecked(True)
+        f.addRow("", self.trimc)
         row = QtWidgets.QHBoxLayout()
         self.path = QtWidgets.QLineEdit(default_path)
         b = QtWidgets.QPushButton("...")
@@ -542,9 +688,15 @@ class MosaicDialog(QtWidgets.QDialog):
         row.addWidget(self.path, 1)
         row.addWidget(b)
         f.addRow("GeoTIFF", row)
-        self.byte = QtWidgets.QCheckBox("Also an 8-bit grey image (_8bit.tif)")
+        self.byte = QtWidgets.QCheckBox("Also an 8-bit image for viewing (_8bit.tif)")
         self.byte.setChecked(True)
         f.addRow("", self.byte)
+        self.pal = QtWidgets.QComboBox()
+        for k, name, _st in SS.PALETTES:
+            self.pal.addItem(palette_icon(k), name, k)
+        self.pal.setCurrentIndex(max(0, self.pal.findData(palette)))
+        self.byte.toggled.connect(self.pal.setEnabled)
+        f.addRow("Colours of the 8-bit image", self.pal)
         bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok |
                                         QtWidgets.QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self.accept)
@@ -559,4 +711,4 @@ class MosaicDialog(QtWidgets.QDialog):
     def values(self):
         return dict(which=self.which.currentData(), cell=float(self.cell.value()), priority=self.prio.currentData(),
                     levelled=self.lev.isChecked(), fill=int(self.fill.value()), path=self.path.text().strip(),
-                    byte=self.byte.isChecked())
+                    byte=self.byte.isChecked(), palette=self.pal.currentData(), trim=self.trimc.isChecked())

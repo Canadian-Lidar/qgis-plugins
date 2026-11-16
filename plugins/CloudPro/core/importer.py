@@ -570,6 +570,7 @@ def import_marine(project, inp, opts, progress=None, cancel=None, keep_edits=Tru
             project.lines[lid]["attitude_source"] = att_src
             project.lines[lid]["calibration"] = inp.align_info.get("calibration")
             out.append((lid, st))
+        SN.concise_names(project)                    # P1, P2... in time order over the recordings
         restored = apply_edits(project, ed, progress, cancel) if ed is not None else 0
         _interp.restore(project, keep_interp)
         if progress:

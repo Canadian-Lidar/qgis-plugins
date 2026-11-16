@@ -373,6 +373,7 @@ class PlanView(CloudView2D):
         p.end()
 
     def _draw_tracks(self, p):
+        labels = []
         for lid, tr in self.tracks.items():
             if not self.line_enabled.get(lid, True) or not self.track_visible.get(lid, True):
                 continue
@@ -394,14 +395,40 @@ class PlanView(CloudView2D):
                 sx, sy = self.to_screen(E[::step], N[::step])
                 p.drawPolyline(QtGui.QPolygonF([QtCore.QPointF(a, b) for a, b in zip(sx, sy)]))
             if len(sx) > 1:
-                ax, ay = sx[-1], sy[-1]
-                dx, dy = sx[-1] - sx[-2], sy[-1] - sy[-2]
-                L = math.hypot(dx, dy) or 1
-                ux, uy = dx / L, dy / L
-                p.drawLine(QtCore.QPointF(ax, ay), QtCore.QPointF(ax - 9 * ux + 5 * uy, ay - 9 * uy - 5 * ux))
-                p.drawLine(QtCore.QPointF(ax, ay), QtCore.QPointF(ax - 9 * ux - 5 * uy, ay - 9 * uy + 5 * ux))
-                p.setFont(theme.mono(10))
-                p.drawText(QtCore.QPointF(sx[0] + 4, sy[0] - 4), "L%d" % (lid + 1))
+                # the direction of travel: arrowheads at a third and two thirds of the line's length, and its end
+                d = np.r_[0.0, np.cumsum(np.hypot(np.diff(sx), np.diff(sy)))]
+                for k in sorted({int(np.searchsorted(d, d[-1] / 3.0)), int(np.searchsorted(d, 2 * d[-1] / 3.0)),
+                                 len(sx) - 1}):
+                    k = int(np.clip(k, 1, len(sx) - 1))
+                    k0 = k - 1
+                    while k0 > 0 and math.hypot(sx[k] - sx[k0], sy[k] - sy[k0]) < 6:
+                        k0 -= 1                           # a direction over a few pixels, not one jitter
+                    ax, ay = sx[k], sy[k]
+                    dx, dy = sx[k] - sx[k0], sy[k] - sy[k0]
+                    L = math.hypot(dx, dy) or 1
+                    ux, uy = dx / L, dy / L
+                    p.drawLine(QtCore.QPointF(ax, ay), QtCore.QPointF(ax - 9 * ux + 5 * uy, ay - 9 * uy - 5 * ux))
+                    p.drawLine(QtCore.QPointF(ax, ay), QtCore.QPointF(ax - 9 * ux - 5 * uy, ay - 9 * uy + 5 * ux))
+                labels.append((float(sx[0]), float(sy[0]), lid, QtGui.QColor(col)))
+        # line labels at their starts; lines starting at the same place (the heads of one pass) share one label,
+        # "L1 · L2", instead of being written over each other
+        p.setFont(theme.mono(10))
+        done = []
+        for x, y, lid, col in sorted(labels, key=lambda v: v[2]):
+            for g in done:
+                if abs(g[0] - x) < 14 and abs(g[1] - y) < 14:
+                    g[2].append((lid, col))
+                    break
+            else:
+                done.append([x, y, [(lid, col)]])
+        fm = p.fontMetrics()
+        for x, y, items in done:
+            cx = x + 4
+            for k, (lid, col) in enumerate(items):
+                t = ("L%d" % (lid + 1)) + (" · " if k < len(items) - 1 else "")
+                p.setPen(col)
+                p.drawText(QtCore.QPointF(cx, y - 4), t)
+                cx += fm.horizontalAdvance(t)
 
     def _legend(self, p):
         if self.attr == "Coverage":

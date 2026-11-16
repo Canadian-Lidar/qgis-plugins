@@ -90,6 +90,16 @@ def head_name(dock, d):
     return "%s%s" % (h.get("nickname") or d, " (%s)" % h["side"] if h.get("side") else "")
 
 
+def side_short(side):
+    return {"port": "Port", "starboard": "Stbd"}.get(str(side or "").lower(), str(side or "").title())
+
+
+def line_label(dock, d, pno):
+    """A survey line of one head, as CloudPro names it: P<pass> <side> (e.g. "P4 Port", "P4 Stbd")."""
+    h = (dock.mdata or {}).get("heads", {}).get(d) or {}
+    return "P%d %s" % (pno + 1, side_short(h.get("side")) or h.get("nickname") or d)
+
+
 class MPage(QWidget):
     def __init__(self, dock):
         super().__init__()
@@ -291,8 +301,8 @@ class MPairsPage(MPage):
         pt = self.dock.mpairs or []
         for e in pt:
             hs = [h for h in dict.fromkeys((e["a"][0], e["b"][0])) if h in (e.get("beam_deg") or {})]
-            rows.append(["%s pass %d" % (head_name(self.dock, e["a"][0]), e["a"][1] + 1),
-                         "%s pass %d" % (head_name(self.dock, e["b"][0]), e["b"][1] + 1), e["kind"],
+            rows.append([line_label(self.dock, e["a"][0], e["a"][1]),
+                         line_label(self.dock, e["b"][0], e["b"][1]), e["kind"],
                          "{:,}".format(e["n"]), "%.1f cm" % e["median_cm"], "%+.1f cm" % e["signed_cm"],
                          " / ".join("%.0f°" % e["beam_deg"][h] for h in hs),
                          " / ".join("%.0f %%" % e["edge_pct"][h] for h in hs)])
@@ -607,8 +617,8 @@ class MReportPage(MPage):
             L += ["", "Pairs (values in use when measured):"]
             for e in self.dock.mpairs:
                 L.append("  %-28s %-28s %-15s %8s  %6.1f cm  %+6.1f cm" % (
-                    "%s pass %d" % (head_name(self.dock, e["a"][0]), e["a"][1] + 1),
-                    "%s pass %d" % (head_name(self.dock, e["b"][0]), e["b"][1] + 1), e["kind"], "{:,}".format(e["n"]),
+                    line_label(self.dock, e["a"][0], e["a"][1]),
+                    line_label(self.dock, e["b"][0], e["b"][1]), e["kind"], "{:,}".format(e["n"]),
                     e["median_cm"], e["signed_cm"]))
         L += ["", "Finalized for CloudPro: %s" % {"done": "yes", "stale": "out of date"}.get(self.dock.alignpro_state(),
                                                                                               "no")]
@@ -836,7 +846,7 @@ class MarineView(QWidget):
         self.sec.set_data(a, z, self._colors(h, ps, z), keep_view=not fit)
         legend = ""
         if self.c_col.currentText() == "pass":
-            legend = "  ·  " + "  ".join("<span style='color: rgb(%d,%d,%d)'>pass %d</span>" % (
+            legend = "  ·  " + "  ".join("<span style='color: rgb(%d,%d,%d)'>P%d</span>" % (
                 PASS_COLORS[k % len(PASS_COLORS)] + (k + 1,)) for k in sorted({int(x) for x in ps}))
         self.v_info.setText("%s soundings within %.1f m of the section%s%s" % (
             "{:,}".format(len(a)), self.s_w.value(), " (this pair only)" if self._pair is not None else "", legend))

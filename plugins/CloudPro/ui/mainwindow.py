@@ -743,6 +743,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if not same:
             self._reset_view_state()
         self.project = p
+        if any(ln.get("kind") == "sonar" for ln in p.lines):
+            from ..core import sonar as _SN
+            if _SN.concise_names(p):                 # 2.10.1: P4 Port / P4 Stbd (older jobs: long names)
+                p.log("Sonar lines renamed: P<pass> Port / Stbd, passes numbered in time order")
         perflog.session(p, ["3D view: %s" % (self.v3d.gpu_why or "not drawn yet")])
         if getattr(p, "store_findings", None):
             QtCore.QTimer.singleShot(0, lambda f=list(p.store_findings): self.status(
@@ -1045,7 +1049,7 @@ class MainWindow(QtWidgets.QMainWindow):
         from .sidescan import MosaicDialog
         P = self.ss.current_pass()
         dlg = MosaicDialog(self, os.path.join(self._ss_exports(), "%s_sidescan.tif" % self.project.name),
-                           P is not None)
+                           P is not None, self.ss.wf.palette)
         if not dlg.exec():
             return
         o = dlg.values()
@@ -1059,11 +1063,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def job(progress, cancel):
             G, x0, y1, cell = SS.mosaic(prj, ids, o["cell"], o["priority"], o["levelled"], o["fill"], progress,
-                                        cancel)
+                                        cancel, trim=o["trim"])
             out = [SS.write_geotiff(o["path"], G, x0, y1, cell, prj.store.origin, prj.crs)]
             if o["byte"]:
                 out.append(SS.write_geotiff(os.path.splitext(o["path"])[0] + "_8bit.tif", G, x0, y1, cell,
-                                            prj.store.origin, prj.crs, byte=True))
+                                            prj.store.origin, prj.crs, byte=True, palette=o["palette"]))
             return out, int(np.isfinite(G).sum())
         self._run("ss_mosaic", job, "Making the side-scan mosaic")
 
@@ -1123,11 +1127,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status("Contacts exported: %s" % p, 10000)
 
     def _ss_hover(self, h):
-        """The side-scan sample under the mouse: a cross in the Plan view."""
-        m = None if h is None else ("plus", float(h[0]), float(h[1]))
-        if getattr(self.plan, "linked", None) != m:
-            self.plan.linked = m
-            self.plan.update()
+        """The side-scan sample under the mouse: marked in the Plan, the Slice and the 3D view (linked cursor)."""
+        self._set_linked("sidescan", None if h is None else (float(h[0]), float(h[1]), float(h[2])))
 
     def _ss_contact(self, c):
         """A contact double-clicked: the Plan centred on it."""
@@ -2734,6 +2735,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if getattr(v, "linked", None) != m:
                 v.linked = m
                 v.update()
+        if source != "sidescan" and hasattr(self, "ss") and not self.docks["sidescan"].visibleRegion().isEmpty():
+            self.ss.wf.mark_xy(None if pt is None else pt[:2])     # 2.10.1: and in the side-scan waterfall
 
     def _cursor(self, view, a, b):
         o = self._origin()
