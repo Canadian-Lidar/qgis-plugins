@@ -43,6 +43,56 @@ def head_label(info, did):
     return "%s%s" % (side or "head %d" % did, " (%s)" % info["nickname"] if info.get("nickname") else "")
 
 
+def side_short(side):
+    return {"port": "Port", "starboard": "Stbd"}.get(str(side or "").lower(), str(side or "").title())
+
+
+def line_label(pass_label, info, did):
+    """The name of a sonar line, concise and the same in every DCS plugin: P<pass> <side>, e.g. "P4 Port",
+    "P4 Stbd" (the lists put CloudPro's line number in front: "L7  P4 Port"). The head's serial stays in the
+    line's information (nickname)."""
+    side = side_short(info.get("looks") or info.get("side")) or "Head %d" % int(did)
+    return "%s %s" % (pass_label, side) if pass_label else side
+
+
+def _auto_name(ln):
+    """True when a sonar line's name was made by CloudPro (2.6-2.10.0 style "<recording> pass 4 port (30053)" or
+    the concise "P4 Port"), so it may be renamed; a name typed by the user is kept."""
+    import re
+    n = str(ln.get("name") or "")
+    nick = ln.get("nickname")
+    return bool(re.fullmatch(r"P\d+ (Port|Stbd|Head \d+)|Port|Stbd|Head \d+", n) or
+                re.search(r" pass \d+ (port|starboard|head \d+)", n) or
+                (nick and n.endswith("(%s)" % nick) and re.search(r" (port|starboard|head \d+) \(", n)))
+
+
+def concise_names(project):
+    """Number the passes of a marine job P1, P2... in time order over all its recordings, store the pass label on
+    each sonar line (pass_label) and give automatically named lines their concise name. -> lines renamed."""
+    son = [ln for ln in project.lines if ln.get("kind") == "sonar"]
+    keys = {}
+    for ln in son:
+        k = (tuple(sorted(ln.get("files") or [])), ln.get("pass"))
+        t0 = (ln.get("window") or [ln.get("t0") or 0.0])[0]
+        keys[k] = min(keys.get(k, 1e300), t0 if t0 is not None and t0 > -1e17 else 0.0)
+    order = {k: i + 1 for i, k in enumerate(sorted(keys, key=lambda k: (keys[k], k[0], k[1] or 0)))}
+    n = 0
+    for ln in son:
+        lab = "P%d" % order[(tuple(sorted(ln.get("files") or [])), ln.get("pass"))]
+        ln["pass_label"] = lab
+        if not ln.get("looks"):                   # lines made before 2.10.1: the side from the old name
+            import re
+            m = re.search(r" (port|starboard) ", " %s " % str(ln.get("name") or "").lower())
+            if m:
+                ln["looks"] = m.group(1)
+        if _auto_name(ln):
+            new = line_label(lab, ln, ln.get("head") or 0)
+            if ln.get("name") != new:
+                ln["name"] = new
+                n += 1
+    return n
+
+
 def power_to_intensity(pwr, low):
     """0-255 on a log scale: 0 at the low threshold, 255 at 60 dB above it."""
     low = np.maximum(np.asarray(low, float), 1.0)
@@ -80,6 +130,7 @@ def import_sonar_head(project, rec, did, traj, attitude, cal, opts, progress=Non
     label = "%s%s %s" % (rec.name, " pass %d" % pass_no if pass_no is not None else "", head_label(info_h, did))
     info = {"name": line_name or label, "line": len(project.lines) + 1,
             "files": [f.path for f in rec.files], "kind": "sonar", "head": int(did), "nickname": info_h.get("nickname"),
+            "looks": info_h.get("looks") or info_h.get("side"),
             "pass": pass_no, "window": list(window) if window is not None else None,
             "trajectory": traj.source, "lever": list(lever), "lever_source": lever_source or info_h.get("lever_source"),
             "calibration_deg": {k: cal[k] for k in ("roll", "pitch", "heading")}, "latency_s": cal["latency_s"],

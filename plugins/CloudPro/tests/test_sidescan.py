@@ -119,8 +119,37 @@ def test_sidescan():
         assert SS.find_shadow(Lp, 10, 40, s1) is None                      # no target there: no shadow
         SS.export_contacts_csv(p, os.path.join(d, "c.csv"))
         assert open(os.path.join(d, "c.csv")).read().count("\n") == 2
+        # palettes, data limit (the simulated echoes fall to the end: no limit), ground range
+        for k, _n, _st in SS.PALETTES:
+            lut = SS.palette_lut(k)
+            assert lut.shape == (256, 3) and lut.dtype == np.uint8
+        assert tuple(SS.palette_lut("grey")[255]) == (255, 255, 255)
+        assert (Lp.coverage() == NS).all() and Lp.coverage_m() is None
+        g = Lp.ground_ranges(300)
+        ok = np.isfinite(g)
+        assert np.allclose(g[ok], np.sqrt(np.maximum(r[ok] ** 2 - ALT ** 2, 0)), atol=0.1)
+        # past the echoes: the noise floor -> a limit
+        Lp.db[:, 600:] = np.random.default_rng(1).normal(-60, 2.0, (NP, NS - 600)).astype(np.float32)
+        Lp._avg = Lp._cov = None
+        assert abs(float(np.median(Lp.coverage())) - 600) < 30, np.median(Lp.coverage())
+        assert np.isnan(Lp.trimmed(Lp.levelled())[:, 650:]).all()
+        # concise names: P<pass> Port / Stbd, passes in time order over recordings, typed names kept
+        from CloudPro.core import sonar as SN
+        p.lines = [
+            {"id": 0, "kind": "sonar", "name": "2026-10-07-17-19 pass 2 port (30053)", "nickname": "30053", "head": 1,
+             "pass": 2, "files": ["b"], "window": [20.0, 30.0]},
+            {"id": 1, "kind": "sonar", "name": "2026-10-07-17-19 pass 2 starboard (30052)", "nickname": "30052",
+             "head": 2, "pass": 2, "files": ["b"], "window": [20.0, 30.0]},
+            {"id": 2, "kind": "sonar", "name": "My line", "looks": "port", "head": 1, "pass": 1, "files": ["a"],
+             "window": [0.0, 10.0]},
+            {"id": 3, "kind": "sonar", "name": "x pass 1 starboard (30052)", "nickname": "30052", "head": 2,
+             "pass": 1, "files": ["b"], "window": [11.0, 19.0]}]
+        assert SN.concise_names(p) == 3
+        assert [ln["name"] for ln in p.lines] == ["P3 Port", "P3 Stbd", "My line", "P2 Stbd"], p.lines
+        assert [x[1] for x in SS.passes(p)] == ["P1 · L3 Port", "P2 · L4 Stbd", "P3 · L1 Port · L2 Stbd"]
         # XTF
         fp = os.path.join(d, "pass1.xtf")
+        p.lines = FakeProject(d).lines
         nx = SS.write_xtf(p, [0, 1], fp)
         assert nx == NP and os.path.getsize(fp) > NP * 2 * NS * 2
         try:

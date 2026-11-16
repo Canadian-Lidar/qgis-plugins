@@ -66,18 +66,21 @@ def sonar_lines(project):
 
 
 def passes(project):
-    """The passes with side scan: [(key, label, [line ids])], key = (files, pass), lines of each head."""
+    """The passes with side scan: [(key, label, [line ids])], key = (files, pass); label as the lines are named
+    everywhere, e.g. "P4 · L7 Port · L8 Stbd"."""
+    from .sonar import side_short
     out = {}
     for ln in sonar_lines(project):
         k = (tuple(sorted(ln.get("files") or [])), ln.get("pass"))
         out.setdefault(k, []).append(ln["id"])
     res = []
     for k, ids in out.items():
+        ids = sorted(ids, key=lambda i: (str(project.lines[i].get("looks")) != "port", i))
         ln = project.lines[ids[0]]
-        name = os.path.splitext(os.path.basename(k[0][0]))[0] if k[0] else "?"
-        name = name.replace("_0001", "")
-        res.append((k, "%s%s" % (name, " pass %d" % k[1] if k[1] is not None else ""), ids))
-    res.sort(key=lambda r: min(project.lines[i].get("t0") or 0 for i in r[2]))
+        heads = " · ".join("L%d %s" % (i + 1, side_short(project.lines[i].get("looks")) or
+                                       "Head %s" % project.lines[i].get("head")) for i in ids)
+        res.append((k, "%s · %s" % (ln.get("pass_label") or "P%s" % (k[1] or 1), heads), ids))
+    res.sort(key=lambda r: min((project.lines[i].get("window") or [0])[0] or 0 for i in r[2]))
     return res
 
 
@@ -329,6 +332,61 @@ class LineSS:
         out[ok] = self.db[ok] - tab[ok] + mean
         return out
 
+    def coverage(self, margin_db=2.0):
+        """The data limit of every ping (sample index; the number of samples when the data reach the end):
+        past it the sonar records only its noise floor (the static at far range, on the deeper side most). The
+        floor is the level the line's gain table settles on at far range; the limit is where the table comes
+        down to within margin_db of it and stays there. None when the table is still falling at the end (the
+        echoes reach the last sample)."""
+        if getattr(self, "_cov", None) is None:
+            T, _mean, _ok = self.gain_table()
+            n, ns = T.shape
+            q = max(10, ns // 4)
+            prof = np.nanmean(T, 0)                                # the line's mean level by range
+            x = np.arange(q) - (q - 1) / 2.0
+            slope = float((prof[-q:] * x).sum() / (x * x).sum())  # dB per sample over the last quarter
+            if abs(slope) >= 0.01:                                 # still falling at the end: echoes to the end
+                self._cov = np.full(n, ns, np.int32)
+                return self._cov
+            floor = np.median(T[:, -q:], 1)
+            rev = np.maximum.accumulate(T[:, ::-1], axis=1)[:, ::-1]   # the highest level from s to the end
+            above = rev > (floor + margin_db)[:, None]
+            lim = np.where(above.any(1), ns - np.argmax(above[:, ::-1], 1), 1).astype(float)
+            k = min(n, 301)                                        # a smooth limit along the pass
+            if k > 2:
+                pad = np.r_[np.full(k // 2, lim[0]), lim, np.full(k // 2, lim[-1])]
+                from numpy.lib.stride_tricks import sliding_window_view
+                lim = np.median(sliding_window_view(pad, k), 1)[:n]
+            self._cov = np.clip(np.round(lim), 1, ns).astype(np.int32)
+        return self._cov
+
+    def coverage_m(self):
+        """The median data limit as slant range (m), or None when the echoes reach the last sample."""
+        c = self.coverage()
+        ns = self.db.shape[1]
+        m = int(np.median(c))
+        return None if m >= ns - 1 else float(self.r[min(m, ns - 1)])
+
+    def trimmed(self, data):
+        """data (pings x samples) with the samples past each ping's data limit set to NaN."""
+        c = self.coverage()
+        out = data.copy()
+        out[np.arange(data.shape[1])[None, :] >= c[:, None]] = np.nan
+        return out
+
+    def ground_ranges(self, i):
+        """Horizontal distance (m) from the head to every sample of ping i (NaN in the water column)."""
+        if getattr(self, "_gk", None) is None:
+            self._gk = np.hypot(self.E - self.hE[:, None], self.N - self.hN[:, None]).astype(np.float32)
+        g = self._gk[i]
+        ok = np.isfinite(g)
+        out = np.full(self.db.shape[1], np.nan, np.float32)
+        if ok.sum() >= 2:
+            k = self.knots[ok]
+            s = np.arange(k[0], k[-1] + 1)
+            out[s] = np.interp(s, k, g[ok])
+        return out
+
     def positions(self, rows=None):
         """E, N, Z of every sample (rows: ping indices) by linear interpolation between the knots."""
         rows = np.arange(self.n) if rows is None else np.asarray(rows)
@@ -348,8 +406,37 @@ class LineSS:
         return tuple(float(np.interp(s, k, A[i])) for A in (self.E, self.N, self.Z))
 
 
+# ----------------------------------------------------------------------------- colour palettes
+# The side-scan palettes in common use (Klein / EdgeTech bronze, SonarWiz gold, sepia, ocean blue, phosphor green,
+# thermal): (position 0-1, (r, g, b)) stops, weak returns first.
+PALETTES = [
+    ("grey", "Grey", [(0, (0, 0, 0)), (1, (255, 255, 255))]),
+    ("grey_inv", "Grey inverted", [(0, (255, 255, 255)), (1, (0, 0, 0))]),
+    ("bronze", "Bronze", [(0, (0, 0, 0)), (0.3, (110, 55, 15)), (0.6, (205, 127, 50)), (0.85, (255, 205, 145)),
+                          (1, (255, 250, 235))]),
+    ("gold", "Gold", [(0, (0, 0, 0)), (0.3, (95, 62, 0)), (0.6, (205, 150, 20)), (0.85, (255, 222, 95)),
+                      (1, (255, 255, 225))]),
+    ("sepia", "Sepia", [(0, (22, 13, 5)), (0.35, (112, 66, 20)), (0.7, (192, 152, 100)), (1, (245, 232, 210))]),
+    ("blue", "Ocean blue", [(0, (0, 0, 12)), (0.3, (0, 42, 112)), (0.6, (40, 130, 210)), (0.85, (170, 220, 250)),
+                            (1, (255, 255, 255))]),
+    ("green", "Green", [(0, (0, 0, 0)), (0.35, (0, 92, 32)), (0.7, (60, 200, 92)), (1, (210, 255, 210))]),
+    ("thermal", "Thermal", [(0, (0, 0, 0)), (0.25, (80, 0, 120)), (0.5, (200, 30, 40)), (0.75, (255, 150, 0)),
+                            (1, (255, 255, 210))]),
+]
+
+
+def palette_lut(key):
+    """256 x 3 uint8 colours of a palette (grey when the key is unknown)."""
+    stops = dict((k, st) for k, _n, st in PALETTES).get(key) or PALETTES[0][2]
+    x = np.array([p for p, _c in stops], float)
+    c = np.array([c for _p, c in stops], float)
+    t = np.linspace(0, 1, 256)
+    return np.stack([np.interp(t, x, c[:, k]) for k in range(3)], 1).round().astype(np.uint8)
+
+
 # ----------------------------------------------------------------------------- mosaic
-def mosaic(project, line_ids, cell=0.25, priority="nearest", levelled=True, fill=2, progress=None, cancel=None):
+def mosaic(project, line_ids, cell=0.25, priority="nearest", levelled=True, fill=2, progress=None, cancel=None,
+           trim=True):
     """Grid the placed samples of the lines -> (grid float32 dB with NaN, x0, y0 local of the upper-left corner,
     cell). priority "nearest": in each cell the sample nearest its own track wins (the best-resolved data where
     passes or heads overlap); "average": the mean dB."""
@@ -359,6 +446,8 @@ def mosaic(project, line_ids, cell=0.25, priority="nearest", levelled=True, fill
             raise SideScanError("cancelled")
         L = LineSS(project, lid)
         db = L.levelled() if levelled else L.db
+        if trim:
+            db = L.trimmed(db)
         E, N, _Z = L.positions()
         rng = np.broadcast_to(L.r[None, :], db.shape)
         ok = np.isfinite(E) & np.isfinite(db)
@@ -425,10 +514,10 @@ def fill_gaps(G, steps):
     return G
 
 
-def write_geotiff(path, G, x0, y1, cell, origin, crs, byte=False):
+def write_geotiff(path, G, x0, y1, cell, origin, crs, byte=False, palette="grey"):
     """The mosaic as a GeoTIFF in the project's CRS (world coordinates = local + the store's origin). byte: an
-    8-bit grey image (2-98 % stretch, 0 = no data) for viewing; else float32 dB, no data -9999 (as CloudPro's
-    grids)."""
+    8-bit image (2-98 % stretch, 0 = no data) with the palette as its colour table, for viewing; else float32
+    dB, no data -9999 (as CloudPro's grids)."""
     from osgeo import gdal
     from .export import crs_wkt
     ny, nx = G.shape
@@ -441,8 +530,17 @@ def write_geotiff(path, G, x0, y1, cell, origin, crs, byte=False):
         B = np.zeros(G.shape, np.uint8)
         B[ok] = np.clip(1 + (G[ok] - lo) / max(hi - lo, 1e-6) * 254, 1, 255).astype(np.uint8)
         ds = drv.Create(tmp, nx, ny, 1, gdal.GDT_Byte, opts)
-        ds.GetRasterBand(1).SetNoDataValue(0)
-        ds.GetRasterBand(1).WriteArray(B)
+        b = ds.GetRasterBand(1)
+        b.SetNoDataValue(0)
+        b.WriteArray(B)
+        if palette and palette != "grey":
+            lut = palette_lut(palette)
+            ct = gdal.ColorTable()
+            ct.SetColorEntry(0, (0, 0, 0, 0))
+            for k in range(1, 256):
+                ct.SetColorEntry(k, tuple(int(v) for v in lut[k]) + (255,))
+            b.SetRasterColorTable(ct)
+            b.SetRasterColorInterpretation(gdal.GCI_PaletteIndex)
     else:
         ds = drv.Create(tmp, nx, ny, 1, gdal.GDT_Float32, opts)
         ds.GetRasterBand(1).SetNoDataValue(-9999.0)
