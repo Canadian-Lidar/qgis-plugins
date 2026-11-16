@@ -128,20 +128,7 @@ def import_sonar_head(project, rec, did, traj, attitude, cal, opts, progress=Non
         LOW = np.repeat([r[4] for r in rows], n_each)
         v = _rays_fast(marine, Q[:, 0], Q[:, 1], SOS, cal["roll"], opts.sound_speed)
         flu = marine.level_vectors(v, UP, cal["pitch"])                 # forward, left, up (level)
-        E0, N0, h, rr, pp, yy, J = ctx._nav(T)
-        hd = yy + math.radians(cal["heading"])
-        f, l_, u = flu[:, 0], flu[:, 1], flu[:, 2]
-        e_ = f * np.sin(hd) - l_ * np.cos(hd)
-        n_ = f * np.cos(hd) + l_ * np.sin(hd)
-        d_ = -u
-        c = _rot_elems(rr, pp, yy)                       # the lever arm turns with the vessel
-        lx, ly, lz = (float(x) for x in lever)
-        n_ = n_ + c[0] * lx + c[1] * ly + c[2] * lz
-        e_ = e_ + c[3] * lx + c[4] * ly + c[5] * lz
-        d_ = d_ + c[6] * lx + c[7] * ly + c[8] * lz
-        E = E0 + J[0] * e_ + J[1] * n_
-        N = N0 + J[2] * e_ + J[3] * n_
-        Z = h - d_ + (e_ * e_ + n_ * n_) / (2 * ctx.R) - ctx.origin[2]
+        E, N, Z = place(ctx, T, flu, cal["heading"], lever)
         rec_ = np.zeros(len(T), REC)
         rec_["x"] = np.round(E * 1000).astype(np.int32)
         rec_["y"] = np.round(N * 1000).astype(np.int32)
@@ -179,6 +166,27 @@ def import_sonar_head(project, rec, did, traj, attitude, cal, opts, progress=Non
         info["name"], "{:,}".format(stats["points"]), "{:,}".format(stats["soundings"]), stats["seconds"], opts.power))
     project.save()
     return lid, stats
+
+
+def place(ctx, T, flu, heading_corr_deg, lever):
+    """Level forward / left / up vectors from the acoustic centre at times T -> local projected E, N, Z (the
+    store's frame): turned to north / east with the vessel heading + the head's heading correction, plus the lever
+    arm turned with the vessel's attitude. The soundings and the side-scan samples are placed with it."""
+    E0, N0, h, rr, pp, yy, J = ctx._nav(T)
+    hd = yy + math.radians(heading_corr_deg)
+    f, l_, u = flu[:, 0], flu[:, 1], flu[:, 2]
+    e_ = f * np.sin(hd) - l_ * np.cos(hd)
+    n_ = f * np.cos(hd) + l_ * np.sin(hd)
+    d_ = -u
+    c = _rot_elems(rr, pp, yy)                       # the lever arm turns with the vessel
+    lx, ly, lz = (float(x) for x in lever)
+    n_ = n_ + c[0] * lx + c[1] * ly + c[2] * lz
+    e_ = e_ + c[3] * lx + c[4] * ly + c[5] * lz
+    d_ = d_ + c[6] * lx + c[7] * ly + c[8] * lz
+    E = E0 + J[0] * e_ + J[1] * n_
+    N = N0 + J[2] * e_ + J[3] * n_
+    Z = h - d_ + (e_ * e_ + n_ * n_) / (2 * ctx.R) - ctx.origin[2]
+    return E, N, Z
 
 
 def _rays_fast(marine, angle, tof, sos, roll_bias_deg, sos_new=None):

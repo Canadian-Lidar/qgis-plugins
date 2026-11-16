@@ -31,6 +31,23 @@ def nice_step(span, target=8):
     return 10 * p
 
 
+def inside_polygon(x, y, P):
+    """Even-odd test of points (x, y) against the polygon P (k, 2), vectorised over the points."""
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    out = np.zeros(len(x), bool)
+    k = len(P)
+    j = k - 1
+    for i in range(k):
+        xi, yi = P[i]
+        xj, yj = P[j]
+        if yi != yj:
+            cross = ((yi > y) != (yj > y)) & (x < (xj - xi) * (y - yi) / (yj - yi) + xi)
+            out ^= cross
+        j = i
+    return out
+
+
 class CloudView2D(QtWidgets.QWidget):
     selectionMade = Signal(object, str)          # mask over shown points, tool name
     pointPicked = Signal(int)                    # index into the model point set (-1 none)
@@ -266,7 +283,9 @@ class CloudView2D(QtWidgets.QWidget):
             p.setPen(pen)
             p.setBrush(render.edit_qcolor(mode, 45) if self.tool in ("rect", "poly", "lasso") else
                        Qt.BrushStyle.NoBrush)
-            pts = [QtCore.QPointF(*q) for q in self._poly]
+            # the shape is kept in view coordinates (along, height), so it stays on the points while the view
+            # is zoomed or panned during editing
+            pts = [QtCore.QPointF(*self.to_screen(*q)) for q in self._poly]
             if self.tool == "rect" and len(pts) == 2:
                 p.drawRect(QtCore.QRectF(pts[0], pts[1]).normalized())
             elif self.tool in ("above", "below"):
@@ -374,23 +393,24 @@ class CloudView2D(QtWidgets.QWidget):
             return
         if btn == Qt.MouseButton.RightButton:
             if self.tool in ("poly", "above", "below") and self._poly:
-                self._poly.append((pos.x(), pos.y()))
+                self._poly.append(self.to_view(pos.x(), pos.y()))
                 self._finish()
             else:
                 self._context_menu(e)
             return
         if btn != Qt.MouseButton.LeftButton:
             return
+        q = self.to_view(pos.x(), pos.y())
         if self.tool == "rect":
-            self._poly = [(pos.x(), pos.y()), (pos.x(), pos.y())]
+            self._poly = [q, q]
             self._drag = ("rect",)
         elif self.tool == "lasso":
-            self._poly = [(pos.x(), pos.y())]
+            self._poly = [q]
             self._drag = ("lasso",)
         elif self.tool in ("poly", "above", "below"):
-            self._poly.append((pos.x(), pos.y()))
+            self._poly.append(q)
         elif self.tool == "brush":
-            self._poly = [(pos.x(), pos.y())]
+            self._poly = [q]
             self._drag = ("brush",)
         elif self.tool == "measure":
             q = self.to_view(pos.x(), pos.y())
@@ -419,11 +439,11 @@ class CloudView2D(QtWidgets.QWidget):
                 self._dirty = True
                 self.viewChanged.emit()
             elif k == "rect":
-                self._poly[1] = (pos.x(), pos.y())
+                self._poly[1] = (a, b)
             elif k in ("lasso", "brush"):
-                last = self._poly[-1]
-                if abs(last[0] - pos.x()) + abs(last[1] - pos.y()) > 2:
-                    self._poly.append((pos.x(), pos.y()))
+                lx, ly = self.to_screen(*self._poly[-1])
+                if abs(lx - pos.x()) + abs(ly - pos.y()) > 2:
+                    self._poly.append((a, b))
         elif self.tool == "pick" or self.tool == "pan":
             if self._sx is not None and len(self._sx) < 3_000_000:
                 h = self.pick(pos.x(), pos.y(), 5)
@@ -556,21 +576,34 @@ class CloudView2D(QtWidgets.QWidget):
             self.selectionMade.emit(mask, tool)
 
     def selection_mask(self, poly, tool):
+        """Points inside the shape; poly in view coordinates (along, height). Rectangle, polygon and lasso are
+        tested in view coordinates, so points off screen inside the shape count too."""
         n = len(self.a)
         if n == 0:
             return None
-        sx, sy = self.to_screen(self.a, self.b)
         W, H = self.width(), self.height()
+        if tool == "rect":
+            if len(poly) < 2:
+                return None
+            (a0, b0), (a1, b1) = poly[0], poly[1]
+            return ((self.a >= min(a0, a1)) & (self.a <= max(a0, a1)) & (self.b >= min(b0, b1)) &
+                    (self.b <= max(b0, b1)))
+        if tool in ("poly", "lasso"):
+            if len(poly) < 3:
+                return None
+            return inside_polygon(self.a, self.b, np.asarray(poly, float))
         if tool in ("above", "below"):
             if len(poly) < 2:
                 return None
-            vx = np.array([self.to_view(px, py)[0] for px, py in poly])
-            vy = np.array([self.to_view(px, py)[1] for px, py in poly])
+            vx = np.array([q[0] for q in poly])
+            vy = np.array([q[1] for q in poly])
             o = np.argsort(vx)
             vx, vy = vx[o], vy[o]
             inside = (self.a >= vx[0]) & (self.a <= vx[-1])
             lb = np.interp(self.a, vx, vy)
             return inside & ((self.b > lb) if tool == "above" else (self.b < lb))
+        sx, sy = self.to_screen(self.a, self.b)
+        poly = [self.to_screen(*q) for q in poly]             # the brush is drawn in screen pixels
         img = QtGui.QImage(W, H, QtGui.QImage.Format.Format_Grayscale8)
         img.fill(0)
         p = QtGui.QPainter(img)
