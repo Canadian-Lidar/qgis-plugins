@@ -332,32 +332,51 @@ class LineSS:
         out[ok] = self.db[ok] - tab[ok] + mean
         return out
 
-    def coverage(self, margin_db=2.0):
-        """The data limit of every ping (sample index; the number of samples when the data reach the end):
-        past it the sonar records only its noise floor (the static at far range, on the deeper side most). The
-        floor is the level the line's gain table settles on at far range; the limit is where the table comes
-        down to within margin_db of it and stays there. None when the table is still falling at the end (the
-        echoes reach the last sample)."""
+    def coverage(self, block=400, window=50, thr=0.08):
+        """The data limit of every ping (sample index; the number of samples when the echoes reach the end):
+        past it the sonar records only its own noise (the static at far range, worst on the deeper side).
+        Seabed echoes have texture that carries on from ping to ping (ripples, lines, patches); noise does not.
+        So in blocks of `block` pings and windows of `window` samples, the raw dB (window mean taken off,
+        smoothed over 5 samples along the range) of each ping is correlated with the ping two later: seabed
+        0.1-0.8, noise 0 +- 0.02. The limit is the far end of the farthest window above thr, plus one window
+        (it never cuts data that has any texture), joined from block to block and smoothed along the pass.
+        (2.11.0 compared the level with the far-range level instead and cut real seabed when the sonar's own
+        gain held the level flat to the end.)"""
         if getattr(self, "_cov", None) is None:
-            T, _mean, _ok = self.gain_table()
-            n, ns = T.shape
-            q = max(10, ns // 4)
-            prof = np.nanmean(T, 0)                                # the line's mean level by range
-            x = np.arange(q) - (q - 1) / 2.0
-            slope = float((prof[-q:] * x).sum() / (x * x).sum())  # dB per sample over the last quarter
-            if abs(slope) >= 0.01:                                 # still falling at the end: echoes to the end
+            n, ns = self.db.shape
+            D = self.db.astype(np.float32)
+            k = np.ones(5, np.float32) / 5
+            S = np.apply_along_axis(lambda r: np.convolve(r, k, mode="same"), 1, D) if n else D
+            nw = max(1, ns // window)
+            step = max(1, block // 2)
+            starts = list(range(0, max(1, n - block + 1), step)) or [0]
+            cen, lim = [], []
+            for b0 in starts:
+                X = S[b0:b0 + block, :nw * window].reshape(-1, nw, window)
+                if X.shape[0] < 4:
+                    continue
+                X = X - X.mean(0, keepdims=True)
+                a, c = X[:-2], X[2:]
+                num = (a * c).sum((0, 2))
+                den = np.sqrt((a * a).sum((0, 2)) * (c * c).sum((0, 2))) + 1e-12
+                r = num / den
+                good = np.flatnonzero(r >= thr)
+                if not len(good):
+                    end = ns
+                else:
+                    end = ns if good[-1] >= nw - 2 else min(ns, (good[-1] + 2) * window)
+                cen.append(b0 + min(block, n - b0) / 2.0)
+                lim.append(end)
+            if not lim:
                 self._cov = np.full(n, ns, np.int32)
-                return self._cov
-            floor = np.median(T[:, -q:], 1)
-            rev = np.maximum.accumulate(T[:, ::-1], axis=1)[:, ::-1]   # the highest level from s to the end
-            above = rev > (floor + margin_db)[:, None]
-            lim = np.where(above.any(1), ns - np.argmax(above[:, ::-1], 1), 1).astype(float)
-            k = min(n, 301)                                        # a smooth limit along the pass
-            if k > 2:
-                pad = np.r_[np.full(k // 2, lim[0]), lim, np.full(k // 2, lim[-1])]
-                from numpy.lib.stride_tricks import sliding_window_view
-                lim = np.median(sliding_window_view(pad, k), 1)[:n]
-            self._cov = np.clip(np.round(lim), 1, ns).astype(np.int32)
+            else:
+                v = np.interp(np.arange(n), cen, lim)
+                kk = min(n, 301)
+                if kk > 2:
+                    from numpy.lib.stride_tricks import sliding_window_view
+                    pad = np.r_[np.full(kk // 2, v[0]), v, np.full(kk // 2, v[-1])]
+                    v = np.max(sliding_window_view(pad, kk), 1)[:n]      # keep the farther limit nearby
+                self._cov = np.clip(np.round(v), 1, ns).astype(np.int32)
         return self._cov
 
     def coverage_m(self):
