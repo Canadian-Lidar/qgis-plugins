@@ -122,6 +122,13 @@ def test_sidescan():
         assert SS.find_shadow(Lp, 10, 40, s1) is None                      # no target there: no shadow
         SS.export_contacts_csv(p, os.path.join(d, "c.csv"))
         assert open(os.path.join(d, "c.csv")).read().count("\n") == 2
+        # the other head's nearest ping, with a gap in its recording (2.12.0 crashed drawing the waterfall there)
+        tB = np.r_[np.arange(0, 10, 0.25), np.arange(20, 30, 0.25)] + 0.1
+        tA = np.arange(0, 30, 0.25)
+        nn = SS.nearest_pings(tA, tB, np.arange(len(tA)))
+        assert nn.dtype.kind == "i" and (nn[(tA > 10.5) & (tA < 19.5)] == -1).all() and (nn[tA < 9.5] >= 0).all()
+        inner = (tA < 9.5) | ((tA > 20.5) & (tA < 29.5))
+        assert np.allclose(tB[nn[inner]], tA[inner] + 0.1)
         # palettes, data limit (the simulated echoes fall to the end: no limit), ground range
         for k, _n, _st in SS.PALETTES:
             lut = SS.palette_lut(k)

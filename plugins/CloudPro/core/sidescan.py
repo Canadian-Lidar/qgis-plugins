@@ -453,6 +453,23 @@ def palette_lut(key):
     return np.stack([np.interp(t, x, c[:, k]) for k in range(3)], 1).round().astype(np.uint8)
 
 
+def nearest_pings(t_main, t_other, rows, max_dt=0.5):
+    """For pings `rows` of one head (times t_main), the other head's ping nearest in time, or -1 where it has
+    none within max_dt s (a gap in its recording)."""
+    rows = np.asarray(rows, int)
+    out = np.full(len(rows), -1, np.int64)
+    if len(t_other) == 0 or len(rows) == 0:
+        return out
+    t = np.asarray(t_main)[rows]
+    j = np.clip(np.searchsorted(t_other, t), 1, max(1, len(t_other) - 1))
+    j0 = np.clip(j - 1, 0, len(t_other) - 1)
+    j = np.clip(j, 0, len(t_other) - 1)
+    pick = np.where(np.abs(t_other[j0] - t) <= np.abs(t_other[j] - t), j0, j)
+    ok = np.abs(t_other[pick] - t) < max_dt
+    out[ok] = pick[ok]
+    return out
+
+
 # ----------------------------------------------------------------------------- mosaic
 def mosaic(project, line_ids, cell=0.25, priority="nearest", levelled=True, fill=2, progress=None, cancel=None,
            trim=True):
