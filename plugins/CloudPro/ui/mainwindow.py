@@ -245,7 +245,8 @@ class MainWindow(QtWidgets.QMainWindow):
         for key, title, w in (("filters", "AUTOMATIC FILTERS", self.filters),
                               ("info", "LINES · CLASSES · INFO", self.infop), ("history", "HISTORY", self.history),
                               ("separation", "LINE SEPARATION", self._sep_panel()),
-                              ("interpolate", "INTERPOLATION", self._interp_panel())):
+                              ("interpolate", "INTERPOLATION", self._interp_panel()),
+                              ("sidescan", "SIDE SCAN", self._ss_panel())):
             head = chrome.Strip()
             head.setFixedHeight(34)
             hl = QtWidgets.QHBoxLayout(head)
@@ -256,6 +257,7 @@ class MainWindow(QtWidgets.QMainWindow):
             hl.addStretch(1)
             self._make_dock(key, title, w, head, hl)
         self.docks["interpolate"].visibilityChanged.connect(lambda on: on and self.refresh_interp())
+        self.docks["sidescan"].visibilityChanged.connect(lambda on: on and self._ss_stale and self.refresh_sidescan())
         self._default_layout()
         self.top_host = QtWidgets.QWidget()
         tl = QtWidgets.QVBoxLayout(self.top_host)
@@ -275,7 +277,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_tool()
 
     # ------------------------------------------------------------------ dock windows
-    LAYOUT_VERSION = 4      # 2.0.0: views and panels never float; 2.3.0: LINE SEPARATION tab; 2.9.1: INTERPOLATION tab
+    LAYOUT_VERSION = 5      # 2.0.0: views and panels never float; 2.3.0: LINE SEPARATION tab; 2.9.1: INTERPOLATION tab;
+    #                         2.10.0: SIDE SCAN tab
 
     def _make_dock(self, key, title, widget, head, head_layout):
         d = QtWidgets.QDockWidget(title, self)
@@ -318,6 +321,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabifyDockWidget(D["info"], D["history"])
         self.tabifyDockWidget(D["history"], D["separation"])
         self.tabifyDockWidget(D["separation"], D["interpolate"])
+        self.tabifyDockWidget(D["interpolate"], D["sidescan"])
+        if not self._has_sonar():
+            D["sidescan"].hide()                    # the SIDE SCAN tab is for marine jobs
         D["filters"].raise_()
         self.resizeDocks([D["plan"], D["3d"]], [840, 840], Qt.Orientation.Horizontal)
         self.resizeDocks([D["plan"], D["slice"]], [500, 500], Qt.Orientation.Vertical)
@@ -408,6 +414,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             ("Georeference / update the points...", self.georeference, "Ctrl+I"),
                             ("Check line separation...", self.check_separation, ""),
                             ("Interpolation (fill holes in the grid)", self.interpolate, ""),
+                            ("Side scan (marine: waterfall, contacts, mosaic, XTF)", self.side_scan, ""),
                             ("Finalize for the job (LAS, ground grid, cloud.json)...", self.publish_dialog, "Ctrl+P"),
                             ("Export (LAS, XYZ, grid) anywhere...", self.export, "Ctrl+E"),
                             ("Save", self.save_project, "Ctrl+S"), (None, None, None),
@@ -435,7 +442,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _fill_windows(self, w):
         w.clear()
-        for k in ("plan", "slice", "3d", "filters", "info", "history", "separation", "interpolate"):
+        for k in ("plan", "slice", "3d", "filters", "info", "history", "separation", "interpolate", "sidescan"):
             w.addAction(self.docks[k].toggleViewAction())
         w.addSeparator()
         w.addAction("Reset the window layout", self.reset_layout)
@@ -787,6 +794,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self._area.set_lines(p.lines)
         if self._props is not None and self._props.isVisible():
             self._props.refresh()
+        if self._has_sonar():
+            self.refresh_sidescan()
+        else:
+            self.docks["sidescan"].hide()
 
     def _origin(self):
         if self.project is None or self.project.store.origin is None:
@@ -967,6 +978,164 @@ class MainWindow(QtWidgets.QMainWindow):
         self.interp.run_requested.connect(self.run_interpolation)
         self.interp.delete_requested.connect(self.delete_interpolation)
         return self.interp
+
+    # ------------------------------------------------------------------ side scan (2.10.0)
+    _ss_stale = True
+
+    def _has_sonar(self):
+        p = getattr(self, "project", None)
+        return p is not None and any(ln.get("kind") == "sonar" for ln in p.lines)
+
+    def _ss_panel(self):
+        from .sidescan import SideScanPanel
+        self.ss = SideScanPanel()
+        self.ss.process_requested.connect(self.process_sidescan)
+        self.ss.mosaic_requested.connect(self.sidescan_mosaic)
+        self.ss.xtf_requested.connect(self.sidescan_xtf)
+        self.ss.export_contacts_requested.connect(self.export_contacts)
+        self.ss.hovered.connect(self._ss_hover)
+        self.ss.contact_selected.connect(self._ss_contact)
+        self.ss.contact_added.connect(lambda c: (self.project.log(
+            "Contact %s added: E %.2f N %.2f Z %.2f, %.1f x %.1f m, height %.2f m" % (
+                c["name"], c["e"], c["n"], c["z"], c["length_m"], c["width_m"], c["height_m"])),
+            self.status("Contact %s added" % c["name"], 6000)))
+        return self.ss
+
+    def refresh_sidescan(self):
+        """The SIDE SCAN tab from the project (passes, what is processed, contacts); only while it is shown."""
+        if not hasattr(self, "ss"):
+            return
+        d = self.docks.get("sidescan") if hasattr(self, "docks") else None
+        if d is not None and (d.isHidden() or d.visibleRegion().isEmpty()):
+            self._ss_stale = True
+            return
+        self._ss_stale = False
+        try:
+            self.ss.set_project(self.project, busy=self._busy)
+        except Exception as ex:     # noqa: BLE001
+            traceback.print_exc()
+            self.status("Side scan: %s" % ex, 10000)
+
+    def side_scan(self):
+        """Menu: the SIDE SCAN tab."""
+        if not self._has_sonar():
+            theme.msg_info(self, "CloudPro", "This job has no sonar lines: side scan is for marine jobs "
+                           "(Omniscan 3D) once they are georeferenced.")
+            return
+        self.show_dock("sidescan")
+        self.refresh_sidescan()
+
+    def process_sidescan(self):
+        if self.project is None or self._guard("processing the side scan"):
+            return
+        from ..core import sidescan as SS
+        prj = self.project
+        self._run("sidescan", lambda progress, cancel: SS.process(prj, None, progress, cancel),
+                  "Processing the side scan")
+
+    def _ss_exports(self):
+        d = os.path.join(self.project.root, "Exports", "SideScan")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def sidescan_mosaic(self):
+        if self.project is None or self._guard("making a mosaic"):
+            return
+        from ..core import sidescan as SS
+        from .sidescan import MosaicDialog
+        P = self.ss.current_pass()
+        dlg = MosaicDialog(self, os.path.join(self._ss_exports(), "%s_sidescan.tif" % self.project.name),
+                           P is not None)
+        if not dlg.exec():
+            return
+        o = dlg.values()
+        if not o["path"]:
+            return
+        if o["which"] == "pass" and P is not None:
+            ids = [i for i in P[2] if SS.processed(self.project, i)]
+        else:
+            ids = [ln["id"] for ln in SS.sonar_lines(self.project) if SS.processed(self.project, ln["id"])]
+        prj = self.project
+
+        def job(progress, cancel):
+            G, x0, y1, cell = SS.mosaic(prj, ids, o["cell"], o["priority"], o["levelled"], o["fill"], progress,
+                                        cancel)
+            out = [SS.write_geotiff(o["path"], G, x0, y1, cell, prj.store.origin, prj.crs)]
+            if o["byte"]:
+                out.append(SS.write_geotiff(os.path.splitext(o["path"])[0] + "_8bit.tif", G, x0, y1, cell,
+                                            prj.store.origin, prj.crs, byte=True))
+            return out, int(np.isfinite(G).sum())
+        self._run("ss_mosaic", job, "Making the side-scan mosaic")
+
+    def sidescan_xtf(self):
+        """XTF of every processed pass (one file per pass) in a folder."""
+        if self.project is None or self._guard("writing XTF"):
+            return
+        from ..core import sidescan as SS
+        d = QtWidgets.QFileDialog.getExistingDirectory(self, "Folder for the XTF files (one per pass)",
+                                                       self._ss_exports())
+        if not d:
+            return
+        todo = [(label, [i for i in ids if SS.processed(self.project, i)]) for _k, label, ids in
+                SS.passes(self.project)]
+        todo = [(label, ids) for label, ids in todo if ids]
+        prj = self.project
+
+        def job(progress, cancel):
+            out = []
+            for k, (label, ids) in enumerate(todo):
+                fp = os.path.join(d, "%s.xtf" % "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in label))
+                n = SS.write_xtf(prj, ids, fp, lambda f, k=k: progress((k + f) / len(todo)), cancel)
+                out.append((fp, n))
+            return out
+        self._run("ss_xtf", job, "Writing XTF")
+
+    def export_contacts(self):
+        if self.project is None:
+            return
+        from ..core import sidescan as SS
+        if not SS.contacts(self.project):
+            theme.msg_info(self, "CloudPro", "No contacts yet: drag a box round a target in the waterfall.")
+            return
+        p, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Export contacts", os.path.join(self._ss_exports(), "%s_contacts.gpkg" % self.project.name),
+            "GeoPackage (*.gpkg);;CSV (*.csv)")
+        if not p:
+            return
+        try:
+            if p.lower().endswith(".csv"):
+                SS.export_contacts_csv(self.project, p)
+            else:
+                p = p if p.lower().endswith(".gpkg") else p + ".gpkg"
+                SS.export_contacts_gpkg(self.project, p)
+                SS.export_contacts_csv(self.project, os.path.splitext(p)[0] + ".csv")
+                if self.iface is not None:
+                    from qgis.core import QgsProject, QgsVectorLayer
+                    from . import qgis_layers
+                    lay = QgsVectorLayer(p + "|layername=contacts", os.path.basename(p), "ogr")
+                    if lay.isValid():
+                        QgsProject.instance().addMapLayer(lay, False)
+                        qgis_layers._group().addLayer(lay)
+        except Exception as ex:     # noqa: BLE001
+            self._error("Cannot export the contacts", ex)
+            return
+        self.save_project()
+        self.status("Contacts exported: %s" % p, 10000)
+
+    def _ss_hover(self, h):
+        """The side-scan sample under the mouse: a cross in the Plan view."""
+        m = None if h is None else ("plus", float(h[0]), float(h[1]))
+        if getattr(self.plan, "linked", None) != m:
+            self.plan.linked = m
+            self.plan.update()
+
+    def _ss_contact(self, c):
+        """A contact double-clicked: the Plan centred on it."""
+        o = self._origin()
+        x, y = c["e"] - o[0], c["n"] - o[1]
+        self.plan.center_on(x, y)
+        self.plan.linked = ("plus", x, y)
+        self.plan.update()
 
     def refresh_interp(self):
         """The INTERPOLATION tab from the project (box drawn?, virtual points now, classes present)."""
@@ -3328,6 +3497,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._lock_actions(False)
         self.header.set_busy(False)
         self.refresh_interp()
+        if tag in ("georef", "sidescan", "ss_mosaic", "ss_xtf"):
+            self.refresh_sidescan()
         self.prog.hide()
         self.btn_cancel.hide()
         self.status("", 1)
@@ -3456,6 +3627,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self._after_points_changed()
             self.status("Interpolated: %s virtual points in %d cells (of %d empty)" % (
                 "{:,}".format(r["points"]), r["filled_cells"], r["empty_cells"]), 15000)
+        elif tag == "sidescan":
+            self.project.log("Side scan processed: " + "; ".join(
+                "%s %d pings, %.0f %% placed on the seabed" % (self.project.lines[k].get("name", k), v["pings"],
+                                                              v["placed_pct"]) for k, v in res.items()))
+            self.save_project()
+            self.status("Side scan processed: %d line%s" % (len(res), "" if len(res) == 1 else "s"), 10000)
+        elif tag == "ss_mosaic":
+            paths, cells = res
+            self.project.log("Side-scan mosaic: %s (%s cells with data)" % (paths[0], "{:,}".format(cells)))
+            if self.iface is not None:
+                from . import qgis_layers
+                for fp in paths[::-1]:
+                    qgis_layers.add_file(self.iface, fp, "grid")
+            theme.msg_info(self, "CloudPro", "Mosaic written:\n%s" % "\n".join(paths))
+        elif tag == "ss_xtf":
+            self.project.log("XTF written: %s" % "; ".join("%s (%d pings)" % (p, n) for p, n in res))
+            theme.msg_info(self, "CloudPro", "XTF written:\n%s" % "\n".join(
+                "%s (%s pings)" % (p, "{:,}".format(n)) for p, n in res))
         elif tag == "interp_delete":
             self.project.log("Interpolation deleted: %s virtual points" % "{:,}".format(res))
             self.save_project()
