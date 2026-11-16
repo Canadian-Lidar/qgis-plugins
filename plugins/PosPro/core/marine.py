@@ -37,10 +37,11 @@ class MarineError(Exception):
 
 
 # ----------------------------------------------------------------------------- the job
-def recordings(dcs):
-    """[[paths of one recording]] of the job's marine .clraw, in recording order."""
+def recordings(dcs, include_excluded=False):
+    """[[paths of one recording]] of the job's marine .clraw, in recording order (the recordings left out on the
+    Data page are not there unless include_excluded)."""
     from dcs_core import clraw
-    files = dcs.sonar_clraw_files() if dcs is not None else []
+    files = dcs.sonar_clraw_files(include_excluded=include_excluded) if dcs is not None else []
     groups = clraw.group_recordings(files, sonar=True)
     return [sorted(v) for v in groups.values()]
 
@@ -95,6 +96,25 @@ def ppk_proc(project):
 RECORDING_BASE = "Recorded"           # the Base page name of the base RINEX stored in the recordings
 
 
+def overlaps(spans, min_s=5.0):
+    """Recordings that share time: [(name a, name b, seconds)] from {name: (t0, t1)}."""
+    items = sorted(spans.items(), key=lambda kv: kv[1][0])
+    out = []
+    for i, (a, (a0, a1)) in enumerate(items):
+        for b, (b0, b1) in items[i + 1:]:
+            if b0 >= a1:
+                break
+            d = min(a1, b1) - max(a0, b0)
+            if d > min_s:
+                out.append((a, b, d))
+    return out
+
+
+def is_sbas_log(name):
+    """Emlid's SBAS message log (.26B), not a RINEX navigation file: never given to the engine as one."""
+    return bool(re.search(r"\.\d\d[bB]$|\.sbs$", str(name)))
+
+
 def recording_base_files(project):
     """The base RINEX stored in the job's recordings, written once to work/marine/base/<recording>/ so the Base page
     (the same page as for mobile mapping) can list and read them: [(recording name, [paths])]."""
@@ -139,6 +159,21 @@ def rover_extent(project):
     return (t0 - g, t1 - g), xyz
 
 
+def recording_runs(project):
+    """Each recording used, for the coverage bars: [[t0, t1, name]] in GPS seconds (engine time base)."""
+    from dcs_core.marine import SonarRecording
+    g = 315964800.0 - 18.0
+    out = []
+    for paths in recordings(project.dcs):
+        try:
+            rec = SonarRecording(paths)
+        except Exception:       # noqa: BLE001
+            continue
+        a, b = rec.span()
+        out.append([a - g, b - g, rec.name])
+    return sorted(out)
+
+
 def recording_base_known(project):
     """A position for the recordings' base that is better than the RINEX header's: the one entered on the old
     marine Base page (PosPro 2.5-2.6), else the TidalCal project's surveyed base -> (lat, lon, h, frame, epoch, note)."""
@@ -164,33 +199,85 @@ def selected_base(project):
     return b if b and b.get("xyz") and b.get("files") else None
 
 
+def usable_bases(project):
+    """The Base page's bases that can be used (ticked, with files and a position), the selected one first."""
+    sel = project.cfg.get("base_selected")
+    out = [b for b in project.cfg.get("bases") or [] if b.get("use", True) and b.get("xyz") and b.get("files")]
+    out.sort(key=lambda b: 0 if b.get("id") == sel else 1)
+    return out
+
+
+def _utc_span_of_base(b):
+    """A base's coverage in UTC seconds: its runs (cfg coverage, GPS seconds) -> [(t0, t1)]."""
+    g = 315964800.0 - 18.0
+    runs = b.get("coverage") or []
+    return [(float(r[0]) + g, float(r[1]) + g) for r in runs if len(r) >= 2]
+
+
+def base_overlap(b, t0, t1):
+    """Seconds of a base's coverage inside [t0, t1] (UTC)."""
+    return sum(max(0.0, min(t1, r1) - max(t0, r0)) for r0, r1 in _utc_span_of_base(b))
+
+
+def choose_base(project, rec):
+    """The base a recording is processed with (2.8.0): of the Base page's bases, the one covering the most of the
+    recording (the selected base first when several cover it all) -> (base entry or None, reason)."""
+    bases = usable_bases(project)
+    if not bases:
+        return None, "no base on the Base page"
+    t0, t1 = rec.span()
+    scored = [(base_overlap(b, t0, t1), -i, b) for i, b in enumerate(bases)]
+    best = max(scored, key=lambda x: (x[0], x[1]))
+    if best[0] <= 0 and any(b.get("coverage") for b in bases):
+        have = "; ".join("%s %s" % (b.get("name"), " + ".join("%s-%s" % (_hm(r0), _hm(r1))
+                                                            for r0, r1 in _utc_span_of_base(b)) or "?")
+                         for b in bases)
+        return None, ("no base on the Base page covers %s to %s (UTC); the bases cover: %s. Add that day's base "
+                      "on the Base page" % (_hm(t0), _hm(t1), have))
+    return best[2], ""
+
+
+def _hm(t):
+    import datetime as _dt
+    return _dt.datetime.fromtimestamp(float(t), _dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+
+
 def base_for(project, rec):
-    """What PPK of one recording uses from the Base page's selected base: {obs, navs, xyz, antenna, delta_hen,
-    lat, lon, h, frame, epoch, source, name} or None (then the old way: the recording's own base + base_of)."""
+    """What PPK of one recording uses from the Base page: {obs, navs, xyz, antenna, delta_hen, lat, lon, h, frame,
+    epoch, source, name} for the base covering the recording (choose_base), {"none": reason} when the Base page
+    has bases but none covers it, or None (no base on the Base page: the recording's own base + base_of)."""
     from . import rinex
-    b = selected_base(project)
-    if b is None:
+    if not usable_bases(project):
         return None
+    b, why = choose_base(project, rec)
+    if b is None:
+        return {"none": why}
     obs = [f for f in b["files"] if pipeline_obs(f) and os.path.exists(f)]
     if not obs:
-        return None
+        return {"none": "base %s: its RINEX observation files are missing" % b.get("name")}
     t0, t1 = rec.span()
     pick = [f for f in obs if os.sep + rec.name + os.sep in f]          # this recording's own base file
-    if not pick:                                                          # a file the user added: the one that
-        best = None                                                       # starts last before the recording
+    if not pick:                                                          # else the file covering it best
+        best = None
         for f in obs:
             hi = rinex.header_info(f, scan_body=False) or {}
-            first = hi.get("first")
-            ts = first.replace(tzinfo=__import__("datetime").timezone.utc).timestamp() - 18 if first else None
-            if ts is not None and ts <= t0 + 60 and (best is None or ts > best[0]):
-                best = (ts, f)
+            first, last = hi.get("first"), hi.get("last")
+            if not first:
+                continue
+            u = lambda d: d.replace(tzinfo=__import__("datetime").timezone.utc).timestamp() - 18   # noqa: E731
+            a = u(first)
+            z = u(last) if last else a
+            cover = max(0.0, min(t1, z) - max(t0, a))
+            key = (cover, a if a <= t0 + 60 else -1e18)
+            if best is None or key > best[0]:
+                best = (key, f)
         pick = [best[1] if best else obs[0]]
     folders = {os.path.dirname(f) for f in b["files"]}
-    navs = [f for f in b["files"] if not pipeline_obs(f) and os.path.exists(f)]
+    navs = [f for f in b["files"] if not pipeline_obs(f) and os.path.exists(f) and not is_sbas_log(f)]
     for d in folders:                                   # navigation files beside the observations
         for n in sorted(os.listdir(d)):
             q = os.path.join(d, n)
-            if q not in navs and not pipeline_obs(q) and re.search(r"\.(\d\d[nNgGlLpPbBcC]|nav|rnx)$", n):
+            if q not in navs and not pipeline_obs(q) and re.search(r"\.(\d\d[nNgGlLpPcC]|nav|rnx)$", n):
                 navs.append(q)
     lat, lon, h = ecef_to_llh(*[np.array([v]) for v in b["xyz"]])
     src = {"rinex": "RINEX header (approximate)", "manual": "entered", "ppp": "built-in PPP",
@@ -331,7 +418,9 @@ def positions_ppk(rec, wdir, base, ctx, atx=None, navs_extra=None, proc=None, fo
     rov, bas = rec.rinex("rover"), rec.rinex("base")
     robs = [n for n in rov if pipeline_obs(n)]
     bobs = [n for n in bas if pipeline_obs(n)]
-    page = base is not None and "obs" in base            # the Base page's selected base
+    if base is not None and "none" in base:              # the Base page has bases, none covering this recording
+        return None, base["none"]
+    page = base is not None and "obs" in base            # the Base page's base for this recording
     if not robs:
         return None, "no rover RINEX observations in the recording"
     if not bobs and not page:
@@ -345,10 +434,11 @@ def positions_ppk(rec, wdir, base, ctx, atx=None, navs_extra=None, proc=None, fo
         with open(p, "wb") as f:
             f.write(data)
         return p
-    ro = put("rover.obs", rov[robs[0]])
+    ro = put("rover.obs", rov[pick_rover_obs(rov, robs, *rec.span())])
     if page:
         bo = base["obs"]
-        navs = [put("nav_%d_%s" % (i, n), d) for i, (n, d) in enumerate(rov.items()) if not pipeline_obs(n)]
+        navs = [put("nav_%d_%s" % (i, n), d) for i, (n, d) in enumerate(rov.items())
+                if not pipeline_obs(n) and not is_sbas_log(n)]
         navs += [f for f in base["navs"] if f not in (navs_extra or [])]
         delta = list(base["delta_hen"])
         ant = base["antenna"]
@@ -357,7 +447,7 @@ def positions_ppk(rec, wdir, base, ctx, atx=None, navs_extra=None, proc=None, fo
     else:
         bo = put("base.obs", bas[bobs[0]])
         navs = [put("nav_%d_%s" % (i, n), d) for i, (n, d) in enumerate(list(rov.items()) + list(bas.items()))
-                if not pipeline_obs(n)]
+                if not pipeline_obs(n) and not is_sbas_log(n)]
         hi = rinex.header_info(bo, scan_body=False) or {}
         delta = list(hi.get("delta_hen") or [0.0, 0.0, 0.0])
         ant = (hi.get("antenna") or "").strip()
@@ -403,6 +493,37 @@ def positions_ppk(rec, wdir, base, ctx, atx=None, navs_extra=None, proc=None, fo
     return pos, info
 
 
+def _rinex_first_utc(data):
+    """TIME OF FIRST OBS of a RINEX observation file held in memory, as UTC seconds (GPS time - 18 s), or None."""
+    import datetime as _dt
+    head = bytes(data[:20000]).decode("ascii", "replace")
+    for line in head.splitlines():
+        if "TIME OF FIRST OBS" in line[60:]:
+            try:
+                v = line[:43].split()
+                d = _dt.datetime(int(v[0]), int(v[1]), int(v[2]), int(v[3]), int(v[4]),
+                                 tzinfo=_dt.timezone.utc).timestamp() + float(v[5])
+                return d - 18.0
+            except (ValueError, IndexError):
+                return None
+        if "END OF HEADER" in line[60:]:
+            break
+    return None
+
+
+def pick_rover_obs(rov, robs, t0, t1):
+    """Of a recording's rover RINEX observation files, the one for this recording: the latest that starts before
+    it (a session file or a day file made from them both cover it), else the earliest."""
+    if len(robs) == 1:
+        return robs[0]
+    firsts = [(_rinex_first_utc(rov[n]), n) for n in robs]
+    before = [(f, n) for f, n in firsts if f is not None and f <= t0 + 60]
+    if before:
+        return max(before)[1]
+    known = [(f, n) for f, n in firsts if f is not None]
+    return min(known)[1] if known else robs[0]
+
+
 def pipeline_obs(name):
     import re
     return bool(re.search(r"(\.\d\d[oO]|\.obs|_obs\.rnx)$", name)) or name.lower().endswith("o.rnx")
@@ -412,6 +533,23 @@ def _pct(a, q):
     return round(100.0 * float((a["q"] == q).mean()), 1) if a is not None and len(a) else 0.0
 
 
+def unique_times(pos, tol=1e-3):
+    """Positions in time order with each epoch once (a recording can hold the same Reach log twice, e.g. a
+    session file and a day file made from it: every epoch twice)."""
+    if pos is None or not len(pos):
+        return pos
+    pos = pos[np.argsort(pos["t"], kind="stable")]
+    keep = np.r_[True, np.diff(pos["t"]) > tol]
+    return pos[keep]
+
+
+def rate_hz(t):
+    """Position rate from the median time step (None when it cannot be told)."""
+    d = np.diff(np.asarray(t, float))
+    d = d[d > 1e-3]
+    return round(1.0 / float(np.median(d)), 1) if len(d) else None
+
+
 def positions_llh(rec):
     L = rec.llh()
     if not len(L):
@@ -419,7 +557,7 @@ def positions_llh(rec):
     out = np.zeros(len(L), POS)
     for c in ("t", "lat", "lon", "h", "q", "sdn", "sde", "sdu"):
         out[c] = L[c]
-    return out
+    return unique_times(out)
 
 
 def positions_mavlink(rec):
@@ -431,7 +569,7 @@ def positions_mavlink(rec):
     out["q"] = 9
     out["sdn"] = out["sde"] = 0.5
     out["sdu"] = 1.0
-    return out
+    return unique_times(out)
 
 
 def choose_positions(rec, wdir, opts, ctx=None, atx=None, base=None, navs_extra=None, proc=None,
@@ -667,6 +805,15 @@ def process(project, ctx, atx=None):
     recs = recordings(project.dcs)
     if not recs:
         raise MarineError("the job has no sonar recordings (.clraw made by RemixPro)")
+    spans = {}
+    for paths in recs:
+        r = SonarRecording(paths)
+        spans[r.name] = r.span()
+    ov = overlaps(spans)
+    if ov:
+        raise MarineError("recordings cover the same time: %s. Untick one of each on the Data page (PosPro would "
+                          "put the boat in two places at once)" % "; ".join(
+                              "%s and %s (%.0f s)" % (a, b, d) for a, b, d in ov))
     wdir = project.wpath("marine", "x")[:-2]
     parts, summary, heads = [], {"recordings": [], "notes": []}, {}
     passes = {"fwd": [], "bwd": [], "both": True}
@@ -735,8 +882,7 @@ def process(project, ctx, atx=None):
                 heads[did]["mounting"].append(m)
         q = {Q_NAMES.get(int(k), str(int(k))): round(100.0 * float((pos["q"] == k).mean()), 1) for k in np.unique(pos["q"])}
         summary["recordings"].append({"name": rec.name, "source": src, "source_label": SOURCES[src], "epochs": len(pos),
-                                      "quality_pct": q, "rate_hz": round(1 / float(np.median(np.diff(pos["t"]))), 1)
-                                      if len(pos) > 2 else None, "compass_pct": round(100.0 * float(hsrc.mean()), 1),
+                                      "quality_pct": q, "rate_hz": rate_hz(pos["t"]), "compass_pct": round(100.0 * float(hsrc.mean()), 1),
                                       "span": [float(pos["t"][0]), float(pos["t"][-1])], "info": _jsonable(info),
                                       "notes": notes, "mavlink_boot_fit_rms_s": rec.vehicle()["boot_fit"][2]})
         summary["notes"] += ["%s: %s" % (rec.name, n) for n in notes]

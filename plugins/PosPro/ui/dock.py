@@ -2804,6 +2804,7 @@ class PosProDock(PluginWindow):
         self._side = side
         self._marine = False
         self._mrecs = None
+        self._mrecs_all = None
         self.mpage = {k: MARINE_PAGES[k](self) for k in self.keys}
         self.mpages = [self.mpage[k] for k in self.keys]
         self._mscroll = []
@@ -3255,6 +3256,7 @@ class PosProDock(PluginWindow):
         from ..core import marine
         self._marine = marine.is_marine(p)
         self._mrecs = None
+        self._mrecs_all = None
         self.nav.setVisible(True)
         self.qc = results.load_qc(os.path.join(p.work_dir, "results", "qc.csv"))
         if self._marine:
@@ -3540,6 +3542,41 @@ class PosProDock(PluginWindow):
             self._mrecs = out
         return self._mrecs
 
+    def marine_recordings_all(self):
+        """Every sonar recording found or added, also those left out: [(recording or exception, paths, used,
+        added)], read once per project (the Data page's list)."""
+        if getattr(self, "_mrecs_all", None) is None:
+            from dcs_core.marine import SonarRecording
+            from ..core import marine
+            out = []
+            dcs = self.project.dcs if self.project else None
+            if dcs is not None:
+                off = {os.path.normcase(os.path.abspath(f)) for f in dcs.sonar_excluded()}
+                added = {os.path.normcase(os.path.abspath(f)) for f in dcs.sonar_added()}
+                for paths in marine.recordings(dcs, include_excluded=True):
+                    keys = {os.path.normcase(os.path.abspath(f)) for f in paths}
+                    try:
+                        r = SonarRecording(paths)
+                    except Exception as e:      # noqa: BLE001
+                        r = e
+                    out.append((r, paths, not (keys & off), bool(keys & added)))
+            self._mrecs_all = out
+        return self._mrecs_all
+
+    def marine_selection_changed(self):
+        """The recordings used changed (Data page): read them again, new span and position, steps."""
+        self._mrecs = None
+        self._mrecs_all = None
+        p = self.project
+        if p is not None:
+            from ..core import marine
+            span, xyz = marine.rover_extent(p)
+            p.cfg["rover"]["marine_span"] = list(span) if span else None
+            p.cfg["rover"]["marine_xyz"] = list(xyz) if xyz else None
+            p.cfg["rover"]["marine_runs"] = marine.recording_runs(p)
+            self.save()
+        self.update_steps()
+
     def marine_trajectory(self):
         """The last processed boat trajectory (work/marine/trajectory.npy) or None."""
         p = self.project
@@ -3597,6 +3634,7 @@ class PosProDock(PluginWindow):
                 self.log("info", "%s: %s, %.1f %% fixed" % (r["name"], r["source_label"],
                                                            (r.get("quality_pct") or {}).get("fixed", 0.0)))
             self._mrecs = None
+            self._mrecs_all = None
             self.qc = results.load_qc(os.path.join(p.work_dir, "results", "qc.csv"))
             self.show_trajectory()
             if self.plugin.plots:
@@ -3622,7 +3660,13 @@ class PosProDock(PluginWindow):
                 view.set_data([], 0, 1)
                 return
             t0, t1 = span                               # marine job: the sonar recordings against each base
-            rows = [("Recordings", [[t0, t1, "#00e5aa", "sonar recordings"]])]
+            runs = sorted(p.cfg["rover"].get("marine_runs") or [[t0, t1, "sonar recordings"]])
+            segs = []
+            for k, (a, b, n) in enumerate(runs):         # each recording; red between them (nothing recorded)
+                if k and a - runs[k - 1][1] > 1.0:
+                    segs.append([runs[k - 1][1], a, theme.RED, "no recording"])
+                segs.append([a, b, "#00e5aa", n])
+            rows = [("Recordings", segs)]
             if bases:
                 for b in p.cfg["bases"]:
                     rows.append(("Base " + str(b.get("name", "?"))[:8], results.base_runs(b, t0, t1)))

@@ -120,11 +120,30 @@ class MDataPage(MPage):
         v.addWidget(D._title("Rover data"))
         v.addWidget(D._hint("The job's sonar recordings (.clraw made by RemixPro from SonarView and the Reach files). "
                             "Each holds every sonar head, the autopilot and, when they were found, the Reach rover "
-                            "and base files."))
+                            "and base files. Untick a recording to leave it out of the job (PosPro, AlignPro and "
+                            "CloudPro); add recordings kept in other folders, such as other days."))
         self.files = QListWidget()
-        self.files.setMinimumHeight(54)
-        self.files.setMaximumHeight(90)
+        self.files.setMinimumHeight(90)
+        self.files.setMaximumHeight(180)
+        self.files.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.files.itemChanged.connect(self._ticked)
         v.addWidget(self.files)
+        self.overlap = QLabel("")
+        self.overlap.setWordWrap(True)
+        self.overlap.setStyleSheet("color: %s;" % D.theme.RED)
+        self.overlap.hide()
+        v.addWidget(self.overlap)
+        rr = QHBoxLayout()
+        b_add = QPushButton("Add recordings\u2026")
+        b_add.setToolTip("Add .clraw recordings from another folder (another day of the survey)")
+        b_add.clicked.connect(self._add_recordings)
+        b_rm = QPushButton("Remove")
+        b_rm.setToolTip("Leave the selected recordings out of the job (added ones are removed from the list)")
+        b_rm.clicked.connect(self._remove_recordings)
+        rr.addWidget(b_add)
+        rr.addWidget(b_rm)
+        rr.addStretch(1)
+        v.addLayout(rr)
         self.summary = QGroupBox("What the files contain")
         self.form = QFormLayout(self.summary)
         self.form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
@@ -188,6 +207,68 @@ class MDataPage(MPage):
             w.editingFinished.disconnect()
             w.editingFinished.connect(self.store_times)
 
+    # -- the recordings used (DCS Core keeps the selection: every plugin reads it)
+    def _store_selection(self, added=None, excluded=None):
+        dcs = self.project.dcs if self.project else None
+        if dcs is None:
+            return
+        try:
+            dcs.set_sonar_selection(added=added, excluded=excluded, plugin="PosPro")
+        except Exception as e:      # noqa: BLE001
+            self._D.theme.msg_warn(self, "PosPro", "Cannot change the recordings: %s" % e)
+            return
+        self.dock.marine_selection_changed()
+        self.refresh()
+
+    def _ticked(self, item):
+        if getattr(self, "_filling", False):
+            return
+        dcs = self.project.dcs
+        paths = item.data(Qt.ItemDataRole.UserRole) or []
+        keys = {os.path.normcase(os.path.abspath(p)) for p in paths}
+        off = [f for f in dcs.sonar_excluded() if os.path.normcase(os.path.abspath(f)) not in keys]
+        if item.checkState() != Qt.CheckState.Checked:
+            off += list(paths)
+        self._store_selection(excluded=off)
+
+    def _add_recordings(self):
+        from qgis.PyQt.QtWidgets import QFileDialog
+        from dcs_core import clraw
+        dcs = self.project.dcs
+        start = os.path.dirname(dcs.job_folder) if dcs else ""
+        fs, _ = QFileDialog.getOpenFileNames(self, "Add sonar recordings", start, "Sonar recordings (*.clraw)")
+        if not fs:
+            return
+        good = [f for f in fs if clraw.is_sonar(f)]
+        if len(good) < len(fs):
+            self._D.theme.msg_warn(self, "PosPro", "%d of the files are not sonar recordings and were not added."
+                                   % (len(fs) - len(good)))
+        if not good:
+            return
+        keys = {os.path.normcase(os.path.abspath(f)) for f in good}
+        added = dcs.sonar_added() + [f for f in good if os.path.normcase(os.path.abspath(f)) not in
+                                     {os.path.normcase(os.path.abspath(a)) for a in dcs.sonar_added()}]
+        off = [f for f in dcs.sonar_excluded() if os.path.normcase(os.path.abspath(f)) not in keys]
+        self._store_selection(added=added, excluded=off)
+
+    def _remove_recordings(self):
+        dcs = self.project.dcs
+        items = self.files.selectedItems()
+        if not items:
+            return
+        added = list(dcs.sonar_added())
+        off = list(dcs.sonar_excluded())
+        for it in items:
+            paths = it.data(Qt.ItemDataRole.UserRole) or []
+            keys = {os.path.normcase(os.path.abspath(p)) for p in paths}
+            if it.data(Qt.ItemDataRole.UserRole + 1):          # added from elsewhere: forget it
+                added = [a for a in added if os.path.normcase(os.path.abspath(a)) not in keys]
+                off = [o for o in off if os.path.normcase(os.path.abspath(o)) not in keys]
+            else:                                               # found in the job folder: leave it out
+                off += [p for p in paths if os.path.normcase(os.path.abspath(p)) not in
+                        {os.path.normcase(os.path.abspath(o)) for o in off}]
+        self._store_selection(added=added, excluded=off)
+
     def add_nav(self):                  # replaced in __init__ by the mobile mapping page's handlers
         pass
 
@@ -203,20 +284,37 @@ class MDataPage(MPage):
             self.form.removeRow(0)
         if p is None:
             return
-        if not p.cfg["rover"].get("marine_span"):
-            span, xyz = marine.rover_extent(p)
-            if span:
-                p.cfg["rover"]["marine_span"] = list(span)
-                p.cfg["rover"]["marine_xyz"] = list(xyz) if xyz else None
-                self.dock.save()
+        if not p.cfg["rover"].get("marine_span") or "marine_runs" not in p.cfg["rover"]:
+            self.dock.marine_selection_changed()
         self.dock.show_coverage(self.cov, bases=False)
+        self._filling = True
+        spans = {}
+        for r, paths, used, added in self.dock.marine_recordings_all():
+            name = r.name if not isinstance(r, Exception) else os.path.basename(paths[0])
+            label = name
+            if not isinstance(r, Exception):
+                a, b = r.span()
+                label = "%s    %s - %s UTC" % (name, _utc(a)[:16], _utc(b)[11:16])
+                if used:
+                    spans[name] = (a, b)
+            if added:
+                label += "    (added: %s)" % os.path.dirname(paths[0])
+            it = QListWidgetItem(label)
+            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            it.setCheckState(Qt.CheckState.Checked if used else Qt.CheckState.Unchecked)
+            it.setData(Qt.ItemDataRole.UserRole, list(paths))
+            it.setData(Qt.ItemDataRole.UserRole + 1, bool(added))
+            it.setToolTip("\n".join(paths) if not isinstance(r, Exception) else str(r))
+            self.files.addItem(it)
+        self._filling = False
+        ov = marine.overlaps(spans)
+        self.overlap.setText("Recordings covering the same time: %s. Untick one of each: the boat cannot be in two "
+                             "places at once." % "; ".join("%s and %s" % (a, b) for a, b, _d in ov) if ov else "")
+        self.overlap.setVisible(bool(ov))
         for r in self.recs():
             if isinstance(r, Exception):
                 self.form.addRow(_key("Recording"), _val(str(r)))
                 continue
-            it = QListWidgetItem(r.name)
-            it.setToolTip("\n".join(f.path if hasattr(f, "path") else str(f) for f in r.files))
-            self.files.addItem(it)
             t0, t1 = r.span()
             have = []
             if r.rinex("rover") and r.rinex("base"):
@@ -259,6 +357,9 @@ class MDataPage(MPage):
         ok = [r for r in self.recs() if not isinstance(r, Exception)]
         if not ok:
             return "todo", "no sonar recordings in the job"
+        ov = marine.overlaps({r.name: r.span() for r in ok})
+        if ov:
+            return "warn", "%d pair%s of recordings at the same time" % (len(ov), "s" if len(ov) > 1 else "")
         return "done", "%d recording%s" % (len(ok), "s" if len(ok) > 1 else "")
 
 
@@ -595,6 +696,21 @@ class MBasePage(MPage):
             return "warn", "no base (no PPK): add one with ADD RINEX… or DOWNLOAD…"
         if b is None or not b.get("xyz"):
             return "todo", "choose a base and its position"
+        uncovered = []                                  # 2.8.0: each recording uses the base that covers it
+        for r in self.recs():
+            if isinstance(r, Exception):
+                continue
+            got, _why = marine.choose_base(p, r)
+            if got is None or marine.base_overlap(got, *r.span()) < 0.5 * (r.span()[1] - r.span()[0]):
+                uncovered.append(r.name)
+        if uncovered:
+            return "warn", "no base covers %s: add %s base" % (
+                ", ".join(uncovered[:3]) + (" +%d" % (len(uncovered) - 3) if len(uncovered) > 3 else ""),
+                "that day's" if len(uncovered) == 1 else "those days'")
+        for bb in marine.usable_bases(p):
+            if bb.get("pos_source") == "rinex":
+                return "warn", "%s: position from the RINEX header (approximate): enter the mark or run PPP" % bb.get(
+                    "name")
         if b.get("pos_source") == "rinex":
             return "warn", "base position from the RINEX header (approximate): enter the mark or run PPP"
         if not float((b.get("delta_hen") or [0])[0]) or not (b.get("antenna") or "").strip():
