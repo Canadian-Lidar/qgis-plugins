@@ -296,9 +296,11 @@ class DcsProject:
         self._survey_cache = (time.monotonic(), list(out))
         return out
 
-    def sonar_clraw_files(self):
+    def sonar_clraw_files(self, include_excluded=False):
         """The job's marine sonar recordings (.clraw of kind "sonar", 1.5.0), in recording order: in the captures'
-        folders, else the job folder; never under Processing."""
+        folders, else the job folder (never under Processing), plus the recordings added from elsewhere (other
+        days' folders), less the ones left out (1.17.0, PosPro's Data page; every plugin reads this, so a
+        recording left out is out of the whole job). include_excluded: also the ones left out (for the list)."""
         from . import clraw
         roots = sorted({os.path.dirname(f) for f in self.capture_files()}) or [self.job_folder]
         found = []
@@ -306,9 +308,44 @@ class DcsProject:
             for root, dirs, fs in os.walk(r):
                 dirs[:] = [d for d in dirs if d.lower() != "processing"]
                 found += [os.path.join(root, f) for f in fs if f.lower().endswith(".clraw")]
-        found = [f for f in sorted(set(found)) if clraw.is_sonar(f)]
+        found += [f for f in self.sonar_added() if os.path.exists(f)]
+        seen, uniq = set(), []
+        for f in found:
+            k = os.path.normcase(os.path.abspath(f))
+            if k not in seen:
+                seen.add(k)
+                uniq.append(os.path.abspath(f))
+        found = [f for f in sorted(uniq) if clraw.is_sonar(f)]
+        if not include_excluded:
+            off = {os.path.normcase(os.path.abspath(f)) for f in self.sonar_excluded()}
+            found = [f for f in found if os.path.normcase(os.path.abspath(f)) not in off]
         groups = clraw.group_recordings(found, sonar=True)
         return [p for ps in groups.values() for p in ps]
+
+    # ------------------------------------------------------------- recording selection (marine, 1.17.0)
+    def _sonar_sel(self):
+        return self.data.get("sonar_selection") or {}
+
+    def sonar_added(self):
+        """.clraw recordings added to the job from outside its folder (absolute paths)."""
+        return [files.resolve(p, self.folder) for p in self._sonar_sel().get("added", [])]
+
+    def sonar_excluded(self):
+        """.clraw files of recordings left out of the job (absolute paths)."""
+        return [files.resolve(p, self.folder) for p in self._sonar_sel().get("excluded", [])]
+
+    def set_sonar_selection(self, added=None, excluded=None, plugin="DCS"):
+        """Store the recordings added from elsewhere and the ones left out (lists of paths; None: unchanged)."""
+        def fn(d):
+            sel = dict(d.get("sonar_selection") or {})
+            if added is not None:
+                sel["added"] = [files.portable(os.path.abspath(p), self.folder) for p in added]
+            if excluded is not None:
+                sel["excluded"] = [files.portable(os.path.abspath(p), self.folder) for p in excluded]
+            d["sonar_selection"] = sel
+        self.modify(fn, plugin)
+        self.data.setdefault("sonar_selection", {})
+        self.reload()
 
     def missing_captures(self):
         return [f for f in self.capture_files() if not os.path.exists(f)]

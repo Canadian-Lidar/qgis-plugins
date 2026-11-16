@@ -20,7 +20,7 @@ plugins (PosPro, AlignPro, CloudPro, RemixPro).
   theme, widgets, stepbar, dialogs, registry   the shared look and UI
 
 The plugins import it as `dcs_core`; it has no window of its own."""
-__version__ = "1.16.0"
+__version__ = "1.17.0"
 # API 2 (1.1.0): adds clraw, hesai, anpp, sbet, las, mcap, zstd and widgets.align_flags.
 # API 3 (1.2.0): adds window.PluginWindow (the standard plugin window) and theme.FAINT, DISABLED, VIEW_BG, GRID.
 # API 4 (1.3.0): adds header.PluginHeader (the same header bar in every plugin).
@@ -60,7 +60,9 @@ __version__ = "1.16.0"
 #   cerulean_device, inertial_explorer, qinertia / beamworx); marine heads carry mount_side, looks, lever_adapter.
 # API 17 (1.16.0): frames.cerulean_beam_centre / CERULEAN_FAN_HALF_DEG (side and tilt from the head's levelled beam
 #   centre); marine.mounting_check / shared_strip (PosPro's mounting check, AlignPro's head-to-head strip).
-API = 17
+# API 18 (1.17.0): marine recording selection - DcsProject.sonar_clraw_files(include_excluded=), sonar_added,
+#   sonar_excluded, set_sonar_selection (recordings from other days' folders, recordings left out of the job).
+API = 18
 
 
 def classFactory(iface):  # noqa: N802 - QGIS API
