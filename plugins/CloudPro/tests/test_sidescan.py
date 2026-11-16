@@ -110,6 +110,23 @@ def test_sidescan():
         assert np.isfinite(row[inside[0]:inside[-1] + 1]).mean() > 0.99
         G0, *_ = SS.mosaic(p, [0, 1], cell=0.25, fill=0)
         assert np.isfinite(G0[:, ix][inside[0]:inside[-1] + 1]).mean() < 0.8      # without filling: lines
+        # GeoTIFFs (where GDAL is installed): dB float and the 8-bit image with a palette's colour table
+        try:
+            from osgeo import gdal
+        except ImportError:
+            gdal = None
+        if gdal is not None:
+            gdal.UseExceptions()
+            for pal in ("grey", "bronze"):
+                fp = SS.write_geotiff(os.path.join(d, "m_%s.tif" % pal), G, x0, y1, cell, p.store.origin, p.crs,
+                                      byte=True, palette=pal)
+                ds = gdal.Open(fp)
+                band = ds.GetRasterBand(1)
+                assert band.ReadAsArray().max() > 0
+                assert (band.GetRasterColorTable() is not None) == (pal != "grey")
+                ds = None
+            fp = SS.write_geotiff(os.path.join(d, "m.tif"), G, x0, y1, cell, p.store.origin, p.crs)
+            assert abs(gdal.Open(fp).GetGeoTransform()[0] - (x0 + p.store.origin[0])) < 1e-6
         # contact: box round the target in the port waterfall
         Lp = SS.LineSS(p, 0)
         i0, i1 = int(np.searchsorted(north, 49.0)), int(np.searchsorted(north, 51.0))

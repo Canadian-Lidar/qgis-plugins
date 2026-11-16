@@ -567,9 +567,8 @@ def write_geotiff(path, G, x0, y1, cell, origin, crs, byte=False, palette="grey"
         B[ok] = np.clip(1 + (G[ok] - lo) / max(hi - lo, 1e-6) * 254, 1, 255).astype(np.uint8)
         ds = drv.Create(tmp, nx, ny, 1, gdal.GDT_Byte, opts)
         b = ds.GetRasterBand(1)
-        b.SetNoDataValue(0)
-        b.WriteArray(B)
         if palette and palette != "grey":
+            # the colour table before any pixels: a compressed TIFF cannot change its photometric tag once written
             lut = palette_lut(palette)
             ct = gdal.ColorTable()
             ct.SetColorEntry(0, (0, 0, 0, 0))
@@ -577,6 +576,8 @@ def write_geotiff(path, G, x0, y1, cell, origin, crs, byte=False, palette="grey"
                 ct.SetColorEntry(k, tuple(int(v) for v in lut[k]) + (255,))
             b.SetRasterColorTable(ct)
             b.SetRasterColorInterpretation(gdal.GCI_PaletteIndex)
+        b.SetNoDataValue(0)
+        b.WriteArray(B)
     else:
         ds = drv.Create(tmp, nx, ny, 1, gdal.GDT_Float32, opts)
         ds.GetRasterBand(1).SetNoDataValue(-9999.0)
