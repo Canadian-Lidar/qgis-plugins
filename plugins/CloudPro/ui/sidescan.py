@@ -4,7 +4,7 @@ import os
 
 import numpy as np
 
-from ..qt import QtCore, QtGui, QtWidgets, Qt, Signal
+from ..qt import QtCore, QtGui, QtWidgets, Qt, Signal, evpos
 from ..core import sidescan as SS
 
 
@@ -45,11 +45,15 @@ def palette_icon(key, w=48, h=12):
 
 
 class Waterfall(QtWidgets.QWidget):
-    """Port (left, far range at the edge) and starboard (right) of one pass, a ping per row, the latest at the
-    top. Wheel or the scroll bar moves along the pass, Ctrl + wheel zooms the pings; drag a box round a target
-    to add a contact. hovered(x, y local) for the Plan's cross; boxed(line id, i0, i1, s0, s1)."""
+    """Port (far range at its outer edge) and starboard of one pass, a ping per row, the latest at the top.
+    Wheel: zoom in / out at the mouse; Ctrl + wheel: lengthen / shorten the pings (along the pass only);
+    middle button drag (or the scroll bar): pan; left drag: box a target (a contact); right click: the
+    display menu (menuRequested). hovered((e, n, z, line, ping, sample) or None); boxed(line id, i0, i1, s0, s1)."""
     hovered = Signal(object)
     boxed = Signal(int, int, int, int, int)
+    menuRequested = Signal(object)
+
+    GAP = 6
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -57,17 +61,22 @@ class Waterfall(QtWidgets.QWidget):
         self.setMinimumHeight(220)
         self.A = self.B = None            # port, starboard LineSS (either may be None)
         self.lv = {}
-        self.top = 0                      # index (in the port / main line) of the top row's ping
-        self.rows_per_px = 1.0
+        self.top = 0                      # index (in the main line) of the top row's ping
+        self.rows_per_px = 1.0            # pings per screen row (along the pass)
+        self.zx = 1.0                     # across-track zoom (1 = both sides fill the width)
+        self.u0 = 0.0                     # left edge of the view on the unzoomed canvas
         self.contrast = 1.0
         self.levelled = True
         self.palette = "grey"
         self.trim = True                  # the static past the data limit left black
         self.ground = False               # slant range corrected (water column taken out)
+        self.show_port = True
+        self.show_stbd = True
         self.gmax = 1.0
         self._trim_cache = {}
         self.contacts = []
         self._drag = None
+        self._pan = None
         self._img = None
         self.mark = None
         self._trees = {}
@@ -93,7 +102,16 @@ class Waterfall(QtWidgets.QWidget):
                 self.lv[L.lid] = (d, L.db, float(lo), float(hi), np.percentile(L.db[np.isfinite(L.db)][::17],
                                                                                [1, 99]))
         self.top = self.main.n - 1 if self.main is not None else 0
+        self.reset_view(keep_top=True)
+
+    def reset_view(self, keep_top=False):
+        self.zx, self.u0 = 1.0, 0.0
+        if not keep_top:
+            self.rows_per_px = 1.0
         self._sync_scroll()
+        self.redraw()
+
+    def redraw(self):
         self._img = None
         self.update()
 
@@ -130,8 +148,7 @@ class Waterfall(QtWidgets.QWidget):
     def _scrolled(self, v):
         if self.main is not None:
             self.top = self.main.n - 1 - int(v)
-            self._img = None
-            self.update()
+            self.redraw()
 
     def go_to(self, lid, i):
         """Bring ping i of line lid to the middle."""
@@ -142,8 +159,7 @@ class Waterfall(QtWidgets.QWidget):
             i = int(np.clip(np.searchsorted(m.t, self.B.t[i]), 0, m.n - 1))
         self.top = int(min(m.n - 1, i + self.height() * self.rows_per_px / 2))
         self._sync_scroll()
-        self._img = None
-        self.update()
+        self.redraw()
 
     # -- linked cursor
     def mark_xy(self, xy, radius=3.0):
@@ -153,7 +169,7 @@ class Waterfall(QtWidgets.QWidget):
         self.mark = None
         if xy is not None:
             best = None
-            for L in (self.A, self.B):
+            for L in (self.vA, self.vB):
                 if L is None:
                     continue
                 tree = self._trees.get(L.lid)
@@ -176,14 +192,39 @@ class Waterfall(QtWidgets.QWidget):
         if self.mark != old:
             self.update()
 
-    # -- geometry
-    def _layout(self):
-        w = self.width() - self.scroll.width()
-        half = (w - 6) // 2
-        return w, half
+    # -- geometry: an unzoomed canvas (u, the widget's width) shown at zx from u0
+    @property
+    def vA(self):
+        return self.A if self.show_port else None
+
+    @property
+    def vB(self):
+        return self.B if self.show_stbd else None
+
+    def _w(self):
+        return max(1, self.width() - self.scroll.width())
+
+    def _regions(self):
+        """{side: (c0, c1)} on the canvas: port's far range at c0, starboard's at c1."""
+        w = self._w()
+        sides = [k for k, L in (("port", self.vA), ("stbd", self.vB)) if L is not None]
+        if len(sides) == 2:
+            half = (w - self.GAP) / 2.0
+            return {"port": (0.0, half), "stbd": (half + self.GAP, float(w))}
+        return {k: (0.0, float(w)) for k in sides}
+
+    def _clamp_u0(self):
+        w = self._w()
+        self.u0 = float(np.clip(self.u0, 0.0, max(0.0, w - w / self.zx)))
+
+    def _u(self, x):
+        return self.u0 + x / self.zx
+
+    def _x(self, u):
+        return (u - self.u0) * self.zx
 
     def _frac_to_sample(self, L, i, f):
-        """Across-track position f (0 at the head's side of the panel, 1 at the far edge) -> sample of ping i."""
+        """Across-track position f (0 at the head, 1 at the far edge) -> sample of ping i."""
         ns = L.db.shape[1]
         if not self.ground:
             return int(np.clip(f * ns, 0, ns - 1))
@@ -201,50 +242,63 @@ class Waterfall(QtWidgets.QWidget):
         g = L.ground_ranges(i)[int(np.clip(s, 0, ns - 1))]
         return float(g) / self.gmax if np.isfinite(g) else 0.0
 
+    def _side_of(self, L):
+        return "port" if L is self.A else "stbd"
+
+    def _frac(self, side, u):
+        c0, c1 = self._regions()[side]
+        return (c1 - u) / (c1 - c0) if side == "port" else (u - c0) / (c1 - c0)
+
     def _at(self, x, y):
         """(LineSS, ping index, sample index) under the widget point x, y, or None."""
         m = self.main
         if m is None:
             return None
-        w, half = self._layout()
         i = int(round(self.top - y * self.rows_per_px))
         if i < 0 or i >= m.n:
             return None
-        if x < half:
-            if self.A is None:
-                return None
-            return self.A, i, self._frac_to_sample(self.A, i, (half - 1 - x) / half)
-        if x >= half + 6 and self.B is not None:
-            j = i if self.A is None else self._other_index(i)
-            if j is None:
-                return None
-            return self.B, j, self._frac_to_sample(self.B, j, (x - half - 6) / half)
+        u = self._u(x)
+        for side, (c0, c1) in self._regions().items():
+            if c0 <= u < c1:
+                L = self.A if side == "port" else self.B
+                j = i if L is m else self._other_index(i)
+                if j is None:
+                    return None
+                return L, j, self._frac_to_sample(L, j, self._frac(side, u))
         return None
 
     def _xy(self, L, i, s):
-        """Widget point of sample s of ping i of line L (i in L's own pings)."""
+        """Widget point of sample s of ping i of line L (i in L's own pings), or None when that side is hidden."""
         m = self.main
-        w, half = self._layout()
+        side = self._side_of(L)
+        reg = self._regions()
+        if side not in reg:
+            return None
+        c0, c1 = reg[side]
         f = self._sample_to_frac(L, i, s)
-        if L is self.B and self.A is not None:
+        if L is not m:
             i = int(np.clip(np.searchsorted(m.t, L.t[i]), 0, m.n - 1))
         y = (self.top - i) / self.rows_per_px
-        x = half - 1 - f * half if L is self.A else half + 6 + f * half
-        return x, y
+        u = c1 - f * (c1 - c0) if side == "port" else c0 + f * (c1 - c0)
+        return self._x(u), y
 
     # -- drawing
     def _render(self):
         m = self.main
-        w, half = self._layout()
-        h = self.height()
+        w, h = self._w(), self.height()
         if m is None or w < 20 or h < 10:
             return None
         rows = np.round(self.top - np.arange(h) * self.rows_per_px).astype(int)
         valid = (rows >= 0) & (rows < m.n)
         rows_c = np.clip(rows, 0, m.n - 1)
         out = np.zeros((h, w), np.uint8)
-        for L, side in ((self.A, "port"), (self.B, "stbd")):
-            if L is None:
+        xs = np.arange(w + 1, dtype=float)
+        ue = self._u(xs)                                       # canvas position of each column edge
+        uc = self._u(xs[:-1] + 0.5)
+        for side, (c0, c1) in self._regions().items():
+            L = self.A if side == "port" else self.B
+            cols = np.flatnonzero((uc >= c0) & (uc < c1))
+            if not len(cols):
                 continue
             d, raw, lo, hi, rp = self.lv[L.lid]
             data = d if self.levelled else raw
@@ -255,31 +309,46 @@ class Waterfall(QtWidgets.QWidget):
             mid = (lo + hi) / 2
             span = (hi - lo) / 2 / self.contrast
             if L is m:
-                idx = rows_c
-                ok = valid
+                idx, ok = rows_c, valid
             else:
                 idx = np.array([self._other_index(i) if v else -1 for i, v in zip(rows_c, valid)])
                 ok = idx >= 0
                 idx = np.where(ok, idx, 0)
+            fe = (c1 - ue) / (c1 - c0) if side == "port" else (ue - c0) / (c1 - c0)
+            ns = data.shape[1]
             if self.ground:                          # slant range corrected: across = distance from the head
-                tg = (np.arange(half) + 0.5) / half * self.gmax
-                rows_v = np.full((len(idx), half), np.nan, np.float32)
+                tg = np.clip((fe[cols] + fe[cols + 1]) / 2.0, 0, 1) * self.gmax
+                vals = np.full((len(idx), len(cols)), np.nan, np.float32)
                 for r_, i in enumerate(idx):
                     if not ok[r_]:
                         continue
                     g = L.ground_ranges(int(i))
                     v = np.isfinite(g) & np.isfinite(data[i])
                     if v.sum() >= 2:
-                        rows_v[r_] = np.interp(tg, g[v], data[i][v], left=np.nan, right=np.nan)
-                img = grey(rows_v, mid - span, mid + span)
+                        vals[r_] = np.interp(tg, g[v], data[i][v], left=np.nan, right=np.nan)
             else:
-                img = grey(fit_columns(data[idx], half), mid - span, mid + span)
+                # each screen column: the mean of its samples (one sample when zoomed in past 1:1)
+                a, b = fe[cols], fe[cols + 1]
+                s_lo = np.clip(np.floor(np.minimum(a, b) * ns), 0, ns - 1).astype(int)
+                s_hi = np.clip(np.ceil(np.maximum(a, b) * ns), 1, ns).astype(int)
+                rd = data[idx]
+                okd = np.isfinite(rd)
+                cs = np.concatenate([np.zeros((len(idx), 1), np.float32),
+                                     np.cumsum(np.where(okd, rd, 0.0), 1, dtype=np.float32)], 1)
+                cc = np.concatenate([np.zeros((len(idx), 1), np.float32), np.cumsum(okd, 1, dtype=np.float32)], 1)
+                sm = cs[:, s_hi] - cs[:, s_lo]
+                cn = cc[:, s_hi] - cc[:, s_lo]
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    vals = np.where(cn > 0, sm / cn, np.nan)
+            img = grey(vals, mid - span, mid + span)
             img[~ok] = 0
-            if side == "port":
-                out[:, :half] = img[:, ::-1]
-            else:
-                out[:, half + 6:half + 6 + half] = img
-        out[:, half:half + 6] = 40
+            out[:, cols] = img
+        reg = self._regions()
+        if len(reg) == 2:
+            g0 = int(round(self._x(reg["port"][1])))
+            g1 = int(round(self._x(reg["stbd"][0])))
+            if g1 > 0 and g0 < w:
+                out[:, max(0, g0):min(w, max(g1, g0 + 1))] = 40
         return np.ascontiguousarray(out)
 
     def paintEvent(self, _ev):
@@ -294,39 +363,52 @@ class Waterfall(QtWidgets.QWidget):
             p.drawImage(0, 0, self._img[0])
         else:
             p.setPen(QtGui.QColor(150, 160, 170))
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No side scan for this pass yet")
+            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                       "No side scan for this pass yet" if self.main is None else "Both sides are hidden")
         m = self.main
         if m is not None:
-            pen = QtGui.QPen(QtGui.QColor(255, 196, 0), 1.5)
-            p.setPen(pen)
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 196, 0), 1.5))
             for c in self.contacts:
                 L = self.A if self.A is not None and c["line_id"] == self.A.lid else \
                     self.B if self.B is not None and c["line_id"] == self.B.lid else None
                 if L is None:
                     continue
                 i0, i1, s0, s1 = c["box"]
-                x0, y0 = self._xy(L, i0, s0)
-                x1, y1 = self._xy(L, i1, s1)
-                r = QtCore.QRectF(QtCore.QPointF(x0, y0), QtCore.QPointF(x1, y1)).normalized()
+                p0, p1 = self._xy(L, i0, s0), self._xy(L, i1, s1)
+                if p0 is None or p1 is None:
+                    continue
+                r = QtCore.QRectF(QtCore.QPointF(*p0), QtCore.QPointF(*p1)).normalized()
                 if r.bottom() < 0 or r.top() > self.height():
                     continue
                 p.drawRect(r)
                 p.drawText(r.topRight() + QtCore.QPointF(3, 10), c["name"])
-            w, half = self._layout()
             fm = p.fontMetrics()
-            for txt, x in (("PORT", 6), ("STARBOARD", w - 12 - fm.horizontalAdvance("STARBOARD"))):
+            w = self._w()
+            for side, (c0, c1) in self._regions().items():
+                txt = "PORT" if side == "port" else "STARBOARD"
+                x = max(6, self._x(c0) + 6) if side == "port" else \
+                    min(w - 12, self._x(c1) - 6) - fm.horizontalAdvance(txt)
+                if not (-fm.horizontalAdvance(txt) < x < w):
+                    continue
                 r = QtCore.QRectF(x - 4, 2, fm.horizontalAdvance(txt) + 8, fm.height() + 2)
                 p.fillRect(r, QtGui.QColor(14, 18, 24, 200))
                 p.setPen(QtGui.QColor(0, 229, 170))
                 p.drawText(r, Qt.AlignmentFlag.AlignCenter, txt)
-            p.setPen(QtGui.QPen(QtGui.QColor(255, 196, 0), 1.5))
+            if self.zx > 1.001 or abs(self.rows_per_px - 1.0) > 1e-3:
+                txt = "zoom ×%.1f across · %.2g pings/row" % (self.zx, self.rows_per_px)
+                r = QtCore.QRectF(6, self.height() - fm.height() - 6, fm.horizontalAdvance(txt) + 8, fm.height() + 2)
+                p.fillRect(r, QtGui.QColor(14, 18, 24, 200))
+                p.setPen(QtGui.QColor(160, 175, 190))
+                p.drawText(r, Qt.AlignmentFlag.AlignCenter, txt)
         if self.mark is not None and m is not None:
-            x, y = self._xy(*self.mark)
-            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))
-            p.drawLine(QtCore.QPointF(x - 9, y), QtCore.QPointF(x + 9, y))
-            p.drawLine(QtCore.QPointF(x, y - 9), QtCore.QPointF(x, y + 9))
-            p.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0), 1))
-            p.drawEllipse(QtCore.QPointF(x, y), 11, 11)
+            pt = self._xy(*self.mark)
+            if pt is not None:
+                x, y = pt
+                p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))
+                p.drawLine(QtCore.QPointF(x - 9, y), QtCore.QPointF(x + 9, y))
+                p.drawLine(QtCore.QPointF(x, y - 9), QtCore.QPointF(x, y + 9))
+                p.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0), 1))
+                p.drawEllipse(QtCore.QPointF(x, y), 11, 11)
         if self._drag is not None:
             p.setPen(QtGui.QPen(QtGui.QColor(0, 229, 170), 1.5, Qt.PenStyle.DashLine))
             p.drawRect(QtCore.QRectF(self._drag[0], self._drag[1]).normalized())
@@ -335,31 +417,59 @@ class Waterfall(QtWidgets.QWidget):
     def resizeEvent(self, ev):
         sw = self.style().pixelMetric(QtWidgets.QStyle.PixelMetric.PM_ScrollBarExtent)
         self.scroll.setGeometry(self.width() - sw, 0, sw, self.height())
+        self._clamp_u0()
         self._sync_scroll()
         self._img = None
         super().resizeEvent(ev)
 
     # -- mouse
     def wheelEvent(self, ev):
-        if self.main is None:
+        m = self.main
+        if m is None:
             return
         d = ev.angleDelta().y() / 120.0
+        if not d:
+            return
+        pos = evpos(ev)
+        x, y = pos.x(), pos.y()
+        i_c = self.top - y * self.rows_per_px                  # the ping under the mouse stays there
         if ev.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            self.rows_per_px = float(np.clip(self.rows_per_px * (0.8 ** d), 0.25, 16.0))
+            # lengthen / shorten the pings (along the pass only)
+            self.rows_per_px = float(np.clip(self.rows_per_px * (0.8 ** d), 0.02, 32.0))
         else:
-            self.top = int(np.clip(self.top + d * 40 * self.rows_per_px, 0, self.main.n - 1))
+            z = 1.25 ** d
+            u_c = self._u(x)
+            self.zx = float(np.clip(self.zx * z, 1.0, 40.0))
+            self.rows_per_px = float(np.clip(self.rows_per_px / z, 0.02, 32.0))
+            self.u0 = u_c - x / self.zx
+            self._clamp_u0()
+        self.top = int(np.clip(round(i_c + y * self.rows_per_px), 0, m.n - 1))
         self._sync_scroll()
-        self._img = None
-        self.update()
+        self.redraw()
 
     def mousePressEvent(self, ev):
-        if ev.button() == Qt.MouseButton.LeftButton and self._at(ev.position().x(), ev.position().y()):
-            self._drag = [ev.position(), ev.position()]
+        x, y = evpos(ev).x(), evpos(ev).y()
+        if ev.button() == Qt.MouseButton.MiddleButton:
+            self._pan = (x, y, self.u0, self.top)
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        elif ev.button() == Qt.MouseButton.LeftButton and self._at(x, y):
+            self._drag = [evpos(ev), evpos(ev)]
+        elif ev.button() == Qt.MouseButton.RightButton:
+            self.menuRequested.emit(self.mapToGlobal(evpos(ev).toPoint()))
 
     def mouseMoveEvent(self, ev):
-        x, y = ev.position().x(), ev.position().y()
+        x, y = evpos(ev).x(), evpos(ev).y()
+        if self._pan is not None:
+            x0, y0, u0, t0 = self._pan
+            self.u0 = u0 - (x - x0) / self.zx
+            self._clamp_u0()
+            if self.main is not None:
+                self.top = int(np.clip(round(t0 + (y - y0) * self.rows_per_px), 0, self.main.n - 1))
+            self._sync_scroll()
+            self.redraw()
+            return
         if self._drag is not None:
-            self._drag[1] = ev.position()
+            self._drag[1] = evpos(ev)
             self.update()
         hit = self._at(x, y)
         if hit is None:
@@ -370,6 +480,10 @@ class Waterfall(QtWidgets.QWidget):
         self.hovered.emit((e, n, z, L, i, s) if np.isfinite(e) else None)
 
     def mouseReleaseEvent(self, ev):
+        if ev.button() == Qt.MouseButton.MiddleButton and self._pan is not None:
+            self._pan = None
+            self.unsetCursor()
+            return
         if self._drag is None:
             return
         a, b = self._drag
@@ -389,7 +503,8 @@ class Waterfall(QtWidgets.QWidget):
 
 
 class SideScanPanel(QtWidgets.QWidget):
-    """The SIDE SCAN tab."""
+    """The SIDE SCAN tab: pass and contrast on top, the waterfall (right click: display), the contacts table,
+    then the status line and Process / Mosaic / Export XTF at the bottom right."""
     process_requested = Signal()
     mosaic_requested = Signal()
     xtf_requested = Signal()
@@ -398,60 +513,40 @@ class SideScanPanel(QtWidgets.QWidget):
     hovered = Signal(object)
     export_contacts_requested = Signal()
 
+    DEFAULTS = {"levelled": True, "trim": True, "ground": False, "palette": "grey", "port": True, "stbd": True,
+                "contacts": True}
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.project = None
+        self.opt = dict(self.DEFAULTS)
         v = QtWidgets.QVBoxLayout(self)
         v.setContentsMargins(8, 6, 8, 6)
         v.setSpacing(6)
         row = QtWidgets.QHBoxLayout()
-        self.b_process = QtWidgets.QPushButton("Process side scan")
-        self.b_process.setObjectName("ppPrimary")
-        self.b_process.setToolTip("Place every side-scan sample on the 3D seabed of its ping (all passes)")
-        row.addWidget(self.b_process)
-        row.addWidget(QtWidgets.QLabel("Pass"))
         self.pass_cb = QtWidgets.QComboBox()
-        self.pass_cb.setMinimumWidth(150)
+        self.pass_cb.setToolTip("The pass in the waterfall")
         row.addWidget(self.pass_cb, 1)
-        self.b_mosaic = QtWidgets.QPushButton("Mosaic...")
-        self.b_xtf = QtWidgets.QPushButton("Export XTF...")
-        row.addWidget(self.b_mosaic)
-        row.addWidget(self.b_xtf)
-        v.addLayout(row)
-        row2 = QtWidgets.QHBoxLayout()
-        self.levelled = QtWidgets.QCheckBox("Gain levelled")
-        self.levelled.setChecked(True)
-        self.levelled.setToolTip("Even out the image from nadir to the far range (the sonar's raw dB when off)")
-        row2.addWidget(self.levelled)
-        self.trim = QtWidgets.QCheckBox("Hide static")
-        self.trim.setChecked(True)
-        self.trim.setToolTip("Black past each ping's data limit: where the sonar records only its noise floor")
-        row2.addWidget(self.trim)
-        self.ground = QtWidgets.QCheckBox("Slant range corrected")
-        self.ground.setToolTip("Across the waterfall: distance from the head over the seabed (the water column "
-                               "taken out); off: slant range as recorded")
-        row2.addWidget(self.ground)
-        row2.addStretch(1)
-        self.info = QtWidgets.QLabel("")
-        row2.addWidget(self.info)
-        v.addLayout(row2)
-        row2 = QtWidgets.QHBoxLayout()
-        row2.addWidget(QtWidgets.QLabel("Colours"))
-        self.palette = QtWidgets.QComboBox()
-        for k, name, _st in SS.PALETTES:
-            self.palette.addItem(palette_icon(k), name, k)
-        row2.addWidget(self.palette)
-        row2.addWidget(QtWidgets.QLabel("Contrast"))
+        cw = QtWidgets.QWidget()
+        cw.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Preferred)
+        cr = QtWidgets.QHBoxLayout(cw)
+        cr.setContentsMargins(0, 0, 0, 0)
+        cr.addSpacing(12)
+        cr.addWidget(QtWidgets.QLabel("Contrast"))
         self.contrast = QtWidgets.QSlider(Qt.Orientation.Horizontal)
         self.contrast.setRange(50, 400)
         self.contrast.setValue(100)
-        row2.addWidget(self.contrast, 1)
-        v.addLayout(row2)
-        split = QtWidgets.QSplitter(Qt.Orientation.Vertical)
+        self.contrast.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
+        cr.addWidget(self.contrast, 1)
+        self.pass_cb.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.pass_cb.setMinimumContentsLength(12)
+        row.addWidget(cw, 1)
+        v.addLayout(row)
+        self.split = QtWidgets.QSplitter(Qt.Orientation.Vertical)
         self.wf = Waterfall()
-        split.addWidget(self.wf)
-        box = QtWidgets.QWidget()
-        bl = QtWidgets.QVBoxLayout(box)
+        self.split.addWidget(self.wf)
+        self.cbox = QtWidgets.QWidget()
+        bl = QtWidgets.QVBoxLayout(self.cbox)
         bl.setContentsMargins(0, 0, 0, 0)
         hr = QtWidgets.QHBoxLayout()
         hr.addWidget(QtWidgets.QLabel("Contacts"))
@@ -468,36 +563,91 @@ class SideScanPanel(QtWidgets.QWidget):
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.horizontalHeader().setStretchLastSection(True)
         bl.addWidget(self.table)
-        split.addWidget(box)
-        split.setSizes([400, 160])
-        v.addWidget(split, 1)
+        self.split.addWidget(self.cbox)
+        self.split.setSizes([400, 160])
+        v.addWidget(self.split, 1)
+        bot = QtWidgets.QHBoxLayout()
+        self.info = QtWidgets.QLabel("")
+        self.info.setMinimumWidth(10)
+        bot.addWidget(self.info, 1)
+        self.b_process = QtWidgets.QPushButton("Process side scan")
+        self.b_process.setObjectName("ppPrimary")
+        self.b_process.setToolTip("Place every side-scan sample on the 3D seabed of its ping (all passes)")
+        self.b_mosaic = QtWidgets.QPushButton("Mosaic...")
+        self.b_xtf = QtWidgets.QPushButton("Export XTF...")
+        for b in (self.b_process, self.b_mosaic, self.b_xtf):
+            bot.addWidget(b)
+        v.addLayout(bot)
         self.b_process.clicked.connect(self.process_requested.emit)
         self.b_mosaic.clicked.connect(self.mosaic_requested.emit)
         self.b_xtf.clicked.connect(self.xtf_requested.emit)
         self.b_export.clicked.connect(self.export_contacts_requested.emit)
         self.b_del.clicked.connect(self._delete)
         self.pass_cb.currentIndexChanged.connect(self._load_pass)
-        self.levelled.toggled.connect(self._display)
         self.contrast.valueChanged.connect(self._display)
-        self.palette.currentIndexChanged.connect(self._display)
-        self.trim.toggled.connect(self._display)
-        self.ground.toggled.connect(self._display)
         self.wf.hovered.connect(self._hover)
         self.wf.boxed.connect(self._boxed)
+        self.wf.menuRequested.connect(self._menu)
         self.table.itemDoubleClicked.connect(self._go)
         self.table.itemChanged.connect(self._edited)
         self._passes = []
         self._filling = False
 
+    # -- display options (right click in the waterfall)
+    def set_option(self, key, value):
+        self.opt[key] = value
+        if self.project is not None:
+            self.project.data.setdefault("sidescan", {}).update({key: value})
+        self._display()
+
+    def _menu(self, gpos):
+        from ..qt import QActionGroup
+        m = QtWidgets.QMenu(self)
+        try:
+            from . import theme
+            theme.dark_menu(m)
+        except Exception:       # noqa: BLE001
+            pass
+        for key, label, tip in (("levelled", "Gain levelled", "Even out the image across range and along the pass"),
+                                ("trim", "Hide static", "Black past each ping's data limit (only the sonar's noise)"),
+                                ("ground", "Slant range corrected", "Across: distance over the seabed; the water "
+                                                                     "column taken out")):
+            a = m.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(bool(self.opt[key]))
+            a.setToolTip(tip)
+            a.toggled.connect(lambda on, k=key: self.set_option(k, on))
+        cm = m.addMenu("Colours")
+        try:
+            from . import theme
+            theme.dark_menu(cm)
+        except Exception:       # noqa: BLE001
+            pass
+        grp = QActionGroup(cm)
+        for k, name, _st in SS.PALETTES:
+            a = cm.addAction(palette_icon(k), name)
+            a.setCheckable(True)
+            a.setChecked(self.opt["palette"] == k)
+            grp.addAction(a)
+            a.triggered.connect(lambda _c=False, k=k: self.set_option("palette", k))
+        m.addSeparator()
+        for key, label in (("port", "Port waterfall"), ("stbd", "Starboard waterfall"), ("contacts", "Contacts table")):
+            a = m.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(bool(self.opt[key]))
+            a.toggled.connect(lambda on, k=key: self.set_option(k, on))
+        m.addSeparator()
+        m.addAction("Reset zoom", lambda: self.wf.reset_view())
+        m.exec(gpos)
+
+    # -- state
     # -- state
     def set_project(self, project, busy=False):
         self.project = project
+        self.opt = dict(self.DEFAULTS)
         if project is not None:
-            pk = (project.data.get("sidescan") or {}).get("palette")
-            if pk and self.palette.findData(pk) >= 0:
-                self.palette.blockSignals(True)
-                self.palette.setCurrentIndex(self.palette.findData(pk))
-                self.palette.blockSignals(False)
+            saved = project.data.get("sidescan") or {}
+            self.opt.update({k: saved[k] for k in self.DEFAULTS if k in saved})
         cur = self.pass_cb.currentData()
         self._passes = SS.passes(project) if project is not None else []
         self.pass_cb.blockSignals(True)
@@ -514,8 +664,7 @@ class SideScanPanel(QtWidgets.QWidget):
         self.b_xtf.setEnabled(n_done > 0 and not busy)
         self._status = ("%d of %d passes processed" % (n_done, len(self._passes)) if self._passes else
                         "No sonar lines in this job")
-        self.info.setText("%d of %d passes processed" % (n_done, len(self._passes)) if self._passes else
-                          "No sonar lines in this job")
+        self.info.setText(self._status)
         self._load_pass()
         self.fill_contacts()
 
@@ -545,13 +694,16 @@ class SideScanPanel(QtWidgets.QWidget):
         self._display()
 
     def _display(self):
-        self.wf.levelled = self.levelled.isChecked()
-        self.wf.contrast = self.contrast.value() / 100.0
-        self.wf.palette = self.palette.currentData() or "grey"
-        self.wf.trim = self.trim.isChecked()
-        self.wf.ground = self.ground.isChecked()
-        if self.project is not None:
-            self.project.data.setdefault("sidescan", {})["palette"] = self.wf.palette
+        o = self.opt
+        wf = self.wf
+        wf.contrast = self.contrast.value() / 100.0
+        wf.levelled, wf.trim, wf.ground = bool(o["levelled"]), bool(o["trim"]), bool(o["ground"])
+        wf.palette = o["palette"] or "grey"
+        if (wf.show_port, wf.show_stbd) != (bool(o["port"]), bool(o["stbd"])):
+            wf.show_port, wf.show_stbd = bool(o["port"]), bool(o["stbd"])
+            wf.mark = None
+            wf._clamp_u0()
+        self.cbox.setVisible(bool(o["contacts"]))
         self.wf.contacts = SS.contacts(self.project) if self.project is not None else []
         self.wf._img = None
         self.wf.update()
@@ -580,8 +732,8 @@ class SideScanPanel(QtWidgets.QWidget):
             self.hovered.emit(None)
             return
         e, n, z, L, i, s = h
-        self.info.setText(self.cov + "   ·   ping %d · %s %.1f m slant · Z %.2f" % (int(L.ping[i]), "port" if L.side > 0 else
-                                                                   "starboard", float(L.r[s]), z))
+        self.info.setText(self.cov + "   ·   ping %d · %s %.1f m slant · Z %.2f" % (
+            int(L.ping[i]), "port" if L.side > 0 else "starboard", float(L.r[s]), z))
         self.hovered.emit((e, n, z))
 
     def _boxed(self, lid, i0, i1, s0, s1):

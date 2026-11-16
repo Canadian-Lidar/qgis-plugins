@@ -48,7 +48,10 @@ def simulate(p):
     for lid, side in ((0, 1.0), (1, -1.0)):
         gr = np.sqrt(np.maximum(r * r - ALT * ALT, 0))
         valid = r > ALT
-        db = 30.0 - 25.0 * np.log10(r)[None, :] + rng.normal(0, 2.0, (NP, NS))    # range loss + speckle
+        from scipy.ndimage import gaussian_filter
+        tex = gaussian_filter(rng.normal(0, 1, (NP, NS)), (3, 4))
+        tex *= 3.0 / tex.std()                                     # seabed texture (carries on from ping to ping)
+        db = 30.0 - 25.0 * np.log10(r)[None, :] + tex + rng.normal(0, 2.0, (NP, NS))  # range loss + speckle
         db[:, ~valid] = rng.normal(-30, 1, (NP, (~valid).sum()))
         if side > 0:                                                                 # the target and its shadow
             g0, n0, h, ln = TARGET
@@ -131,8 +134,17 @@ def test_sidescan():
         # past the echoes: the noise floor -> a limit
         Lp.db[:, 600:] = np.random.default_rng(1).normal(-60, 2.0, (NP, NS - 600)).astype(np.float32)
         Lp._avg = Lp._cov = None
-        assert abs(float(np.median(Lp.coverage())) - 600) < 30, np.median(Lp.coverage())
-        assert np.isnan(Lp.trimmed(Lp.levelled())[:, 650:]).all()
+        lim = float(np.median(Lp.coverage()))
+        assert 600 <= lim <= 700, lim                              # never before the echoes end, one window after
+        assert np.isnan(Lp.trimmed(Lp.levelled())[:, 700:]).all()
+        assert np.isfinite(Lp.trimmed(Lp.db)[:, 590]).all()          # the seabed is kept
+        # flat level to the end (the sonar's own gain) with texture: nothing cut (2.11.0 cut it)
+        from scipy.ndimage import gaussian_filter
+        Lp.db[:] = gaussian_filter(np.random.default_rng(2).normal(0, 1, (NP, NS)),
+                                                                    (3, 4)) * 20 + np.random.default_rng(3).normal(
+            0, 2, (NP, NS))
+        Lp._avg = Lp._cov = None
+        assert (Lp.coverage() == NS).all()
         # concise names: P<pass> Port / Stbd, passes in time order over recordings, typed names kept
         from CloudPro.core import sonar as SN
         p.lines = [
@@ -164,7 +176,7 @@ def test_sidescan():
             assert q.PingNumber == 400 and abs(q.SensorYcoordinate - (45.1 + north[300] / 111111.0)) < 1e-9
             pad = len(q.data[0]) - NS
             got = SS.XTF_DB0 + q.data[0][pad:].astype(float) / SS.XTF_DB_SCALE
-            want = Lp.db[300]
+            want = SS.LineSS(p, 0).db[300]
             assert np.allclose(got[want > SS.XTF_DB0], want[want > SS.XTF_DB0], atol=0.01)
             assert abs(q.ping_chan_headers[0].SlantRange - R1) < 0.1
             xtf = "XTF read back by pyxtf"
