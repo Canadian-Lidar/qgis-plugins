@@ -126,13 +126,11 @@ class Waterfall(QtWidgets.QWidget):
         return self.A if self.A is not None else self.B
 
     def _other_index(self, i):
-        """The other head's ping nearest in time to ping i of the main line (or None)."""
+        """The other head's ping nearest in time to ping i of the main line (or None: a gap in its recording)."""
         if self.A is None or self.B is None:
             return None
-        t = self.A.t[i]
-        j = int(np.clip(np.searchsorted(self.B.t, t), 1, self.B.n - 1))
-        j = j - 1 if abs(self.B.t[j - 1] - t) < abs(self.B.t[j] - t) else j
-        return j if abs(self.B.t[j] - t) < 0.5 else None
+        j = int(SS.nearest_pings(self.A.t, self.B.t, [i])[0])
+        return j if j >= 0 else None
 
     def _sync_scroll(self):
         m = self.main
@@ -311,7 +309,8 @@ class Waterfall(QtWidgets.QWidget):
             if L is m:
                 idx, ok = rows_c, valid
             else:
-                idx = np.array([self._other_index(i) if v else -1 for i, v in zip(rows_c, valid)])
+                idx = SS.nearest_pings(m.t, L.t, rows_c)
+                idx[~valid] = -1
                 ok = idx >= 0
                 idx = np.where(ok, idx, 0)
             fe = (c1 - ue) / (c1 - c0) if side == "port" else (ue - c0) / (c1 - c0)

@@ -110,6 +110,23 @@ def test_sidescan():
         assert np.isfinite(row[inside[0]:inside[-1] + 1]).mean() > 0.99
         G0, *_ = SS.mosaic(p, [0, 1], cell=0.25, fill=0)
         assert np.isfinite(G0[:, ix][inside[0]:inside[-1] + 1]).mean() < 0.8      # without filling: lines
+        # GeoTIFFs (where GDAL is installed): dB float and the 8-bit image with a palette's colour table
+        try:
+            from osgeo import gdal
+        except ImportError:
+            gdal = None
+        if gdal is not None:
+            gdal.UseExceptions()
+            for pal in ("grey", "bronze"):
+                fp = SS.write_geotiff(os.path.join(d, "m_%s.tif" % pal), G, x0, y1, cell, p.store.origin, p.crs,
+                                      byte=True, palette=pal)
+                ds = gdal.Open(fp)
+                band = ds.GetRasterBand(1)
+                assert band.ReadAsArray().max() > 0
+                assert (band.GetRasterColorTable() is not None) == (pal != "grey")
+                ds = None
+            fp = SS.write_geotiff(os.path.join(d, "m.tif"), G, x0, y1, cell, p.store.origin, p.crs)
+            assert abs(gdal.Open(fp).GetGeoTransform()[0] - (x0 + p.store.origin[0])) < 1e-6
         # contact: box round the target in the port waterfall
         Lp = SS.LineSS(p, 0)
         i0, i1 = int(np.searchsorted(north, 49.0)), int(np.searchsorted(north, 51.0))
@@ -122,6 +139,13 @@ def test_sidescan():
         assert SS.find_shadow(Lp, 10, 40, s1) is None                      # no target there: no shadow
         SS.export_contacts_csv(p, os.path.join(d, "c.csv"))
         assert open(os.path.join(d, "c.csv")).read().count("\n") == 2
+        # the other head's nearest ping, with a gap in its recording (2.12.0 crashed drawing the waterfall there)
+        tB = np.r_[np.arange(0, 10, 0.25), np.arange(20, 30, 0.25)] + 0.1
+        tA = np.arange(0, 30, 0.25)
+        nn = SS.nearest_pings(tA, tB, np.arange(len(tA)))
+        assert nn.dtype.kind == "i" and (nn[(tA > 10.5) & (tA < 19.5)] == -1).all() and (nn[tA < 9.5] >= 0).all()
+        inner = (tA < 9.5) | ((tA > 20.5) & (tA < 29.5))
+        assert np.allclose(tB[nn[inner]], tA[inner] + 0.1)
         # palettes, data limit (the simulated echoes fall to the end: no limit), ground range
         for k, _n, _st in SS.PALETTES:
             lut = SS.palette_lut(k)
