@@ -2054,11 +2054,14 @@ class ReviewPage(Page):
         if rh is not None:
             from dcs_core import sbet as dsbet
             if dsbet.holes_matter(rh):
-                msg.insert(0, "Recording holes: the trajectory has no data for %.0f%% of its time (%d holes, longest "
+                msg.insert(0, "Recording holes: the trajectory has no data for %.0f%% of %s (%d holes, longest "
                               "%.1f s); the recording lost INS data there. StripPro fills them from the Lidar: no need to "
-                              "bridge them here." % (rh["missing_pct"], rh["count"],
-                                                                               rh["longest_s"]))
+                              "bridge them here." % (rh["missing_pct"],
+                                                     "the survey lines' time" if rh.get("scope") == "lines"
+                                                     else "its time", rh["count"], rh["longest_s"]))
                 self.pending.setStyleSheet("color: %s;" % theme.AMBER)
+            if rh.get("off_utc"):       # the system off between lines: information, not a hole
+                msg.append("System off %s UTC." % ", ".join(t.replace("-", "\u2013") for t in rh["off_utc"]))
         self.pending.setText(" ".join(msg))
         self.b_reproc.setVisible(review.exclusions_pending(p))
         self._draw_map()
