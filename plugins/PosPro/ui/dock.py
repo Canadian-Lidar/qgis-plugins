@@ -1587,6 +1587,20 @@ class QualityPage(Page):
             self.cards[k] = c
             grid.addWidget(c, i // 2, i % 2)
         v.addLayout(grid)
+        # marine jobs: how well the motion applied to the soundings holds up (2.9.0)
+        mw = QWidget()
+        mv = QVBoxLayout(mw)
+        mv.setContentsMargins(0, 0, 0, 0)
+        self.mgrid = QGridLayout()
+        self.mgrid.setHorizontalSpacing(18)
+        mv.addLayout(self.mgrid)
+        from .plots import MotionPlot
+        self.mplot = MotionPlot()
+        self.mplot.setMinimumHeight(120)
+        mv.addWidget(self.mplot)
+        self.motion = Section("Motion check", mw, expanded=True)
+        self.motion.hide()
+        v.addWidget(self.motion)
         cg = QHBoxLayout()
         _cl = QLabel("COLOUR THE MAP BY")
         _cl.setObjectName("ppKey")
@@ -1607,7 +1621,7 @@ class QualityPage(Page):
         b.clicked.connect(self.dock.show_plots)
         v.addWidget(b)
 
-    def refresh(self):
+    def _refresh_main(self):
         p = self.project
         qc = self.dock.qc
         self.find.clear()
@@ -1655,12 +1669,75 @@ class QualityPage(Page):
         if t and t[0] is not None:
             self.dock.goto_time(t[0], t[1])
 
+    def _motion(self):
+        r = (self.project.cfg.get("results") or {}) if self.project else {}
+        return (r.get("marine") or {}).get("motion") or {}
+
+    def refresh_motion(self):
+        """The Motion check section (marine jobs): one row per check with its value and mark, and the
+        head-against-autopilot roll difference over time with the turns shaded."""
+        from ..core import marine as M
+        m = self._motion()
+        on = bool(m) and bool(getattr(self.dock, "_marine", False))
+        self.motion.setVisible(on)
+        while self.mgrid.count():
+            w = self.mgrid.takeAt(0).widget()
+            if w is not None:
+                w.deleteLater()
+        if not on:
+            return
+        L = M.MOTION_LIMITS
+
+        def mark(v, lim):
+            if v is None:
+                return "info"
+            return "ok" if abs(v) <= lim else "warn" if abs(v) <= 2 * lim else "bad"
+        rows = [
+            ("Heads against each other", m.get("heads_deg"), "%.2f\u00b0", mark(m.get("heads_deg"), L["heads_deg"])),
+            ("Heads against the autopilot, straight", m.get("straight_deg"), "%.2f\u00b0",
+             mark(m.get("straight_deg"), L["heads_deg"])),
+            ("Heads against the autopilot, in turns", m.get("turning_deg"), "%.2f\u00b0",
+             mark(m.get("turning_deg"), L["turn_deg"])),
+            ("Roll error per m/s\u00b2 sideways", m.get("turn_slope_deg_per_ms2"), "%.1f\u00b0", "info"),
+            ("Worst roll error in this survey's turns", m.get("worst_turn_deg"), "%.2f\u00b0",
+             mark(m.get("worst_turn_deg"), L["turn_deg"])),
+            ("Heads' clock against the autopilot", m.get("offset_s"), "%.2f s", mark(m.get("offset_s"), L["offset_s"])),
+            ("Autopilot heading against the course", m.get("heading_offset_deg"),
+             "%%+.1f\u00b0 \u00b1 %.1f\u00b0" % (m.get("heading_scatter_deg") or 0), "info")]
+        icons = {"ok": "\u2714", "warn": "\u26a0", "bad": "\u2716", "info": ""}
+        cols = {"ok": theme.GREEN, "warn": theme.AMBER, "bad": theme.RED, "info": theme.DIM}
+        for i, (label, val, fmt, lvl) in enumerate(rows):
+            k = QLabel(label)
+            k.setObjectName("ppKey")
+            t = QLabel("\u2013" if val is None else fmt % val)
+            t.setObjectName("ppVal")
+            ic = QLabel(icons[lvl])
+            ic.setStyleSheet("color: %s;" % cols[lvl])
+            self.mgrid.addWidget(k, i, 0)
+            self.mgrid.addWidget(t, i, 1)
+            self.mgrid.addWidget(ic, i, 2)
+        self.mgrid.setColumnStretch(3, 1)
+        ser = None
+        try:
+            with open(os.path.join(self.project.work_dir, "marine", "motion_series.json")) as fh:
+                ser = json.load(fh)
+        except (OSError, ValueError):
+            pass
+        self.mplot.set_series(ser or {}, L["turn_deg"])
+
+    def refresh(self, *a, **k):
+        self._refresh_main(*a, **k)
+        self.refresh_motion()
+
     def state(self):
         qc = self.dock.qc
         if not qc:
             return "todo", "after processing"
         parts = dict((l, v) for l, v, c in results.status_shares(qc))
         f = parts.get("Fixed", 0)
+        fl = self._motion().get("flags") if getattr(self.dock, "_marine", False) else None
+        if fl:
+            return "warn", "%.1f%% fixed; motion: %s" % (f, fl[0])
         return ("done" if f >= 95 else "warn"), "%.1f%% fixed" % f
 
 
