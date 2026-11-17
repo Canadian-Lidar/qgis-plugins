@@ -6,6 +6,7 @@ and a coloured status strip.
 """
 import bisect
 import math
+import numpy as np
 
 from qgis.PyQt.QtCore import QPointF, QRectF, Qt, pyqtSignal
 from qgis.PyQt.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPixmap
@@ -459,3 +460,72 @@ class Donut(QWidget):
         p.setPen(QColor(theme.DIM))
         p.setFont(theme.font("ui", max(10, int(s * 0.08)), 600, 112))
         p.drawText(r.adjusted(0, s * 0.16, 0, 0), _af(Qt.AlignmentFlag.AlignCenter), main[0].upper())
+
+
+class MotionPlot(QWidget):
+    """The heads' roll against the autopilot's over the survey (deg), the turns shaded, the limit dashed (2.9.0)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.ser = {}
+        self.lim = 0.5
+
+    def set_series(self, ser, lim):
+        self.ser, self.lim = ser or {}, lim
+        self.update()
+
+    def paintEvent(self, _e):
+        from qgis.PyQt.QtGui import QPainter, QPen, QColor
+        from qgis.PyQt.QtCore import QPointF, QRectF, Qt as _Qt
+        from . import theme as _th
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        L, R, T, B = 46, 8, 8, 18
+        p.fillRect(self.rect(), QColor(_th.VIEW_BG))
+        recs = [v for v in self.ser.values() if v and v.get("t")]
+        if not recs:
+            p.end()
+            return
+        t = np.concatenate([np.asarray(v["t"], float) for v in recs])
+        d = np.concatenate([np.asarray(v["droll_deg"], float) for v in recs])
+        tu = np.concatenate([np.asarray(v["turning"], int) for v in recs])
+        o = np.argsort(t)
+        t, d, tu = t[o], d[o], tu[o]
+        # time axis without the gaps between recordings: sample index scaled to the width
+        n = len(t)
+        ymax = max(self.lim * 1.6, float(np.percentile(np.abs(d), 99.5)) * 1.1, 0.2)
+        X = lambda i: L + (w - L - R) * i / max(1, n - 1)                      # noqa: E731
+        Y = lambda v: T + (h - T - B) * (0.5 - v / (2 * ymax))                # noqa: E731
+        shade = QColor(_th.AMBER)
+        shade.setAlpha(45)
+        i = 0
+        while i < n:                                     # turns shaded
+            if tu[i]:
+                j = i
+                while j < n and tu[j]:
+                    j += 1
+                p.fillRect(QRectF(X(i), T, max(1.0, X(j) - X(i)), h - T - B), shade)
+                i = j
+            else:
+                i += 1
+        p.setPen(QPen(QColor(_th.DIM), 1))
+        p.drawLine(QPointF(L, Y(0)), QPointF(w - R, Y(0)))
+        pen = QPen(QColor(_th.RED), 1, _Qt.PenStyle.DashLine)
+        p.setPen(pen)
+        for s_ in (1, -1):
+            p.drawLine(QPointF(L, Y(s_ * self.lim)), QPointF(w - R, Y(s_ * self.lim)))
+        p.setPen(QPen(QColor(_th.DIM), 1))
+        f = p.font()
+        f.setPointSizeF(max(7.0, f.pointSizeF() - 1))
+        p.setFont(f)
+        for v in (ymax, 0, -ymax):
+            p.drawText(QRectF(0, Y(v) - 8, L - 6, 16), int(_Qt.AlignmentFlag.AlignRight | _Qt.AlignmentFlag.AlignVCenter),
+                       "%+.1f\u00b0" % v if v else "0")
+        p.drawText(QRectF(L, h - B + 2, w - L - R, B - 2), int(_Qt.AlignmentFlag.AlignLeft),
+                   "Roll: heads \u2212 autopilot")
+        pts = [QPointF(X(i), Y(float(np.clip(d[i], -ymax, ymax)))) for i in range(n)]
+        p.setPen(QPen(QColor(_th.ACCENT), 1.2))
+        for a, b in zip(pts[:-1], pts[1:]):
+            p.drawLine(a, b)
+        p.end()

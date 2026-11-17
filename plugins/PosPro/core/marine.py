@@ -689,6 +689,172 @@ def head_attitude(rec, head):
     return A, check
 
 
+# ------------------------------------------------------------------------------------------------- motion check
+MOTION_LIMITS = {"heads_deg": 0.2, "turn_deg": 0.5, "offset_s": 0.1}
+
+
+def _up_from_rp(roll, pitch):
+    """World up expressed in a body frame (X forward, Y starboard, Z down) from roll / pitch (rad)."""
+    return np.column_stack([np.sin(pitch), -np.sin(roll) * np.cos(pitch), -np.cos(roll) * np.cos(pitch)])
+
+
+def _kabsch(Uh, Ua):
+    """The rotation R that best takes the head's up vectors onto the boat's (Ua ~ Uh R^T)."""
+    H = Uh.T @ Ua
+    U_, _S, Vt = np.linalg.svd(H)
+    D = np.diag([1.0, 1.0, np.sign(np.linalg.det(Vt.T @ U_.T))])
+    return (U_ @ D @ Vt).T
+
+
+def _rp_of(U):
+    return np.arctan2(-U[:, 1], -U[:, 2]), np.arcsin(np.clip(U[:, 0], -1, 1))
+
+
+def _p68(x, centre=None):
+    """68 % of |x - centre| (centre: x's median)."""
+    x = np.asarray(x, float)
+    x = x[np.isfinite(x)]
+    if len(x) <= 10:
+        return None
+    c = float(np.median(x)) if centre is None else centre
+    return round(float(np.percentile(np.abs(x - c), 68)), 3)
+
+
+def motion_check(rec, head_atts, pos, vn, ve, cog_min=1.0):
+    """How well the motion applied to the soundings holds up, for one recording (PosPro 2.9.0; Sean 17 Nov).
+    head_atts {did: 504 attitude (t, up, ...)}; pos / vn / ve: the boat's positions and velocities (PPK when
+    there is). Each head's up vector is rotated into the autopilot's body frame (its fixed mounting, best fit over
+    the recording, with the time offset that fits best) and compared:
+      heads_deg      the two heads against each other (68 %): sensors, rigid mounting;
+      straight_deg / turning_deg   head against the autopilot (68 %) on straight lines / in turns;
+      turn_slope_deg_per_ms2       roll difference per m/s2 of sideways acceleration (v x rate of turn): the
+                                   heads' own attitude takes the boat's turning acceleration for tilt;
+      worst_turn_deg               the larger of: that slope times this survey's largest sideways accelerations
+                                   (p99), and the roll difference seen in its turns (p99);
+      offset_s                     time offset of the heads' clock against the autopilot's;
+      heading_offset_deg / heading_scatter_deg   autopilot heading minus course over the ground above cog_min.
+    -> dict (empty when the autopilot has no attitude)."""
+    V = rec.vehicle()
+    att = V["att"]
+    if len(att) < 50 or not head_atts or len(pos) < 20:
+        return {}
+    ta = att["t"]
+    Ua = _up_from_rp(att["roll"].astype(float), att["pitch"].astype(float))
+    yaw = np.unwrap(att["yaw"].astype(float))
+    k = np.ones(13) / 13.0
+    yawr = np.convolve(np.gradient(yaw, ta), k, "same")
+    spd = np.hypot(vn, ve)
+    spd_s = np.convolve(spd, np.ones(9) / 9.0, "same")
+    along = np.gradient(spd_s, pos["t"])
+    out = {"heads": {}}
+    rotated = {}
+    for did, A in head_atts.items():
+        if len(A) < 50:
+            continue
+        tf = A["t"]
+        Uf = np.array([np.asarray(u, float) for u in A["up"]])
+        Uf /= np.maximum(np.linalg.norm(Uf, axis=1), 1e-9)[:, None]
+        inside = (tf > ta[0] + 1.5) & (tf < ta[-1] - 1.5)
+        tf, Uf = tf[inside], Uf[inside]
+        if len(tf) < 50:
+            continue
+        step = max(1, len(tf) // 6000)                  # the fit on a subsample, the figures on every attitude
+        ts, Us = tf[::step], Uf[::step]
+
+        def fit(dt, th=ts, Uh=Us):
+            Ud = np.column_stack([np.interp(th + dt, ta, Ua[:, j]) for j in range(3)])
+            R = _kabsch(Uh, Ud)
+            e = np.degrees(np.arccos(np.clip(np.sum((Uh @ R.T) * Ud, 1), -1, 1)))
+            return float(np.median(e)), R, Ud
+        coarse = min(np.arange(-1.0, 1.0001, 0.04), key=lambda d: fit(d)[0])
+        dt = min(np.arange(coarse - 0.04, coarse + 0.0401, 0.005), key=lambda d: fit(d)[0])
+        _m, R, _Ud = fit(dt)
+        th, Uh = tf, Uf
+        Ud = np.column_stack([np.interp(th + dt, ta, Ua[:, j]) for j in range(3)])
+        Ub = Uh @ R.T
+        rb, pb = _rp_of(Ub)
+        ra, pa = _rp_of(Ud)
+        droll, dpitch = np.degrees(rb - ra), np.degrees(pb - pa)
+        tt = th + dt
+        alat = np.interp(tt, pos["t"], spd_s) * np.interp(tt, ta, yawr)
+        alon = np.interp(tt, pos["t"], along)
+        turning = np.abs(alat) > max(0.03, float(np.percentile(np.abs(alat), 90)))
+        straight = np.abs(alat) < 0.015
+        ok = np.isfinite(alat) & np.isfinite(droll)
+        slope = float(np.polyfit(alat[ok], droll[ok] - np.median(droll[ok]), 1)[0]) if ok.sum() > 50 else 0.0
+        c0 = float(np.median(droll[straight])) if straight.sum() > 20 else float(np.median(droll))   # the mounting
+        c0p = float(np.median(dpitch[straight])) if straight.sum() > 20 else float(np.median(dpitch))
+        p99 = float(np.percentile(np.abs(alat[ok]), 99)) if ok.any() else 0.0
+        out["heads"][str(did)] = {
+            "offset_s": round(float(dt), 3),
+            "straight_deg": _p68(droll[straight], c0) if straight.sum() > 20 else None,
+            "turning_deg": _p68(droll[turning], c0) if turning.sum() > 20 else None,
+            "pitch_deg": _p68(dpitch, c0p),
+            "turn_slope_deg_per_ms2": round(slope, 2),
+            "worst_turn_deg": round(max(abs(slope) * p99, float(np.percentile(np.abs(droll[turning] - c0), 99))
+                                        if turning.sum() > 20 else 0.0), 2),
+            "pitch_slope_deg_per_ms2": round(float(np.polyfit(alon[ok], dpitch[ok], 1)[0]), 2)
+            if ok.sum() > 50 and float(np.std(alon[ok])) > 0.005 else None,
+            "mount_rotation": R.round(6).tolist()}
+        rotated[did] = (tt, Ub, droll)
+    if len(rotated) >= 2:
+        (d1, (t1, U1, _r1)), (d2, (t2, U2, _r2)) = list(rotated.items())[:2]
+        U2i = np.column_stack([np.interp(t1, t2, U2[:, j]) for j in range(3)])
+        ang = np.degrees(np.arccos(np.clip(np.sum(U1 * U2i, 1), -1, 1)))
+        out["heads_deg"] = round(float(np.percentile(ang, 68)), 3)
+        out["heads_p95_deg"] = round(float(np.percentile(ang, 95)), 3)
+    cog = np.degrees(np.arctan2(ve, vn))
+    yaw_p = np.degrees(np.interp(pos["t"], ta, yaw))
+    mv = spd > max(1.0, float(cog_min))
+    if mv.sum() > 20:
+        d = (yaw_p[mv] - cog[mv] + 180.0) % 360.0 - 180.0
+        off = float(np.degrees(np.angle(np.mean(np.exp(1j * np.radians(d))))))
+        res = (d - off + 180.0) % 360.0 - 180.0
+        out["heading_offset_deg"] = round(off, 2)
+        out["heading_scatter_deg"] = round(float(np.percentile(np.abs(res), 68)), 2)
+    out["sideways_acc_p99_ms2"] = round(float(np.percentile(np.abs(np.interp(pos["t"], ta, yawr) * spd_s), 99)), 3)
+    out["autopilot_clock_rms_s"] = V["boot_fit"][2]
+    # a time series for the plot: head-against-autopilot roll difference of the first head, and turning or not
+    if rotated:
+        tt, _Ub, dr = next(iter(rotated.values()))
+        n = max(1, len(tt) // 1500)
+        al = np.interp(tt, pos["t"], spd_s) * np.interp(tt, ta, yawr)
+        out["series"] = {"t": tt[::n].round(2).tolist(), "droll_deg": (dr - np.median(dr))[::n].round(3).tolist(),
+                         "turning": (np.abs(al[::n]) > 0.03).astype(int).tolist()}
+    return out
+
+
+def motion_summary(per_rec):
+    """The survey's motion check from each recording's: the worst of each figure, and the verdicts against
+    MOTION_LIMITS -> {"heads_deg", "worst_turn_deg", "offset_s", "heading_offset_deg", "heading_scatter_deg",
+    "straight_deg", "turning_deg", "flags": [...], "recordings": {...}}."""
+    per_rec = {k: v for k, v in per_rec.items() if v}
+    if not per_rec:
+        return {}
+
+    def worst(key, sub=False):
+        vals = []
+        for m in per_rec.values():
+            src = m.get("heads", {}).values() if sub else [m]
+            vals += [abs(x[key]) for x in src if x.get(key) is not None]
+        return round(max(vals), 3) if vals else None
+    s = {"heads_deg": worst("heads_deg"), "straight_deg": worst("straight_deg", True),
+         "turning_deg": worst("turning_deg", True), "worst_turn_deg": worst("worst_turn_deg", True),
+         "turn_slope_deg_per_ms2": worst("turn_slope_deg_per_ms2", True), "offset_s": worst("offset_s", True),
+         "heading_offset_deg": worst("heading_offset_deg"), "heading_scatter_deg": worst("heading_scatter_deg"),
+         "recordings": {k: {kk: vv for kk, vv in v.items() if kk != "series"} for k, v in per_rec.items()}}
+    L = MOTION_LIMITS
+    flags = []
+    if s["heads_deg"] is not None and s["heads_deg"] > L["heads_deg"]:
+        flags.append("the heads disagree by %.2f deg" % s["heads_deg"])
+    if s["worst_turn_deg"] is not None and s["worst_turn_deg"] > L["turn_deg"]:
+        flags.append("roll is off by up to %.2f deg in turns" % s["worst_turn_deg"])
+    if s["offset_s"] is not None and s["offset_s"] > L["offset_s"]:
+        flags.append("the heads' clock is %.2f s off the autopilot's" % s["offset_s"])
+    s["flags"] = flags
+    return s
+
+
 def fuse_505(I, tau=0.5):
     """The world-up vector from a head's raw IMU (505): gyro-propagated, pulled towards the accelerometer with
     time constant tau (s). Only a check of the sonar's own attitude: no gyro-bias estimate, so it drifts with a
@@ -816,6 +982,7 @@ def process(project, ctx, atx=None):
                               "%s and %s (%.0f s)" % (a, b, d) for a, b, d in ov))
     wdir = project.wpath("marine", "x")[:-2]
     parts, summary, heads = [], {"recordings": [], "notes": []}, {}
+    motion = {}
     passes = {"fwd": [], "bwd": [], "both": True}
     t_start = time.time()
     from . import pipeline as _pl
@@ -862,10 +1029,12 @@ def process(project, ctx, atx=None):
         parts.append(np.rec.fromarrays([pos["t"], pos["lat"], pos["lon"], pos["h"], pos["q"], pos["sdn"], pos["sde"],
                                         pos["sdu"], vn, ve, roll, pitch, hd, hsrc, spd],
                                        names="t,lat,lon,h,q,sdn,sde,sdu,vn,ve,roll,pitch,heading,hsrc,speed"))
+        rec_atts = {}
         for did in rec.heads:
             if str(did) in (opts.get("heads_off") or []):  # switched off on the Installation page
                 continue
             A, check = head_attitude(rec, did)
+            rec_atts[did] = A
             info_h = dict(rec.heads[did])
             ent = (opts.get("levers") or {}).get(str(did))
             if ent:                                       # typed on the Installation page
@@ -880,6 +1049,10 @@ def process(project, ctx, atx=None):
                 m = None
             if m:
                 heads[did]["mounting"].append(m)
+        try:
+            motion[rec.name] = motion_check(rec, rec_atts, pos, vn, ve, float(opts["cog_min_speed"]))
+        except Exception as e:      # noqa: BLE001 - a check only: never stops the processing
+            summary["notes"].append("%s: motion check not made (%s)" % (rec.name, e))
         q = {Q_NAMES.get(int(k), str(int(k))): round(100.0 * float((pos["q"] == k).mean()), 1) for k in np.unique(pos["q"])}
         summary["recordings"].append({"name": rec.name, "source": src, "source_label": SOURCES[src], "epochs": len(pos),
                                       "quality_pct": q, "rate_hz": rate_hz(pos["t"]), "compass_pct": round(100.0 * float(hsrc.mean()), 1),
@@ -901,6 +1074,12 @@ def process(project, ctx, atx=None):
                                  "attitudes": h["n"], "mounting": _mount_of(h["mounting"]),
                                  "check": h["checks"][0] if h["checks"] else {}} for d, h in heads.items()}
     summary["mounting"] = mounting_summary(summary["heads"])
+    summary["motion"] = motion_summary(motion)
+    series = {k: v.get("series") for k, v in motion.items() if v and v.get("series")}
+    if series:
+        import json as _json
+        with open(os.path.join(wdir, "motion_series.json"), "w") as f:
+            _json.dump(series, f)
     summary["position_source"] = sorted({r["source"] for r in summary["recordings"]})
     summary["fixed_pct"] = round(100.0 * float((T["q"] == 1).mean()), 1)
     summary["compass_pct"] = round(100.0 * float(T["hsrc"].mean()), 1)
@@ -1057,6 +1236,7 @@ def publish(project, ctx):
         "base_station": "%s (%s)" % ("surveyed base", base.get("source")) if base else None,
         "marine": {"position": [{"recording": r["name"], "source": r["source_label"], "quality_pct": r["quality_pct"]}
                                 for r in recs],
+                   "motion": {k: v for k, v in (summ.get("motion") or {}).items() if k != "recordings"},
                    "heading": {"course_over_ground_above_m_s": summ["cog_min_speed"],
                                "below": "autopilot compass (MAVLink ATTITUDE yaw)", "compass_pct": summ["compass_pct"]},
                    "vessel_attitude": "autopilot (MAVLink ATTITUDE)", "notes": summ.get("notes", []),
