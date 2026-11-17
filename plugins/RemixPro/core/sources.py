@@ -180,9 +180,26 @@ def _day_dir(folder):
     return None
 
 
+_DAY_CACHE = {}
+
+
 def _day_record(ddir):
-    rec = _read_json(os.path.join(ddir, "session.json"))
-    return rec if isinstance(rec, dict) and str(rec.get("schema", "")).startswith("mapper.day/") else {}
+    """The day's session.json (read once while it is unchanged: a scan asks for it for every line)."""
+    path = os.path.join(ddir, "session.json")
+    try:
+        st = os.stat(path)
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return {}
+    hit = _DAY_CACHE.get(path)
+    if hit and hit[0] == key:
+        return hit[1]
+    rec = _read_json(path)
+    rec = rec if isinstance(rec, dict) and str(rec.get("schema", "")).startswith("mapper.day/") else {}
+    if len(_DAY_CACHE) > 32:
+        _DAY_CACHE.clear()
+    _DAY_CACHE[path] = (key, rec)
+    return rec
 
 
 def _index_files(path):
