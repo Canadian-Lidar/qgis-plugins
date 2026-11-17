@@ -2,7 +2,7 @@
 
 In the DCS chain AlignPro is stage 02 of a shared project (DCS Core):
 
-    JobFolder/Processing/<Name>/<Name>.dcsproj
+    <Job>/<Name>.dcsproj, <Job>/<Name>/  (layout 2, DCS Core 1.18.0; layout 1: <Job>/Processing/<Name>/<Name>.dcsproj)
                                 02_AlignPro/alignpro.json   AlignPro's own settings and results
                                 02_AlignPro/work/           line caches, grids, screenshots (rebuildable)
                                 02_AlignPro/out/            alignment.json + its data files, reports
@@ -45,6 +45,12 @@ def sbet_paths(tcfg):
 def _utc(t):
     return dt.datetime.fromtimestamp(float(t), dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
+
+
+def _sub(dcs, name):
+    """A stage subfolder's name: WORK / OUT / LOG in a layout 2 DCS project (DCS Core 1.18.0), else as given."""
+    f = getattr(dcs, "sub", None)
+    return f(name) if f else name
 
 class Project:
     def __init__(self, path=None):
@@ -140,7 +146,7 @@ class Project:
 
     @property
     def out_dir(self):
-        d = os.path.join(self.folder, "out")
+        d = os.path.join(self.folder, _sub(self.dcs, "out"))
         os.makedirs(d, exist_ok=True)
         return d
 
@@ -150,13 +156,13 @@ class Project:
 
     @property
     def log_dir(self):
-        d = os.path.join(self.folder, "log")
+        d = os.path.join(self.folder, _sub(self.dcs, "log"))
         os.makedirs(d, exist_ok=True)
         return d
 
     @property
     def work(self):
-        d = os.path.join(self.folder, "work")
+        d = os.path.join(self.folder, _sub(self.dcs, "work"))
         os.makedirs(d, exist_ok=True)
         return d
 
@@ -232,9 +238,9 @@ class Project:
             added.append(f if os.path.isabs(f) else os.path.join(self.folder, f))
         files = clraw.find_clraw(added) if added else []
         if self.dcs is not None:        # never read a stage's own output as raw data
-            proc = os.path.abspath(self.dcs.folder)
-            files = [f for f in files if not os.path.abspath(f).startswith(proc + os.sep)
-                     and os.sep + "Processing" + os.sep not in os.path.abspath(f)]
+            from dcs_core.project import in_processing
+            proc = os.path.abspath(getattr(self.dcs, "work_root", self.dcs.folder))
+            files = [f for f in files if not os.path.abspath(f).startswith(proc + os.sep) and not in_processing(f)]
             files = sorted(set(self.dcs.survey_clraw_files()) | set(files), key=lambda x: os.path.basename(x))
         return clraw.split_navigation(files)[0]
 

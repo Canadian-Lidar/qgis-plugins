@@ -281,7 +281,8 @@ class RemixProWindow(PluginWindow):
             theme.msg_warn(self, "RemixPro", "That DCS project could not be opened:\n%s" % e)
 
     def open_dcs_project(self, path):
-        """The job's recordings, outputs in Processing/<Name>/RemixPro/ (called from another plugin too)."""
+        """The job's recordings, outputs in <Name>/00_RemixPro/ (DCS Core 1.18.0; Processing/<Name>/RemixPro/ in an
+        older project) and a SonarView recording's .clraw in its day folder's CLRAW/ (called from another plugin too)."""
         p = DcsProject.open(path)
         self.project = p
         paths = [p.job_folder] if os.path.isdir(p.job_folder) else p.capture_files()
@@ -306,6 +307,9 @@ class RemixProWindow(PluginWindow):
         self.header.set_busy(True)
         try:
             self.items = sources.scan(self.paths) if self.paths else []
+            job = self._day_job()
+            for it in self.items:
+                it.day_job = job
         except Exception as e:      # noqa: BLE001 - shown, never fatal
             self.items = []
             self._log("Could not read the recordings: %s" % e)
@@ -315,9 +319,16 @@ class RemixProWindow(PluginWindow):
             self.out.setText(self.default_out())
         self._fill()
 
+    def _day_job(self):
+        """The job folder whose day folders take the SonarView recordings' .clraw: the open project's, when it was
+        made with DCS Core 1.18.0 or later; otherwise each recording's own (make.job_of)."""
+        p = self.project
+        return p.job_folder if p is not None and getattr(p, "layout", 1) >= 2 else None
+
     def default_out(self):
         if self.project is not None:
-            return os.path.join(self.project.folder, "RemixPro")
+            f = getattr(self.project, "remix_dir", None)
+            return f() if f else os.path.join(self.project.folder, "RemixPro")
         return sources.default_output_root(self.paths) if self.paths else ""
 
     # ------------------------------------------------------------------ list
@@ -490,7 +501,8 @@ class RemixProWindow(PluginWindow):
             cb.setEnabled(not busy)
         self.open_out.setEnabled(os.path.isdir(self.out.text().strip()))
         out = self.out.text().strip()
-        self.out_hint.setText(("In the DCS project: Processing/%s/RemixPro" % self.project.name) if self.project
+        self.out_hint.setText(("In the DCS project: %s" % os.path.relpath(self.default_out(), self.project.folder))
+                              if self.project
                               is not None and not self.out_custom else
                               ("One folder per recording inside, with beamworx/, inertial_explorer/ and qinertia/."
                                if out else ""))

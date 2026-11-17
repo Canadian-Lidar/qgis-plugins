@@ -1,4 +1,4 @@
-"""RemixPro QGIS plugin entry: Plugins > Canadian Lidar > Data Systems > RemixPro.
+"""RemixPro QGIS plugin entry: Plugins > CLDS > RemixPro.
 
 RemixPro is a side tool of the DCS chain (not a numbered stage): it reads the mapper's raw recordings and
 writes files for BeamworX, Inertial Explorer and Qinertia. It publishes no handover and writes no shared
@@ -13,7 +13,7 @@ except ImportError:          # QGIS 3 / Qt5
     from qgis.PyQt.QtWidgets import QAction
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CORE_API = 16
+CORE_API = 19
 ICON = os.path.join(HERE, "icons", "remixpro.svg")
 
 

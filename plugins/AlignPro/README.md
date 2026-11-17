@@ -5,7 +5,7 @@ captures. It is stage 02 of the Data Collection Systems (DCS) chain:
 
     01 PosPro (trajectory.json)  ->  02 AlignPro (alignment.json)  ->  03 CloudPro (cloud.json + LAS)
 
-Menu: **Plugins ▸ Canadian Lidar ▸ Data Systems ▸ AlignPro**, plus a toolbar button.
+Menu: **Plugins ▸ CLDS ▸ AlignPro**, plus a toolbar button.
 
 ## Install
 

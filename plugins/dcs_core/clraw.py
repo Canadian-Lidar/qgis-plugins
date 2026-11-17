@@ -57,6 +57,10 @@ _CH_TOPIC = {v: k for k, v in TOPICS.items()}
 _FNAME = re.compile(r"^(\d+)_(\d{8})_(\d{6})_(\d{4})\.clraw$")          # before mapper 2.10
 _FNAME_210 = re.compile(r"^(?P<prefix>.+?)_(?P<number>\d{4})\.clraw$")     # <line id or NAV prefix>_0001
 _LINE_210 = re.compile(r"_L(\d+)_\d{8}_\d{6}$")
+# layout 2 (MapPro, RemixPro; DCS Core 1.18.0): <day>/CLRAW/YYYYMMDD_001_001.clraw (line of the day _ file of the
+# line) and <day>/NAV/nav_YYYYMMDD_0001.clraw (a navigation recording)
+_FNAME_DAY = re.compile(r"^(?P<day>\d{8})_(?P<line>\d{3,})_(?P<number>\d{3,})\.clraw$")
+_FNAME_NAV = re.compile(r"^nav_(?P<day>\d{8})_(?P<number>\d{4})\.clraw$", re.I)
 NAVIGATION = "navigation"
 # Marine sonar recordings (DCS Core 1.5.0): SonarView .svlog/.svlz converted by RemixPro. Kind "sonar"; the Ping
 # packets of each sonar on its own channel, the vehicle and GNSS data beside them. Not Lidar survey lines: the
@@ -357,7 +361,11 @@ class Recording:
 
 # ----------------------------------------------------------------------------- files -> lines
 def _line_from_name(name):
-    """Last resort only (the metadata line is the truth): <id>_L001_<date>_<time>_0001 or NNN_..._0001."""
+    """Last resort only (the metadata line is the truth): YYYYMMDD_001_001, <id>_L001_<date>_<time>_0001 or
+    NNN_..._0001."""
+    m = _FNAME_DAY.match(name)
+    if m:
+        return int(m.group("line"))
     m = _FNAME_210.match(name)
     if m:
         m2 = _LINE_210.search(m.group("prefix"))
@@ -392,8 +400,14 @@ def file_info(path):
         md = {}
     m = _FNAME_210.match(name)
     old = _FNAME.match(name)
+    day = _FNAME_DAY.match(name)
+    navname = _FNAME_NAV.match(name)
     if md.get("capture"):
         capture = md["capture"]
+    elif day:
+        capture = "%s_%s" % (day.group("day"), day.group("line"))
+    elif navname:
+        capture = name[:-len(".clraw")]
     elif old:
         capture = os.path.basename(os.path.dirname(os.path.dirname(os.path.abspath(path)))) or old.group(1)
     else:
@@ -402,7 +416,7 @@ def file_info(path):
         line = int(md.get("line"))
     except (TypeError, ValueError):
         line = _line_from_name(name)
-    kind = md.get("kind") or (NAVIGATION if m and "_NAV_" in m.group("prefix") else "line")
+    kind = md.get("kind") or (NAVIGATION if navname or (m and "_NAV_" in m.group("prefix")) else "line")
     info = {"kind": kind, "capture": capture, "line": line, "project_id": md.get("project_id", ""), "start": start,
             "digits": int(md.get("line_digits") or 3) if str(md.get("line_digits") or "3").isdigit() else 3}
     if key is not None:

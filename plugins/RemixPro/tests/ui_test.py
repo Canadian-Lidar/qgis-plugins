@@ -106,8 +106,8 @@ def main():
     p = DcsProject.create(sim["project"], "Deck_Test")
     w.open_dcs_project(p.path)
     harness.settle()
-    check("DCS project: outputs in Processing/<Name>/RemixPro",
-          w.out.text() == os.path.join(p.folder, "RemixPro"), w.out.text())
+    check("DCS project: outputs in <Name>/00_RemixPro",
+          w.out.text() == os.path.join(p.folder, "Deck_Test", "00_RemixPro"), w.out.text())
     check("DCS project: the job's four recordings", w.tree.topLevelItemCount() == 4, w.tree.topLevelItemCount())
     check("DCS project name in the header", "DECK_TEST" in w.header.project_btn.text(), w.header.project_btn.text())
     # 1.1.0: always a normal window, never docked (asking for a dock keeps it a window)

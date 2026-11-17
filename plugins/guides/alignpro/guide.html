@@ -1,6 +1,6 @@
 <!--#vars {
 "EXTRAS_ROW": "",
-"PROJECT_MENU_TABLE": "<table><tr><th>Item</th><th>What it does</th></tr><tr><td><span class='ui'>New project…</span></td><td>Creates a shared processing project in a job folder (below) and opens it.</td></tr><tr><td><span class='ui'>Open project…</span></td><td>Opens a <code>.dcsproj</code>, for example the one PosPro made. The file dialog also offers older stand-alone AlignPro projects (<code>*.alignpro.json</code>); they open without the workflow boxes and cannot finalize.</td></tr><tr><td><span class='ui'>Recent projects</span></td><td>The last 15 projects AlignPro opened, as <i>name — folder</i>; <i>(none)</i> when the list is empty. Projects that no longer exist are left out. When AlignPro starts it reopens the most recent one.</td></tr><tr><td><span class='ui'>Open the project folder</span></td><td>Opens <code>Processing/&lt;Name&gt;/</code> in your file manager.</td></tr><tr><td><span class='ui'>Raw data moved? Relocate the job folder…</span></td><td>Asks for the job folder's new location and finds the captures there (see below).</td></tr><tr><td><span class='ui'>Save the QGIS project in the project folder</span></td><td>Saves the QGIS project, with AlignPro's map layers, as <code>&lt;Name&gt;.qgz</code> in the project folder. If another QGIS project is open, AlignPro asks before saving it under the new name.</td></tr><tr><td><span class='ui'>Reset AlignPro to the recorded values…</span></td><td>After a confirmation: puts the mounting angles, lever arm and latency back to the values recorded in the <code>.clraw</code> files, uses every line again, removes the calibration result and places the inspection boxes again. The processing settings stay (Settings has <i>Restore defaults</i>), and nothing is finalized by the reset itself. Available once the data is read.</td></tr><tr><td><span class='ui'>Show the log</span></td><td>The <i>AlignPro log</i> window: this session's messages followed by the project's own log (the last 500 entries).</td></tr><tr><td><span class='ui'>User guide (this version)</span></td><td>Opens this guide.</td></tr><tr><td><span class='ui'>Open the Data View</span></td><td>Opens the Data View window (<a href='#dataview'>Data View</a>).</td></tr><tr><td><span class='ui'>Reset window</span></td><td>The window back to its default size, centred.</td></tr></table>",
+"PROJECT_MENU_TABLE": "<table><tr><th>Item</th><th>What it does</th></tr><tr><td><span class='ui'>New project…</span></td><td>Creates a shared processing project in a job folder (below) and opens it.</td></tr><tr><td><span class='ui'>Open project…</span></td><td>Opens a <code>.dcsproj</code>, for example the one PosPro made. The file dialog also offers older stand-alone AlignPro projects (<code>*.alignpro.json</code>); they open without the workflow boxes and cannot finalize.</td></tr><tr><td><span class='ui'>Recent projects</span></td><td>The last 15 projects AlignPro opened, as <i>name — folder</i>; <i>(none)</i> when the list is empty. Projects that no longer exist are left out. When AlignPro starts it reopens the most recent one.</td></tr><tr><td><span class='ui'>Open the project folder</span></td><td>Opens <code>&lt;Name&gt;/</code> in your file manager.</td></tr><tr><td><span class='ui'>Raw data moved? Relocate the job folder…</span></td><td>Asks for the job folder's new location and finds the captures there (see below).</td></tr><tr><td><span class='ui'>Save the QGIS project in the project folder</span></td><td>Saves the QGIS project, with AlignPro's map layers, as <code>&lt;Name&gt;.qgz</code> in the project folder. If another QGIS project is open, AlignPro asks before saving it under the new name.</td></tr><tr><td><span class='ui'>Reset AlignPro to the recorded values…</span></td><td>After a confirmation: puts the mounting angles, lever arm and latency back to the values recorded in the <code>.clraw</code> files, uses every line again, removes the calibration result and places the inspection boxes again. The processing settings stay (Settings has <i>Restore defaults</i>), and nothing is finalized by the reset itself. Available once the data is read.</td></tr><tr><td><span class='ui'>Show the log</span></td><td>The <i>AlignPro log</i> window: this session's messages followed by the project's own log (the last 500 entries).</td></tr><tr><td><span class='ui'>User guide (this version)</span></td><td>Opens this guide.</td></tr><tr><td><span class='ui'>Open the Data View</span></td><td>Opens the Data View window (<a href='#dataview'>Data View</a>).</td></tr><tr><td><span class='ui'>Reset window</span></td><td>The window back to its default size, centred.</td></tr></table>",
 "AFTER_CREATE": "AlignPro then looks for the survey lines' <code>.clraw</code> files in the job folder (mapper 2.10 navigation recordings are left out); when the project has no captures recorded yet it lists the files it found and asks whether to use them, then reads them straight away (see the Data chapter).",
 "STEPS_EXAMPLE": "PREPARE › CALIBRATE › REPORT",
 "STEPS_ROW": "The step list on the left in three phases: Prepare (Data, Installation, Quality), Calibrate (Pairs, Calibration: Apply finalizes the result for CloudPro) and Report (Analyze, Report).",
@@ -24,6 +24,7 @@
 <h2>What's new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>1.13.0</b></td><td><b>File structure</b> (DCS Core 1.18.0): a new project sits beside the mapper's day folders; AlignPro's folder is <code>&lt;Name&gt;/02_AlignPro</code> with <code>WORK</code>, <code>OUT</code> and <code>LOG</code>. Continue goes on to CloudPro; StripPro is run after CloudPro when needed. Menu: <span class='ui'>Plugins › CLDS</span>.</td></tr>
 <tr><td><b>1.12.1</b></td><td>Marine: survey lines named as in CloudPro, P1 Port / P1 Stbd (pass and head side), in the Pairs table, the report and the section legend.</td></tr>
 <tr><td><b>1.12.0</b></td><td>Marine Pairs: beam angle and fan-edge share of the compared soundings, and the seabed both heads see under the boat (<a href="#marine">Marine jobs</a>).</td></tr>
 <tr><td><b>1.11.0</b></td><td><b>Marine jobs on the normal steps, reviewed by you</b>: Pairs, accept each solved value or type your own (offsets included), Analyze (by beam angle, by time, disagreement map), Report, and the sonar Data View with live sections (<a href="#marine">Marine jobs</a>).</td></tr>
@@ -118,7 +119,7 @@
 <li><span class="ui">Add files…</span> adds <code>.clraw</code> files; <span class="ui">Add folder…</span> adds a capture or export folder (its <code>.clraw</code> files are found inside); <span class="ui">Remove</span> takes the selected entries off the list.</li>
 <li><span class="ui">Read files</span> saves the list and the trajectory choice and reads everything again. It also places the inspection boxes again.</li>
 </ul>
-<p>The first read decodes every capture and keeps a cache in <code>02_AlignPro/work/</code>; later opens read the cache and are much faster. Packets recorded while the vehicle is slower than the minimum pass speed are skipped while reading (they would only repeat the same spot and use up the point budget). A capture with turns and stops is split into straight passes, named after the capture's line number with a letter (<code>003a</code>, <code>003b</code>); a capture that is one straight pass keeps its number (<code>001</code>).</p>
+<p>The first read decodes every capture and keeps a cache in <code>02_AlignPro/WORK/</code>; later opens read the cache and are much faster. Packets recorded while the vehicle is slower than the minimum pass speed are skipped while reading (they would only repeat the same spot and use up the point budget). A capture with turns and stops is split into straight passes, named after the capture's line number with a letter (<code>003a</code>, <code>003b</code>); a capture that is one straight pass keeps its number (<code>001</code>).</p>
 
 <h2>Trajectory</h2>
 <p>The trajectory gives the vehicle's position and attitude for every point. Choose one of three:</p>
@@ -333,7 +334,7 @@
 
 <h2>Which points are shown</h2>
 <p>The Data View loads a square area around the roll, pitch and heading boxes, and loads again whenever a box is drawn or moved, on the map (Pairs page) or in the Data View. Drawing an area of interest moves it there. The loaded area is outlined on the QGIS map as <b>Data View area</b>, and the line under the views says what is loaded.</p>
-<p>Inside the boxes (and 1.5&nbsp;m around them) you see <b>every point the Lidar recorded there</b>, not the thinned set the calibration reads. AlignPro re-reads the raw <code>.clraw</code> for just the seconds each pass was at a box. The first time takes a few seconds per box; the views show the thinned points meanwhile and fill in when the job ends. After that the points come from the project's <code>work/</code> folder. Outside the boxes the plan shows the thinned points, at most 700,000.</p>
+<p>Inside the boxes (and 1.5&nbsp;m around them) you see <b>every point the Lidar recorded there</b>, not the thinned set the calibration reads. AlignPro re-reads the raw <code>.clraw</code> for just the seconds each pass was at a box. The first time takes a few seconds per box; the views show the thinned points meanwhile and fill in when the job ends. After that the points come from the project's <code>WORK/</code> folder. Outside the boxes the plan shows the thinned points, at most 700,000.</p>
 <div class="note"><b>Note</b> <span class="ui">Settings › Fine Tune: points per inspection box</span> (default 3,000,000) caps a very large box; above it the box's points are thinned at random and the line under the views says so. If the raw files cannot be found the views keep the thinned points.</div>
 
 <h2>The toolbar</h2>
@@ -401,7 +402,7 @@
 <li>Choose the options (remembered for next time):
 <ul>
 <li><span class="ui">Add header</span>: the header fields go into the text report too.</li>
-<li><span class="ui">Ask for file name</span>: choose where to save; otherwise the report goes to <code>02_AlignPro/out/Report_YYYY-MM-DD-HHMMSS_&lt;project&gt;.pdf</code>.</li>
+<li><span class="ui">Ask for file name</span>: choose where to save; otherwise the report goes to <code>02_AlignPro/OUT/Report_YYYY-MM-DD-HHMMSS_&lt;project&gt;.pdf</code>.</li>
 <li><span class="ui">Add screenshots</span>: adds the QGIS map, the Data View's plan, roll, pitch and heading views, and the roll, pitch and heading boxes, each on its own page. Set up the map and the Data View first.</li>
 <li><span class="ui">Copy text to clipboard</span>: copies the text report.</li>
 </ul></li>
@@ -411,7 +412,7 @@
 <p>The report holds the project, trajectory, lever arm, latency and convention; the recorded, starting and advised angles with their SDEV and the boresight about the vehicle axes; the error before and after; the patches; every combination, line and pair; the warnings; the notes; and the files used. The text report ends with where to enter the advised angles in the mapper.</p>
 
 <h2>Calibration history</h2>
-<p>The history reads the text reports (<code>Report_*.txt</code>) found under the folder at the top, down to six folder levels, skipping <code>work</code> and <code>log</code> folders. It starts with the folder that holds this job's folder, so the reports of the other jobs beside it are listed too (each job's <code>Processing/&lt;Name&gt;/02_AlignPro/out</code>). Press <span class="ui">Browse…</span> to read another folder. <span class="ui">Scan</span> reads the folder again.</p>
+<p>The history reads the text reports (<code>Report_*.txt</code>) found under the folder at the top, down to six folder levels, skipping <code>WORK</code> and <code>LOG</code> folders. It starts with the folder that holds this job's folder, so the reports of the other jobs beside it are listed too (each job's <code>&lt;Name&gt;/02_AlignPro/OUT</code>). Press <span class="ui">Browse…</span> to read another folder. <span class="ui">Scan</span> reads the folder again.</p>
 <ul>
 <li>The table lists each report's data date, project, roll, pitch, heading, SDEV and file, oldest data first. Double-click a row to open its PDF.</li>
 <li>The plot shows the change of roll, pitch and heading from the first report, one point per report: a mounting that moves shows up as a trend.</li>
@@ -422,12 +423,12 @@
 <p><span class="ui">Export corrected LAS…</span> writes the points of the used lines with the applied values to a LAS file (default <code>02_AlignPro/&lt;Name&gt;_corrected.las</code>), to check them in other tools. Coordinates are in the coordinate system recorded in the capture (EPSG:2953 when none is recorded) with ellipsoidal heights; each point keeps its intensity, its line number as point source ID and its GPS time. These are the thinned points AlignPro works with; full point cloud products come from CloudPro.</p>
 
 <h1 id="publishing"><span class="num">{N}</span>Finalizing for CloudPro and the mapper</h1>
-<p>CloudPro reads only what AlignPro finalizes; the mapper keeps its own settings, so copy the angles there too (<span class="ui">Copy for mapper</span>) and enter a corrected lever arm or latency by hand. Every apply finalizes: <span class="ui">3 Apply advised &amp; finalize</span>, <span class="ui">Apply</span> on the Calibration or Installation page, a right-click <span class="ui">Load these angles</span>, <span class="ui">Apply &amp; finalize these values</span> in the Data View, <span class="ui">Apply best value</span> on the Analyze page and <span class="ui">Finalize the applied values</span>. Each one writes, in <code>02_AlignPro/out/</code>:</p>
+<p>CloudPro reads only what AlignPro finalizes; the mapper keeps its own settings, so copy the angles there too (<span class="ui">Copy for mapper</span>) and enter a corrected lever arm or latency by hand. Every apply finalizes: <span class="ui">3 Apply advised &amp; finalize</span>, <span class="ui">Apply</span> on the Calibration or Installation page, a right-click <span class="ui">Load these angles</span>, <span class="ui">Apply &amp; finalize these values</span> in the Data View, <span class="ui">Apply best value</span> on the Analyze page and <span class="ui">Finalize the applied values</span>. Each one writes, in <code>02_AlignPro/OUT/</code>:</p>
 <ul>
 <li><code>alignment.json</code>: the file CloudPro reads (schema <code>dcs.alignment/1</code>);</li>
 <li><code>alignment_report.txt</code> (the text report) and <code>alignment_combinations.csv</code> (one row per combination).</li>
 </ul>
-<p>Finalizing holds the AlignPro stage lock and writes a log in <code>02_AlignPro/log/</code>. If it fails, the earlier publication stays. CloudPro turns stale when AlignPro finalizes again.</p>
+<p>Finalizing holds the AlignPro stage lock and writes a log in <code>02_AlignPro/LOG/</code>. If it fails, the earlier publication stays. CloudPro turns stale when AlignPro finalizes again.</p>
 
 <h2>What alignment.json holds</h2>
 <table>
@@ -473,7 +474,7 @@
 <tr><td>Grid – hillshade</td><td>A hillshade over the grid, with <i>Mean height</i>.</td></tr>
 <tr><td>Area of interest</td><td>The area drawn on the Pairs page; dashed when it is not in use.</td></tr>
 </table>
-<p>The grid is a five-band GeoTIFF in <code>02_AlignPro/work/</code>. <span class="ui">Save the QGIS project in the project folder</span> keeps the map with the job.</p>
+<p>The grid is a five-band GeoTIFF in <code>02_AlignPro/WORK/</code>. <span class="ui">Save the QGIS project in the project folder</span> keeps the map with the job.</p>
 
 <h2 id="cli">Command-line tool</h2>
 <p>The plugin folder holds <code>tools/alignpro_cli.py</code>, which runs the same calibration without QGIS, for example on a processing server. It makes a stand-alone project (<code>&lt;NAME&gt;.alignpro.json</code>), not a shared DCS project, so it does not finalize <code>alignment.json</code>; it prints the results and writes the text report into PROJECT_DIR. It needs Python 3 with NumPy, and DCS Core beside the <code>alignpro</code> folder.</p>
@@ -526,7 +527,7 @@
 <tr><td>4 Pairs</td><td><span class="ui">Measure pairs</span>: for each pair of (head, pass) that see the same seabed, how many soundings were compared, how far apart the seabed is (median) and signed, the median <i>Beam angle</i> of each head's compared soundings from its beam centre and the share <i>At the fan edge</i> (more than 40° from it, where the fan is weakest). Below the table: how much seabed both heads see under the boat (PosPro's mounting check, with the offsets in use). A comparison between the heads made mostly of fan-edge soundings says more about the fan edges than about the calibration. Double-click a pair to open it in the Data View.</td></tr>
 <tr><td>5 Calibration</td><td><span class="ui">1 Solve</span> suggests roll, pitch, heading (and latency when ticked) per head, keeping a correction only when the seabed agrees at least 0.3 cm better; each with its uncertainty and whether the lines show it. Tick <span class="ui">Accept</span> to use a solved value, or type values (and offsets) under <span class="ui">In use</span>. <span class="ui">2 Check / fine tune</span> opens the Data View. <span class="ui">3 Finalize the values in use</span> writes them for CloudPro; the step says when they changed since.</td></tr>
 <tr><td>6 Analyze</td><td>The disagreement against the beam's angle from the vertical (a slope that changes sign between heads is roll, a smile is sound speed) and against time (steps between passes are pitch, heading or latency), as recorded and with the values in use, and a map of how far the seabed seen by different passes and heads disagrees.</td></tr>
-<tr><td>7 Report</td><td>A text report and the Analyze plots in <code>02_AlignPro/out/sonar_patch_test_&lt;time&gt;/</code>.</td></tr>
+<tr><td>7 Report</td><td>A text report and the Analyze plots in <code>02_AlignPro/OUT/sonar_patch_test_&lt;time&gt;/</code>.</td></tr>
 </table>
 <figure><img src="fig/marine_calib.png" style="max-height:110mm"><figcaption><b>Figure {N}.1</b> Calibration on Lumston: roll solved and accepted for both heads; pitch, heading and latency not determined by these lines; offsets as PosPro finalized them.</figcaption></figure>
 <h2>The sonar Data View</h2>
@@ -580,9 +581,9 @@
 
 <h2>Files</h2>
 <table>
-<tr><th>Path in <code>Processing/&lt;Name&gt;/02_AlignPro/</code></th><th>Holds</th></tr>
+<tr><th>Path in <code>&lt;Name&gt;/02_AlignPro/</code></th><th>Holds</th></tr>
 <tr><td><code>alignpro.json</code></td><td>AlignPro's settings, applied values, boxes, area of interest, last calibration result, report header and log (a <code>.bak</code> copy beside it)</td></tr>
-<tr><td><code>work/</code></td><td>Line caches, the map grid, report screenshots; can be deleted (rebuilt on the next read)</td></tr>
-<tr><td><code>out/</code></td><td><code>alignment.json</code>, <code>alignment_report.txt</code>, <code>alignment_combinations.csv</code>, the PDF and text reports</td></tr>
-<tr><td><code>log/</code></td><td>One log per run, e.g. <code>20261104_095507_auto_calibration.log</code></td></tr>
+<tr><td><code>WORK/</code></td><td>Line caches, the map grid, report screenshots; can be deleted (rebuilt on the next read)</td></tr>
+<tr><td><code>OUT/</code></td><td><code>alignment.json</code>, <code>alignment_report.txt</code>, <code>alignment_combinations.csv</code>, the PDF and text reports</td></tr>
+<tr><td><code>LOG/</code></td><td>One log per run, e.g. <code>20261104_095507_auto_calibration.log</code></td></tr>
 </table>

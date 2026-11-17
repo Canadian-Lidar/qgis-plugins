@@ -4,8 +4,8 @@ load(api) -> (dcs_core or None, reason, menu)
   dcs_core  the module when it is installed and recent enough, else None
   reason    why not, in words for the message bar ("" when fine)
   menu      dcs_core.menu whenever any DCS Core can be imported, even one that is too old, so the plugin's
-            entry still goes under Plugins > Canadian Lidar > Data Systems with the others; None only when
-            DCS Core is missing altogether (the entry then goes under Plugins > Canadian Lidar)
+            entry still goes under Plugins > CLDS with the others; None only when DCS Core is missing
+            altogether (the entry then goes under a plain Plugins > CLDS menu)
 
 QGIS keeps a plugin's code in memory until it restarts. When DCS Core is upgraded in the plugin manager
 after a plugin has already loaded, the plugin still sees the old DCS Core; the files on disk are new
@@ -14,7 +14,7 @@ import os
 import re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FALLBACK_MENU = "&Canadian Lidar"
+FALLBACK_MENU = "&CLDS"
 
 
 def _api_on_disk():

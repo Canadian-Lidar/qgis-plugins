@@ -1154,7 +1154,7 @@ class WelcomePage(Page):
         self.lay.addWidget(_title("No project open"))
         self.lay.addWidget(_hint("Use the project box at the top right: New project (from the job folder that holds "
                                  "the mapper captures), Open project (the project PosPro made), or Recent projects. "
-                                 "AlignPro works on the job's shared processing project (Processing/<Name>/ in the job "
+                                 "AlignPro works on the job's shared processing project (<Name>.dcsproj in the job "
                                  "folder), after PosPro."))
         g2, gl2 = _group("Patch test field procedure")
         for t in ("Vertical surfaces (walls, building corners, thick poles) beside open flat ground, good GNSS, "

@@ -2,6 +2,7 @@
 progress(frac, text), log(level, text) and cancelled(); none touches the GUI,
 so the same code runs in a QGIS background task and in the tests.
 """
+import datetime
 import glob
 import json
 import math
@@ -1291,13 +1292,16 @@ def publish_handover(project, ctx):
                     "max_sd_v_m": max_v},
         "base_station": (project.base() or {}).get("name"),
         "review": review_summary(project),
-        "recording_holes": recording_holes(sbet),
+        "recording_holes": recording_holes(sbet, survey_line_ranges(project, week), week, leap),
     }
     rh = fields["recording_holes"]
     if rh and dsbet.holes_matter(rh):
-        ctx.log("warning", "the trajectory has no data for %.0f%% of its time (%d holes, longest %.1f s): the "
-                "recording lost INS data. Finalized with the holes marked." % (rh["missing_pct"], rh["count"],
-                                                                                rh["longest_s"]))
+        ctx.log("warning", "the trajectory has no data for %.0f%% of %s (%d holes, longest %.1f s): the "
+                "recording lost INS data. Finalized with the holes marked." % (
+                    rh["missing_pct"], "the survey lines' time" if rh.get("scope") == "lines" else "its time",
+                    rh["count"], rh["longest_s"]))
+    if rh and rh.get("off_utc"):
+        ctx.log("info", "system off (no trajectory between survey lines): %s UTC" % ", ".join(rh["off_utc"]))
     if c["processing"].get("mode") == "gnss":
         fields["attitude"] = "not observed (GNSS only): roll and pitch 0, heading from the direction of travel"
     v_engine = ""
@@ -1311,15 +1315,80 @@ def publish_handover(project, ctx):
     return {"id": doc["id"], "path": os.path.join(od, "trajectory.json")}
 
 
-def recording_holes(sbet_path):
+_UNIX0 = datetime.datetime(1970, 1, 1)
+OFF_S = 60.0          # s: a gap in the trajectory this long outside the survey lines is the system off, not a hole
+
+
+def survey_line_ranges(project, week):
+    """[(t0, t1)] of each survey line (first to last message of its .clraw files) in GPS seconds of week ``week``
+    (the SBET's time base), in recording order; [] without lines."""
+    from dcs_core import clraw, sbet as dsbet
+    try:
+        files = project.dcs.survey_clraw_files()
+        groups = clraw.group_recordings(files)
+    except Exception:       # noqa: BLE001
+        return []
+    out = []
+    for paths in groups.values():
+        a = b = None
+        for p in paths:
+            try:
+                x, y = clraw.ClrawFile(p).span()
+            except Exception:       # noqa: BLE001
+                continue
+            if x is None:
+                continue
+            a = x if a is None else min(a, x)
+            b = y if b is None else max(b, y)
+        if a is None or b <= a:
+            continue
+        g0 = dsbet.GPS_EPOCH_UNIX + int(week) * dsbet.WEEK
+        leap = geo.leap_seconds(_UNIX0 + datetime.timedelta(seconds=a))
+        out.append((a - g0 + leap, b - g0 + leap))
+    return sorted(out)
+
+
+def _utc_text(sow, week, leap):
+    from dcs_core import sbet as dsbet
+    u = dsbet.GPS_EPOCH_UNIX + int(week) * dsbet.WEEK + sow - leap
+    return (_UNIX0 + datetime.timedelta(seconds=u)).strftime("%H:%M")
+
+
+def recording_holes(sbet_path, lines=None, week=None, leap=18):
     """Where the finalized trajectory has no records (DCS Core API 14): {"missing_pct", "count", "longest_s",
-    "spans": [[t0, t1], ...] in GPS seconds of week}, or None when the SBET cannot be read."""
+    "spans": [[t0, t1], ...] in GPS seconds of week}, or None when the SBET cannot be read.
+    With the survey lines' times (``lines`` [(t0, t1)] in the SBET's time base) only the holes while lines were
+    recorded count, as a share of the lines' time ("scope": "lines"); the gaps of OFF_S or more outside them are the
+    system off: "off": [[t0, t1], ...] and "off_utc": ["hh:mm-hh:mm"] (PosPro 2.10.0). Without lines the whole
+    trajectory counts ("scope": "trajectory")."""
     from dcs_core import sbet as dsbet
     try:
         import numpy as _np
         a = _np.fromfile(sbet_path, dsbet.SBET)
         if len(a) < 2:
             return None
-        return dsbet.holes_summary(a["t"])
+        whole = dsbet.holes_summary(a["t"])
     except (OSError, ValueError):
         return None
+    t0, t1 = float(a["t"][0]), float(a["t"][-1])
+    rng = [(max(r0, t0), min(r1, t1)) for r0, r1 in (lines or ())]
+    rng = [(r0, r1) for r0, r1 in rng if r1 > r0]
+    if not rng:
+        whole["scope"] = "trajectory"
+        return whole
+    total = sum(r1 - r0 for r0, r1 in rng)
+    keep, missing, longest, off = [], 0.0, 0.0, []
+    for h0, h1 in whole["spans"]:
+        cut = [max(0.0, min(h1, r1) - max(h0, r0)) for r0, r1 in rng]
+        inside = sum(cut)
+        if inside > 0:
+            keep.append([h0, h1])
+            missing += inside
+            longest = max(longest, max(cut))
+        if (h1 - h0) - inside >= OFF_S:
+            off.append([h0, h1])
+    out = {"missing_pct": round(100.0 * missing / total, 2) if total > 0 else 0.0, "count": len(keep),
+           "longest_s": round(longest, 3), "spans": keep, "scope": "lines", "off": off}
+    if week is not None:
+        out["off_utc"] = ["%s-%s" % (_utc_text(x, week, leap), _utc_text(y, week, leap)) for x, y in off]
+    return out

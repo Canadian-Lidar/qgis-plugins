@@ -32,7 +32,7 @@ OFFSETS_FILE = "sonar_offsets.json"     # {"<device id>" | "<nickname>" | "port"
 
 # folders that never hold recordings: DCS processing projects (and RemixPro's own output), the mapper's old
 # conversions, the Lidar safety copies
-SKIP_DIRS = {"processing", "processed", "beamworx", "lidar", "__pycache__", "remixpro"}
+SKIP_DIRS = {"processing", "processed", "beamworx", "lidar", "__pycache__", "remixpro", "00_remixpro", "export"}
 _EPH_NAMES = re.compile(r"(^ephemeris_cache\.anpp$|_ephemeris\.anpp$)")
 _SEG = re.compile(r"^(?P<prefix>.+?)_(?P<number>\d{4})\.anpp$")       # ins_0001, <prefix>_0001, <line>_ins_0001
 
@@ -60,6 +60,7 @@ class Item:
         self.lever_source = ""
         self.config_source = ""         # BeamworX survey configuration: "recorded" / "built from hardware.json"
         # marine sonar recordings (SonarView .svlz / .svlog, alone or from a TidalCal project)
+        self.day_job = None             # the job folder whose day folder takes a sonar .clraw (make.day_clraw)
         self.sonar_file = None
         self.parts = []                 # the files of a recording SonarView split (sonar_file first)
         self.missing_parts = []         # earlier parts named but not there
@@ -151,12 +152,98 @@ def collect(paths, sonar=None):
     for p in paths:
         if os.path.isdir(p):
             for root, dirs, files in os.walk(p):
-                dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d.lower() not in SKIP_DIRS)
+                dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d.lower() not in SKIP_DIRS
+                                 and not os.path.isfile(os.path.join(root, d + ".dcsproj")))
                 for fn in files:
                     take(os.path.join(root, fn))
         elif os.path.isfile(p):
             take(p)
     return sorted(clr), sorted(anp)
+
+
+# ----------------------------------------------------------------------------- MapPro 2.11 day folders
+# <Project>/<YYYYMMDD>/session.json (every line and navigation recording of the day), CLRAW/YYYYMMDD_001_001.clraw,
+# IMU/ins_YYYYMMDD_0001.anpp + ephemeris_cache.anpp, NAV/nav_YYYYMMDD_0001.anpp (+ .clraw). Which .anpp belongs to
+# which line or navigation recording: the day's session.json (the recorders' statistics) and the writers' hidden
+# index files (.index_<line>.json, .index_nav_<start>.json).
+_DAY_DIR = re.compile(r"^\d{8}$")
+DAY_SUBS = ("CLRAW", "IMU", "NAV", "LIDAR")
+
+
+def _day_dir(folder):
+    """The day folder of a folder inside one (CLRAW/, IMU/, NAV/, LIDAR/), or None."""
+    folder = os.path.abspath(folder)
+    if os.path.basename(folder).upper() in DAY_SUBS and folder.split(os.sep)[-1] in DAY_SUBS:
+        d = os.path.dirname(folder)
+        if _DAY_DIR.match(os.path.basename(d)) and os.path.isfile(os.path.join(d, "session.json")):
+            return d
+    return None
+
+
+_DAY_CACHE = {}
+
+
+def _day_record(ddir):
+    """The day's session.json (read once while it is unchanged: a scan asks for it for every line)."""
+    path = os.path.join(ddir, "session.json")
+    try:
+        st = os.stat(path)
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return {}
+    hit = _DAY_CACHE.get(path)
+    if hit and hit[0] == key:
+        return hit[1]
+    rec = _read_json(path)
+    rec = rec if isinstance(rec, dict) and str(rec.get("schema", "")).startswith("mapper.day/") else {}
+    if len(_DAY_CACHE) > 32:
+        _DAY_CACHE.clear()
+    _DAY_CACHE[path] = (key, rec)
+    return rec
+
+
+def _index_files(path):
+    return [os.path.basename(f.get("name") or "") for f in (_read_json(path) or {}).get("files") or []
+            if isinstance(f, dict) and f.get("name")]
+
+
+def _day_line_logs(ddir, lid):
+    """(IMU logs of the line, the day's ephemeris file or None)."""
+    ln = (_day_record(ddir).get("lines") or {}).get(lid) or {}
+    names = set()
+    for r in ln.get("ins_stats") or []:
+        names.update(os.path.basename(f) for f in r.get("files") or [])
+    names.update(_index_files(os.path.join(ddir, "IMU", ".index_%s.json" % lid)))
+    logs = sorted(os.path.join(ddir, "IMU", n) for n in names
+                  if n.endswith(".anpp") and os.path.isfile(os.path.join(ddir, "IMU", n)))
+    eph = os.path.join(ddir, "IMU", "ephemeris_cache.anpp")
+    return logs, eph if os.path.isfile(eph) else None
+
+
+def _day_nav_logs(ddir, capture):
+    """(Certus logs of one navigation recording of the day, the day's ephemeris file or None)."""
+    nav = next((n for n in _day_record(ddir).get("navigation") or [] if n.get("capture") == capture), None)
+    names = _index_files(os.path.join(ddir, "NAV", nav["index"])) if nav and nav.get("index") else []
+    logs = sorted(os.path.join(ddir, "NAV", n) for n in names
+                  if n.endswith(".anpp") and os.path.isfile(os.path.join(ddir, "NAV", n)))
+    eph = os.path.join(ddir, "IMU", "ephemeris_cache.anpp")
+    return logs, eph if os.path.isfile(eph) else None
+
+
+def _day_owner(path):
+    """For an .anpp of a day folder: ("line", line id) or ("navigation", recording name), or None."""
+    ddir = _day_dir(os.path.dirname(path))
+    if not ddir:
+        return None
+    rec = _day_record(ddir)
+    n = os.path.basename(path)
+    for lid in rec.get("lines") or {}:
+        if path in _day_line_logs(ddir, lid)[0]:
+            return "line", lid
+    for nav in rec.get("navigation") or []:
+        if n in _index_files(os.path.join(ddir, "NAV", nav.get("index") or "")):
+            return "navigation", nav.get("capture")
+    return None
 
 
 def _capture_dir(folder):
@@ -267,11 +354,39 @@ def scan(paths):
             items.append(it)
             continue
         md = cf.metadata
+        ddir = _day_dir(folder)
         if cf.is_navigation:
             prefix = md.get("capture") or info["capture"]
             it = Item(NAVIGATION, prefix, folder)
-            it.anpp, it.ephemeris = _nav_logs(folder, prefix)
+            it.anpp, it.ephemeris = _day_nav_logs(ddir, prefix) if ddir else _nav_logs(folder, prefix)
             it.notes.append("Navigation recording: the whole Certus stream while the project was open (no Lidar).")
+        elif ddir:                      # MapPro 2.11: a line of a day folder
+            sess = cf.session or {}
+            lid = str(sess.get("line_id") or sess.get("file_prefix") or "")
+            it = Item(LINE, str(md.get("capture") or sess.get("id") or lid), ddir)
+            it.session = sess
+            it.anpp, it.ephemeris = _day_line_logs(ddir, lid)
+            try:
+                it.line = int(md.get("line"))
+            except (TypeError, ValueError):
+                it.line = info["line"]
+            if cf.attachments.get("beamworx_survey_config.xml"):
+                it.config_source = "recorded"
+            elif cf.hardware:
+                it.config_source = "built from hardware.json"
+                it.notes.append("No BeamworX survey configuration in the .clraw: it is built from hardware.json.")
+            else:
+                it.notes.append("No BeamworX survey configuration or hardware.json in the .clraw: no BeamworX files.")
+            if dclraw.TOPIC_POINTS not in cf.channels.values():
+                it.config_source = ""
+                it.notes.append("No Lidar channel in this .clraw: no BeamworX files.")
+            ln = (_day_record(ddir).get("lines") or {}).get(lid) or {}
+            partial = [p for p in os.listdir(folder) if p.startswith(lid + "_") and p.endswith(".partial")]
+            if not ln.get("continuity") or partial:
+                it.complete = False
+                it.notes.append("Incomplete: %s (the line may still be recording or being copied)."
+                                % ("a file is still being written (%s)" % partial[0] if partial
+                                   else "its completeness check is not in the day's session.json yet"))
         else:
             cdir = _capture_dir(folder)
             sess = _read_json(os.path.join(cdir, "session.json")) or cf.session
@@ -309,8 +424,13 @@ def scan(paths):
     # Certus logs with no .clraw beside them (captures before 2.8, single .anpp files, a nav/ folder whose
     # .clraw was not copied)
     logs = {}
+    day_logs = {}
     for p in anp:
         if p in used_anpp or _EPH_NAMES.search(os.path.basename(p)):
+            continue
+        owner = _day_owner(p)
+        if owner:                       # MapPro 2.11: a line or navigation recording whose .clraw is not here
+            day_logs.setdefault((_day_dir(os.path.dirname(p)),) + owner, []).append(p)
             continue
         folder = os.path.dirname(p)
         m = _SEG.match(os.path.basename(p))
@@ -337,6 +457,26 @@ def scan(paths):
         if it.ephemeris is None:
             it.notes.append("No ephemeris file beside the log: the RINEX navigation file has only the ephemerides "
                             "the Certus sent during the recording.")
+        items.append(it)
+    for (ddir, kind, name), files in day_logs.items():
+        rec = _day_record(ddir)
+        if kind == "line":
+            sess = dict((rec.get("lines") or {}).get(name) or {})
+            run = next((x for x in rec.get("sessions") or [] if x.get("n") == sess.get("session")), None) or {}
+            for k in ("settings", "unit", "software", "coordinates", "rtk", "clock_source"):
+                if k not in sess and k in run:
+                    sess[k] = run[k]
+            it = Item(LOG, str(sess.get("id") or name), ddir)
+            it.session = sess
+            it.ephemeris = _day_line_logs(ddir, name)[1]
+        else:
+            it = Item(LOG, name, ddir)
+            it.kind = NAVIGATION
+            it.ephemeris = _day_nav_logs(ddir, name)[1]
+            it.notes.append("Navigation recording (Certus log only; its .clraw is not here).")
+        it.anpp = sorted(files, key=os.path.basename)
+        it.project = _project_of(ddir)[1]
+        _levers(it)
         items.append(it)
     for it in items:
         if it.start is None:
@@ -380,7 +520,9 @@ def _default_root(paths):
     except ValueError:          # different drives
         common = first
     base = os.path.basename(common).lower()
-    if base in ("clraw", "ins", "nav", "lines"):
+    if base in ("clraw", "ins", "nav", "lines", "sonar", "imu"):
+        common = os.path.dirname(common)
+    if re.match(r"^\d{8}$", os.path.basename(common)):        # a day folder (file structure of 17 Nov 2026)
         common = os.path.dirname(common)
     return os.path.join(common, "RemixPro")
 

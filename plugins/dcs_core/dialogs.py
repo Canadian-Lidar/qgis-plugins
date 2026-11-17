@@ -14,8 +14,8 @@ KEY = "DCS/last_folder"
 
 
 class NewProjectDialog(QDialog):
-    """Job folder (the folder holding the mapper captures), project name and
-    where the Processing folder goes (default: inside the job folder)."""
+    """Job folder (the mapper's project folder, holding its day folders), project name and where the
+    project goes (default: the job folder itself: <job>/<name>.dcsproj and <job>/<name>/, layout 2)."""
 
     def __init__(self, parent=None, plugin="DCS", default_name=""):
         super().__init__(parent)
@@ -27,9 +27,9 @@ class NewProjectDialog(QDialog):
         t = QLabel("New processing project")
         t.setObjectName("ppTitle")
         v.addWidget(t)
-        h = QLabel("Choose the job folder that holds the mapper captures (for mapper 2.10 and later, the mapper "
-                   "project's folder, the one holding lines/ and nav/). PosPro, AlignPro and CloudPro then share "
-                   "one project in Processing/<name>/ there; the raw data is never changed.")
+        h = QLabel("Choose the job folder: the mapper's project folder, the one holding project.json and the "
+                   "day folders. The plugins then share one project, <name>.dcsproj and the folder <name>/ "
+                   "beside the day folders; the raw data is never changed.")
         h.setObjectName("ppHint")
         h.setWordWrap(True)
         v.addWidget(h)
@@ -45,10 +45,10 @@ class NewProjectDialog(QDialog):
         self.name.setPlaceholderText("e.g. SaintJohn_Oct11")
         f.addRow("Project name", self.name)
         self.proc = QLineEdit("")
-        self.proc.setPlaceholderText("inside the job folder (Processing/)")
+        self.proc.setPlaceholderText("the job folder")
         bp = QPushButton("Elsewhere\u2026")
-        bp.setToolTip("Put the Processing folder on another drive, e.g. a fast local disk when the captures are on "
-                      "a USB drive or a network share.")
+        bp.setToolTip("Put the project on another drive, e.g. a fast local disk when the captures are on a USB "
+                      "drive or a network share.")
         bp.clicked.connect(self.pick_proc)
         r2 = QHBoxLayout()
         r2.addWidget(self.proc, 1)
@@ -90,18 +90,18 @@ class NewProjectDialog(QDialog):
         self.name.setText(self._auto)
 
     def pick_proc(self):
-        d = QFileDialog.getExistingDirectory(self, "Where the Processing folder goes", self.job.text())
+        d = QFileDialog.getExistingDirectory(self, "Where the project goes", self.job.text())
         if d:
             self.proc.setText(d)
 
     def _root(self):
         job = self.job.text().strip()
-        return self.proc.text().strip() or (os.path.join(job, "Processing") if job else "")
+        return self.proc.text().strip() or job
 
     def show_where(self):
         n = self.name.text().strip()
         root = self._root()
-        self.where.setText("Project folder: %s" % os.path.join(root, n) if root and n else "")
+        self.where.setText("Project: %s" % os.path.join(root, n + SUFFIX) if root and n else "")
 
     def create(self):
         job = self.job.text().strip()
@@ -123,8 +123,8 @@ _DATE = re.compile(r"(?<!\d)(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?!\d)"
 
 def first_capture_date(job):
     """The date of the first capture in a job folder (YYYY-MM-DD), from the capture and line folder names
-    (mapper 2.10: lines/<P>_L001_YYYYMMDD_HHMMSS, nav/<P>_NAV_YYYYMMDD_...; older: YYYYMMDD_HHMMSS_<name>),
-    else the mapper project's created date, else None."""
+    (layout 2: the day folders YYYYMMDD; mapper 2.10: lines/<P>_L001_YYYYMMDD_HHMMSS, nav/<P>_NAV_YYYYMMDD_...;
+    older: YYYYMMDD_HHMMSS_<name>), else the mapper project's created date, else None."""
     dates = []
     for sub in ("lines", "nav", ""):
         d = os.path.join(job, sub) if sub else job
@@ -152,24 +152,27 @@ def first_capture_date(job):
 
 def default_project_name(job, proc_root=None):
     """<first capture date>_<n>, n = the first number whose project folder does not exist yet (Sean, 6 Nov 2026:
-    a job can have several processing projects, e.g. other bases or settings)."""
+    a job can have several processing projects, e.g. other bases or settings). proc_root: where the project
+    goes (default: the job folder)."""
     import datetime
     base = first_capture_date(job) or datetime.date.today().isoformat()
-    root = proc_root or os.path.join(job, "Processing")
+    root = proc_root or job
     n = 1
-    while os.path.exists(os.path.join(root, "%s_%d" % (base, n))):
+    while any(os.path.exists(os.path.join(r, "%s_%d" % (base, n)) + x)
+              for r in (root, os.path.join(job, "Processing")) for x in ("", SUFFIX)):
         n += 1
     return "%s_%d" % (base, n)
 
 
 def mapper_project(folder):
-    """A folder chosen as job folder -> (job folder, project name). Inside a mapper 2.10 project (its lines/ or
-    nav/ folder, or a line folder) the job folder is the mapper project's folder, the one holding project.json,
-    and the name is its id (the project's folder name, safe for file names)."""
+    """A folder chosen as job folder -> (job folder, project name). Inside a mapper project (a day folder or one
+    of its NAV/ LIDAR/ CLRAW/ ... folders, layout 2; mapper 2.10: its lines/ or nav/ folder, or a line folder) the
+    job folder is the mapper project's folder, the one holding project.json, and the name is its id (the
+    project's folder name, safe for file names)."""
     d = os.path.abspath(folder)
     for _ in range(4):
         pj = os.path.join(d, "project.json")
-        if os.path.isfile(pj) and os.path.isdir(os.path.join(d, "lines")):
+        if os.path.isfile(pj) and (os.path.isdir(os.path.join(d, "lines")) or _has_day_folder(d)):
             try:
                 with open(pj, encoding="utf-8") as f:
                     info = json.load(f)
@@ -181,6 +184,17 @@ def mapper_project(folder):
             break
         d = parent
     return os.path.abspath(folder), None
+
+
+_DAY = re.compile(r"^20\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$")
+
+
+def _has_day_folder(d):
+    """True when d holds a mapper day folder (YYYYMMDD, layout 2)."""
+    try:
+        return any(_DAY.match(n) and os.path.isdir(os.path.join(d, n)) for n in os.listdir(d))
+    except OSError:
+        return False
 
 
 def new_project(parent=None, plugin="DCS", default_name=""):

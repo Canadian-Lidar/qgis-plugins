@@ -1232,7 +1232,9 @@ def publish(project, ctx):
         "rate_hz": rate,
         "quality": _quality(project, summ),
         "review": pipeline.review_summary(project),
-        "recording_holes": pipeline.recording_holes(files["sbet"]),
+        "recording_holes": pipeline.recording_holes(
+            files["sbet"], [(a - week * dsbet.WEEK, b - week * dsbet.WEEK) for a, b, _n in recording_runs(project)],
+            week, 18),
         "base_station": "%s (%s)" % ("surveyed base", base.get("source")) if base else None,
         "marine": {"position": [{"recording": r["name"], "source": r["source_label"], "quality_pct": r["quality_pct"]}
                                 for r in recs],

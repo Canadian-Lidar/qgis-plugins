@@ -1,11 +1,19 @@
 """Run the conversions for the chosen recordings.
 
-Output layout (out_root is the folder the user chose; default: Processing/<Name>/RemixPro/ of the open DCS
+Output layout (out_root is the folder the user chose; default: <Name>/00_RemixPro/ of the open DCS
 project, else <mapper project>/Processing/RemixPro/):
 
     <out_root>/<recording>/beamworx/            <clraw base name>.bwxraw + .xml, one per .clraw
     <out_root>/<recording>/inertial_explorer/   <recording>.imr, .obs (+ _rx2.obs), .nav, README_INERTIAL_EXPLORER.txt
     <out_root>/<recording>/qinertia/            <recording>_imu.qimu, .obs (+ _rx2.obs), .nav, README_QINERTIA.txt
+
+A SonarView recording's .clraw (2.0.0, DCS file structure of 17 Nov 2026) goes into the day folder of the job,
+like the mapper's own recordings: <job>/<YYYYMMDD>/CLRAW/YYYYMMDD_NNN_SSS.clraw, YYYYMMDD the UTC date the
+recording started, NNN the recording's number in that day (the next free one, kept for the recording when it is
+made again: CLRAW/.remixpro/lines.json), SSS the file of the recording. The job is the open DCS project's job folder
+(a project made with DCS Core 1.18.0 or later), else the folder holding the recording's day folder
+(<job>/<YYYYMMDD>/SONAR/<recording>.svlz). Its note is CLRAW/.remixpro/<recording>.json. Otherwise (no day folder)
+it goes to <out_root>/<recording>/clraw/ as before.
 
 Each output folder holds .made_from.json: what it was made from (file names and sizes, the lever arm, the
 ephemeris file's size, the RemixPro version). Asking again costs nothing when that still matches; it is
@@ -16,6 +24,7 @@ cancel or an error leaves the earlier result (or nothing), never half a set. The
 """
 import json
 import os
+import re
 import shutil
 import time
 
@@ -23,6 +32,11 @@ from . import NAME, __version__, beamworx, inertial, notes
 from .sources import BEAMWORX, CLRAW, IE, OUTPUT_LABELS, QINERTIA
 
 NOTE = ".made_from.json"
+DAY_CLRAW = "CLRAW"
+DAY_NOTES = ".remixpro"
+LINES_FILE = "lines.json"
+_DAY = re.compile(r"^\d{8}$")
+_DAY_FILE = re.compile(r"^(?P<day>\d{8})_(?P<line>\d{3,})_\d{3,}\.clraw$")
 LEAP_SECONDS = 18
 
 
@@ -60,13 +74,47 @@ def signature(item, kind):
     return dict({"program": NAME, "version": __version__, "kind": kind, "files": _sizes(files)}, **extra)
 
 
+def job_of(item):
+    """The job folder of a SonarView recording kept in a day folder (<job>/<YYYYMMDD>/[SONAR/]<recording>), or
+    None."""
+    if not getattr(item, "sonar_file", None):
+        return None
+    d = os.path.dirname(os.path.abspath(item.sonar_file))
+    if os.path.basename(d).upper() == "SONAR":
+        d = os.path.dirname(d)
+    return os.path.dirname(d) if _DAY.match(os.path.basename(d)) else None
+
+
+def day_of(item):
+    """YYYYMMDD: the UTC date the recording started, or None."""
+    t = (item.peek or {}).get("utc_first") or getattr(item, "start", None)
+    return time.strftime("%Y%m%d", time.gmtime(float(t))) if t else None
+
+
+def day_clraw(item):
+    """<job>/<YYYYMMDD>/CLRAW of a SonarView recording (see the module text), or None (the old place)."""
+    job = getattr(item, "day_job", None) or job_of(item)
+    day = day_of(item)
+    return os.path.join(job, day, DAY_CLRAW) if job and day else None
+
+
 def target(out_root, item, kind):
+    if kind == CLRAW:
+        d = day_clraw(item)
+        if d:
+            return d
     return os.path.join(out_root, item.name, kind)
 
 
-def read_note(folder):
+def _note_path(folder, item):
+    if os.path.basename(folder) == DAY_CLRAW and item is not None and day_clraw(item) == folder:
+        return os.path.join(folder, DAY_NOTES, item.name + ".json")
+    return os.path.join(folder, NOTE)
+
+
+def read_note(folder, item=None):
     try:
-        with open(os.path.join(folder, NOTE), encoding="utf-8") as f:
+        with open(_note_path(folder, item), encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
         return None
@@ -74,7 +122,7 @@ def read_note(folder):
 
 def is_current(out_root, item, kind):
     folder = target(out_root, item, kind)
-    note = read_note(folder)
+    note = read_note(folder, item)
     return bool(note) and note.get("signature") == signature(item, kind) and all(
         os.path.isfile(os.path.join(folder, f)) for f in note.get("files", []))
 
@@ -83,7 +131,65 @@ def state(out_root, item, kind):
     """"current", "out of date" (made from other inputs) or "not made"."""
     if is_current(out_root, item, kind):
         return "current"
-    return "out of date" if read_note(target(out_root, item, kind)) else "not made"
+    return "out of date" if read_note(target(out_root, item, kind), item) else "not made"
+
+
+def _read_json(path, default):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def day_line(folder, item):
+    """The recording's number in its day: the one it had (CLRAW/.remixpro/lines.json), else the next free one
+    after every number already used in the folder."""
+    day = os.path.basename(os.path.dirname(folder))
+    known = _read_json(os.path.join(folder, DAY_NOTES, LINES_FILE), {})
+    if isinstance(known.get(item.name), int):
+        return known[item.name]
+    used = {int(v) for v in known.values() if isinstance(v, int)}
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        names = []
+    for n in names:
+        m = _DAY_FILE.match(n)
+        if m and m.group("day") == day:
+            used.add(int(m.group("line")))
+    return max(used or {0}) + 1
+
+
+def _publish_day(work, folder, item, line, files, sig, extra):
+    """Move a finished recording's files into the shared day folder: its earlier files go only now, and the
+    other recordings' files are left as they are."""
+    notes_dir = os.path.join(folder, DAY_NOTES)
+    os.makedirs(notes_dir, exist_ok=True)
+    old = (read_note(folder, item) or {}).get("files", [])
+    for f in old:
+        if f not in files:
+            try:
+                os.remove(os.path.join(folder, f))
+            except OSError:
+                pass
+    for f in files:
+        os.replace(os.path.join(work, f), os.path.join(folder, f))
+    lines_path = os.path.join(notes_dir, LINES_FILE)
+    known = _read_json(lines_path, {})
+    known[item.name] = int(line)
+    _write_json(lines_path, known)
+    _write_json(_note_path(folder, item), dict({"signature": sig, "files": files, "line": int(line),
+                                                "made_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
+                                               **extra))
+    shutil.rmtree(work, ignore_errors=True)
+
+
+def _write_json(path, obj):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=1)
+    os.replace(tmp, path)
 
 
 def _check_out_root(out_root, item):
@@ -133,7 +239,7 @@ def run(item, kinds, out_root, progress=None, cancelled=None, force=False):
     kinds = [k for k in kinds if k in item.outputs]
     todo = [k for k in kinds if force or not is_current(out_root, item, k)]
     result = {k: {"state": "current", "folder": target(out_root, item, k),
-                  "files": (read_note(target(out_root, item, k)) or {}).get("files", []), "warnings": []}
+                  "files": (read_note(target(out_root, item, k), item) or {}).get("files", []), "warnings": []}
               for k in kinds if k not in todo}
     if not todo:
         if progress:
@@ -274,8 +380,16 @@ def _make_certus(item, out_root, kinds, prog, stop):
 def _make_clraw(item, out_root, prog, stop):
     from . import sonar
     final = target(out_root, item, CLRAW)
-    os.makedirs(os.path.dirname(final), exist_ok=True)
-    work = _work(final)
+    day = day_clraw(item) == final
+    if day:
+        os.makedirs(final, exist_ok=True)
+        line = day_line(final, item)
+        base_name, digits = "%s_%03d" % (os.path.basename(os.path.dirname(final)), line), 3
+        work = _work(os.path.join(final, DAY_NOTES, item.name))
+    else:
+        os.makedirs(os.path.dirname(final), exist_ok=True)
+        line, base_name, digits = 1, item.name, 4
+        work = _work(final)
     from . import gnssfiles
     try:
         # the GNSS files whose time covers the recording, zip members extracted into the work folder
@@ -288,7 +402,8 @@ def _make_clraw(item, out_root, prog, stop):
         ppk = list(item.ppk) + [g.extract(ex) for g in gf if g.type == "pos" and g.role == "rover"]
         seen = set()
         rinex = [r for r in rinex if not (os.path.basename(r[0]) in seen or seen.add(os.path.basename(r[0])))]
-        r = sonar.to_clraw(item.parts or item.sonar_file, work, base_name=item.name, project=item.project,
+        r = sonar.to_clraw(item.parts or item.sonar_file, work, base_name=base_name, line=line,
+                           file_digits=digits, capture_name=item.name, project=item.project,
                            offsets=item.offsets, llh=llh, ppk=ppk, rinex=rinex, extra_hw=item.extra_hw,
                            extra_attachments=item.extra_attachments, progress=prog, cancelled=stop,
                            fallback_offsets=item.fallback_offsets,
@@ -332,7 +447,10 @@ def _make_clraw(item, out_root, prog, stop):
              "positions": pos, "rinex": rin,
              "offsets": {str(s["device_id"]): [s.get("acoustic_centre_m"), s.get("acoustic_centre_source")]
                          for s in r["hardware"]["sonars"]}}
-    _publish(work, final, files, signature(item, CLRAW), extra)
+    if day:
+        _publish_day(work, final, item, line, files, signature(item, CLRAW), extra)
+    else:
+        _publish(work, final, files, signature(item, CLRAW), extra)
     return {"state": "made", "folder": final, "files": files, "warnings": warnings,
             "info": ["Position: " + ("; ".join(pos) or "none")] +
                     (["GNSS RINEX: " + ", ".join(rin)] if rin else [])}

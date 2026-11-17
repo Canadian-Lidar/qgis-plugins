@@ -15,7 +15,7 @@ import re
 import zipfile
 
 RINEX = re.compile(r"(\.\d\d[oOnNgGlLpPbB]|\.(obs|nav|rnx))$", re.I)
-SKIP = {"processing", "remixpro", "clraw", "beamworx", "inertial_explorer", "qinertia", "__pycache__",
+SKIP = {"processing", "remixpro", "00_remixpro", "export", "clraw", "beamworx", "inertial_explorer", "qinertia", "__pycache__",
         "01_raw_sonar", "05_processed_data", "06_exports", "07_reports", "sv exports"}
 MAX_DEPTH = 3
 

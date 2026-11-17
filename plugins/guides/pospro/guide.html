@@ -224,7 +224,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <!--#include projects-->
 <figure class="half"><img src="fig/choose_rover.png"><figcaption><b>Figure {N}.3</b> A mapper 2.10 project with a navigation recording and survey lines: choose <span class="ui">Navigation</span> (recommended), <span class="ui">Survey lines</span> or <span class="ui">Neither</span>.</figcaption></figure>
 <p><b>Navigation or survey lines?</b> A mapper 2.10 navigation recording holds everything the Certus sent while the mapper project was open: the static periods before and after the drive and the time between the lines as well as the lines themselves. Processed once, it gives one trajectory that covers every line, which suits PPK and tight coupling best. The survey lines hold only each line and a few seconds around it. Files are read in recording order, whatever their names. The navigation recording's hardware record has no vehicle, rear axle or coordinate system; PosPro takes those from a survey line of the same job.</p>
-<p>PosPro keeps its own settings in <code>01_PosPro/pospro.json</code> and its work in <code>01_PosPro/work/</code> (extracted data, intermediate files, results). Shared facts that the other stages need (coordinate frame, base station, antenna offsets, vehicle, the capture's hardware record, the list of captures) are written into the shared project whenever you change them in PosPro.</p>
+<p>PosPro keeps its own settings in <code>01_PosPro/pospro.json</code> and its work in <code>01_PosPro/WORK/</code> (extracted data, intermediate files, results). Shared facts that the other stages need (coordinate frame, base station, antenna offsets, vehicle, the capture's hardware record, the list of captures) are written into the shared project whenever you change them in PosPro.</p>
 
 <h1 id="step1"><span class="num">{N}</span>Step 1 – Data</h1>
 <div class="tip"><b>Why here</b> Everything is computed from the rover files. Reading them first shows how complete the recording is (IMU and satellite coverage, gaps) before any time is spent on it; a recording with holes is better found now than after processing.</div>
@@ -498,6 +498,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 
 <h2 id="holes">Recording holes</h2>
 <p>When the recording lost INS data (mapper 2.9.0 recordings lost about a third, in holes of 0.5–3 s), the trajectory has no records in those holes and every program draws a straight line across them. The finalized trajectory lists them (<code>trajectory.json</code>, <code>recording_holes</code>) and Trajectory Review says at the top how much is missing, e.g. <i>Recording holes: the trajectory has no data for 35% of its time (841 holes, longest 110.4 s)</i>. Bridging them one by one here does not bring the motion back; <b>StripPro</b> recovers it from the Lidar.</p>
+<p>Only the time while survey lines were recorded counts (PosPro 2.10.0): with the mapper's one-file-per-day recordings, the time the system was off between lines is not a hole. Trajectory Review gives it as a plain line, e.g. <i>System off 12:05–13:40 UTC.</i></p>
 
 <h2 id="cloud">Problem areas from the point cloud</h2>
 <p>Some trajectory errors are invisible to PosPro's own checks, for example when both passes hold the same wrong fix: the limits above see nothing, but the points of that line do not lie on the other lines' points. CloudPro measures this (<i>project menu › Check line separation</i> in CloudPro) and lists each local problem area with the line at fault and the time its points were taken. PosPro reads that list from CloudPro's folder of the same job and shows it here:</p>
@@ -562,7 +563,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <figure><img src="fig/export.png"><figcaption><b>Figure {N}.1</b> The Export page with SBET + SMRMSG, a text file with seven columns and a GPX track chosen.</figcaption></figure>
 <table>
 <tr><th>Setting</th><th>What it does</th></tr>
-<tr><td><span class="ui">Folder</span></td><td>Where the files go; by default <code>01_PosPro/export</code> in the project. <span class="ui">Browse…</span> opens a folder picker.</td></tr>
+<tr><td><span class="ui">Folder</span></td><td>Where the files go; by default the project's <code>&lt;Name&gt;/EXPORT</code> folder (<code>01_PosPro/export</code> in a project made before DCS Core 1.18.0). <span class="ui">Browse…</span> opens a folder picker.</td></tr>
 <tr><td><span class="ui">Position of</span></td><td><i>IMU centre</i> (the Certus reference point), the output point from the Installation page (by its name, when its offset is not zero), or <i>GNSS antenna</i> (GPS1).</td></tr>
 <tr><td><span class="ui">Rate</span></td><td>Every sample, 200, 100, 50, 10 or 1&nbsp;Hz.</td></tr>
 <tr><td><span class="ui">Data-page time range only</span></td><td>Export only the time range set on the Data page.</td></tr>
@@ -583,7 +584,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <p>Heights are ellipsoidal, in the frame of the base station's position (for PPP: ITRF2020 at the observation date; for the real-time mode: the frame of the Certus real-time solution, that is of the RTK corrections used in the field). Apply the geoid in the point-cloud processing. SBET velocities are north, east, down with wander angle 0; angles are in radians. Use the same reference point in the point-cloud processing as in the export.</p>
 
 <h2>What PosPro hands to AlignPro and CloudPro</h2>
-<p>At the end of every processing run, and after every review decision that changes the trajectory, PosPro finalizes the trajectory in <code>01_PosPro/out/</code>. You do not need the Export page for AlignPro and CloudPro: they read these files.</p>
+<p>At the end of every processing run, and after every review decision that changes the trajectory, PosPro finalizes the trajectory in <code>01_PosPro/OUT/</code>. You do not need the Export page for AlignPro and CloudPro: they read these files.</p>
 <table>
 <tr><th>File</th><th>Content</th></tr>
 <tr><td><code>trajectory_sbet.out</code></td><td>SBET at the Certus reference point (IMU centre), every sample</td></tr>
@@ -686,14 +687,14 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 
 <h2>Folders</h2>
 <table>
-<tr><th>Path (in <code>Processing/&lt;Name&gt;/01_PosPro/</code>)</th><th>Holds</th></tr>
+<tr><th>Path (in <code>&lt;Name&gt;/01_PosPro/</code>)</th><th>Holds</th></tr>
 <tr><td><code>pospro.json</code></td><td>PosPro's settings, bases, results summary and review decisions</td></tr>
-<tr><td><code>work/extract/</code></td><td>The data read from the captures (IMU, observations, real-time track, coverage, hardware record)</td></tr>
-<tr><td><code>work/base/</code></td><td>Downloaded and prepared base files, base PPP</td></tr>
-<tr><td><code>work/gnss/</code>, <code>work/ins/</code></td><td>GNSS solutions, inertial passes and their settings</td></tr>
-<tr><td><code>work/results/</code></td><td>The combined trajectory, its quality table and their untouched copies for Trajectory Review</td></tr>
-<tr><td><code>out/</code></td><td>The finalized trajectory for AlignPro and CloudPro</td></tr>
-<tr><td><code>export/</code></td><td>Exports (default folder)</td></tr>
+<tr><td><code>WORK/extract/</code></td><td>The data read from the captures (IMU, observations, real-time track, coverage, hardware record)</td></tr>
+<tr><td><code>WORK/base/</code></td><td>Downloaded and prepared base files, base PPP</td></tr>
+<tr><td><code>WORK/gnss/</code>, <code>WORK/ins/</code></td><td>GNSS solutions, inertial passes and their settings</td></tr>
+<tr><td><code>WORK/results/</code></td><td>The combined trajectory, its quality table and their untouched copies for Trajectory Review</td></tr>
+<tr><td><code>OUT/</code></td><td>The finalized trajectory for AlignPro and CloudPro</td></tr>
+<tr><td><code>&lt;Name&gt;/EXPORT/</code></td><td>Exports (default folder; <code>01_PosPro/export/</code> in a project made before DCS Core 1.18.0)</td></tr>
 </table>
 
 <h2 id="rec">Recording settings</h2>
@@ -718,6 +719,7 @@ figure img[src="fig/calibration.png"]{max-height:62mm}
 <h1 id="history"><span class="num">{N}</span>Version history</h1>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>2.10.0</b></td><td><b>File structure</b> (DCS Core 1.18.0): a new project sits beside the mapper's day folders; PosPro's folder is <code>&lt;Name&gt;/01_PosPro</code> with <code>WORK</code> and <code>OUT</code>, and Export goes to the project's <code>EXPORT</code> folder by default. Menu: <span class='ui'>Plugins › CLDS</span>. Recording holes count only while survey lines were recorded; the time the system was off between lines is shown as information (<i>System off … UTC</i>).</td></tr>
 <tr><td><b>2.9.0</b></td><td>Marine: <b>Motion check</b> on the Quality page: the heads against each other and against the autopilot (straight, in turns), the roll error in turns, the heads' clock offset and the autopilot heading against the course; in the trajectory handover too.</td></tr>
 <tr><td><b>2.8.0</b></td><td>Marine surveys over several days: recordings ticked in or out and added from other folders on the Data page (for the whole job), the coverage bar shows each recording with the gaps between them, two recordings at the same time are refused, and each recording is processed with the base on the Base page that covers it (one base per day). Fixed: processing stopped with "float division by zero" when a recording held its Reach log twice; Emlid's SBAS log (.26B) is no longer given to PPK as a navigation file. Needs DCS Core 1.17.0.</td></tr>
 <tr><td><b>2.7.0</b></td><td>Marine jobs on the mobile mapping pages: Data (time range, satellite ephemeris), Processing (GNSS settings, passes, Boat group), Quality, Trajectory Review and the Trajectory editor, Export (text, GeoPackage, GPX; position of the antenna or a sonar head). The base finder centres on the survey.</td></tr>

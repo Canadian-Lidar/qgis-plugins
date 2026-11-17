@@ -376,6 +376,58 @@ class TestSonarClraw(unittest.TestCase):
         self.assertFalse(os.path.exists(out) and any(fs for _r, _d, fs in os.walk(out)))
 
 
+
+class TestDayFolder(unittest.TestCase):
+    """File structure of 17 Nov 2026: a SonarView recording kept in <job>/<YYYYMMDD>/SONAR/ is converted into
+    <job>/<YYYYMMDD>/CLRAW/YYYYMMDD_NNN_SSS.clraw, NNN the next free number of the day, kept when made again."""
+
+    def test_day_clraw(self):
+        from dcs_core.project import DcsProject
+        tmp = tempfile.mkdtemp()
+        try:
+            job = os.path.join(tmp, "Greenstone")
+            day = time.strftime("%Y%m%d", time.gmtime(T0))
+            son = os.path.join(job, day, "SONAR")
+            os.makedirs(son)
+            os.makedirs(os.path.join(job, day, "GNSS"))
+            make_svlz(os.path.join(son, "2026-09-21-10-00.svlz"), seconds=2.0)
+            make_llh(os.path.join(job, day, "GNSS", "reach.LLH"), T0 - 600, T0 + 600)
+            items = sources.scan([job])
+            self.assertEqual([i.name for i in items], ["2026-09-21-10-00"])
+            it = items[0]
+            self.assertEqual(sorted((g.role, g.name) for g in it.gnss), [("rover", "reach.LLH")])
+            clr = os.path.join(job, day, "CLRAW")
+            self.assertEqual(make.target("/elsewhere", it, sources.CLRAW), clr)
+            # a mapper line already in the folder: the recording takes the next number
+            open(os.path.join(clr if os.path.isdir(clr) else os.makedirs(clr) or clr,
+                              "%s_004_001.clraw" % day), "wb").close()
+            r = make.run(it, [sources.CLRAW], "/elsewhere")[sources.CLRAW]
+            self.assertEqual(r["folder"], clr)
+            self.assertEqual(r["files"], ["%s_005_001.clraw" % day])
+            cf = clraw.ClrawFile(os.path.join(clr, r["files"][0]))
+            self.assertEqual((cf.metadata["line"], cf.metadata["capture"], cf.metadata["capture_name"]),
+                             ("5", "%s_005" % day, "2026-09-21-10-00"))
+            self.assertEqual(make.state("/elsewhere", it, sources.CLRAW), "current")
+            self.assertFalse(os.path.exists("/elsewhere"))
+            # made again (forced): the same number, the same files, nothing left over
+            r2 = make.run(it, [sources.CLRAW], "/elsewhere", force=True)[sources.CLRAW]
+            self.assertEqual(r2["files"], r["files"])
+            self.assertEqual(sorted(n for n in os.listdir(clr) if not n.startswith(".")),
+                             ["%s_004_001.clraw" % day, "%s_005_001.clraw" % day])
+            # a second recording of the day: the next number
+            make_svlz(os.path.join(son, "2026-09-21-11-00.svlz"), seconds=1.0)
+            items = {i.name: i for i in sources.scan([job])}
+            r3 = make.run(items["2026-09-21-11-00"], [sources.CLRAW], "/elsewhere")[sources.CLRAW]
+            self.assertEqual(r3["files"], ["%s_006_001.clraw" % day])
+            # the DCS project finds both recordings in the day folder, never in its own folder
+            p = DcsProject.create(job, "J")
+            got = [os.path.basename(f) for f in p.sonar_clraw_files()]
+            self.assertEqual(got, ["%s_005_001.clraw" % day, "%s_006_001.clraw" % day])
+            self.assertEqual(clraw.group_recordings([os.path.join(clr, f) for f in got], sonar=True).__len__(), 2)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 @unittest.skipUnless(REAL, "no real SonarView recording here (REMIXPRO_SVLZ)")
 class TestRealRecording(unittest.TestCase):
     def test_real_lossless(self):

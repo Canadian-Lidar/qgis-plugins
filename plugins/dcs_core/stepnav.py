@@ -36,10 +36,8 @@ LABELS = {"pospro": "PosPro", "alignpro": "AlignPro", "strippro": "StripPro", "c
 
 
 def next_stage(stage):
-    """The plugin after `stage` in the chain (1.13.0): AlignPro continues in StripPro when StripPro is
-    installed (it is optional), else in CloudPro."""
-    if stage == "alignpro" and registry.has("strippro"):
-        return "strippro"
+    """The plugin after `stage` in the chain. 1.18.0 (Sean, 17 Nov 2026): AlignPro continues in CloudPro;
+    StripPro is run after CloudPro only when CloudPro shows line separation, and continues back in CloudPro."""
     n = NEXT_PLUGIN.get(stage)
     return n[0] if n else None
 _MARK = {"done": "✓", "warn": "⚠", "error": "✕", "todo": "○", "running": "…"}

@@ -26,7 +26,7 @@
 </ol>
 <h2>Opening RemixPro</h2>
 <ul>
-<li><span class="ui">Plugins › Canadian Lidar › Data Systems › RemixPro</span>, or the RemixPro button on the Plugins toolbar.</li>
+<li><span class="ui">Plugins › CLDS › RemixPro</span>, or the RemixPro button on the Plugins toolbar.</li>
 <li>This guide: the <span class="ui">?</span> button in the header, <span class="ui">User guide (this version)</span> in the project box, or <span class="ui">Help › Plugins › RemixPro user guide</span>.</li>
 </ul>
 
@@ -62,6 +62,7 @@
 <tr><td>Navigation</td><td>The whole Certus stream while a project was open (<code>&lt;Project&gt;_NAV_…</code>). It has no Lidar data, so BeamworX shows <i>n/a</i>. It is useful for full-day trajectories that cover every line.</td><td>Inertial Explorer, Qinertia</td></tr>
 <tr><td>Certus log</td><td>An <code>.anpp</code> file with no <code>.clraw</code> beside it, for example a capture from before mapper 2.8.</td><td>Inertial Explorer, Qinertia</td></tr>
 </table>
+<p><b>MapPro 2.11 day folders</b> (<code>&lt;Project&gt;/YYYYMMDD/</code>): each line's <code>.clraw</code> is in <code>CLRAW/</code> (<code>YYYYMMDD_001_001.clraw</code>), its Certus log in <code>IMU/</code> (<code>ins_YYYYMMDD_0001.anpp</code>) with the day's <code>ephemeris_cache.anpp</code>, and the navigation in <code>NAV/</code>. Which log belongs to which line comes from the day's <code>session.json</code>; a line is listed as <code>&lt;Project&gt;_YYYYMMDD_001</code>.</p>
 <p>Lines are recognised from the information recorded inside each file, never from file names, exactly as in PosPro, AlignPro and CloudPro. So a line split over several files is one row, and old and new folder names can be mixed. Hidden files (<code>.mapper-mirror.json</code>), unfinished files (<code>*.partial</code>), <code>Processing</code> folders and the mapper's own older conversions are skipped.</p>
 <h2>Lines that are not complete</h2>
 <p>The mapper copies lines to a USB drive while it records. A 2.10 line counts as complete once its <code>continuity.json</code> and <code>manifest.sha256</code> are there. A line without them is shown in amber as <i>(incomplete)</i>, is not ticked, and is skipped unless you tick <span class="ui">Include incomplete lines</span>. Then only the files that are already finished are converted. Open the folder again (<span class="ui">Look again</span> in the project box) when the copy has finished.</p>
@@ -93,7 +94,7 @@
 <h1><span class="num">{N}</span>Where the files go</h1>
 <p>The default output folder:</p>
 <ul>
-<li>with a DCS project open: <code>Processing/&lt;Name&gt;/RemixPro/</code>, inside the project, beside <code>01_PosPro</code> and the other stages;</li>
+<li>with a DCS project open: <code>&lt;Name&gt;/00_RemixPro/</code>, inside the project, beside <code>01_PosPro</code> and the other stages (<code>RemixPro/</code> in a project made before DCS Core 1.18.0);</li>
 <li>for recordings inside a mapper project folder (on the drive, a USB copy or a project download): <code>&lt;Project&gt;/Processing/RemixPro/</code>;</li>
 <li>otherwise: a <code>RemixPro</code> folder beside what you opened.</li>
 </ul>
@@ -107,6 +108,7 @@
                          README_QINERTIA.txt
   Deck_Test_NAV_20261104_124452/
     inertial_explorer/  qinertia/</pre>
+<p>A SonarView recording's <code>.clraw</code> does not go there: it goes into the day folder of the job, like the mapper's own recordings, as <code>&lt;job&gt;/YYYYMMDD/CLRAW/YYYYMMDD_NNN_001.clraw</code> (<code>_002</code> … when it is split). <code>YYYYMMDD</code> is the UTC date the recording started and <code>NNN</code> its number in that day: the next free one, after any lines already there, and the same number when the recording is made again. The job is the open DCS project's job folder; without a project, the folder holding the recording's day folder (keep the recordings in <code>&lt;job&gt;/YYYYMMDD/SONAR/</code> and the Reach files in <code>&lt;job&gt;/YYYYMMDD/GNSS/</code>). A recording outside a day folder, with no DCS project open, still goes into the output folder above.</p>
 <p>RemixPro refuses an output folder that is the folder holding the recording itself. <span class="ui">Open output folder</span> opens it in your file manager.</p>
 
 <h1><span class="num">{N}</span>Using the files</h1>

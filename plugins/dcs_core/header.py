@@ -66,7 +66,7 @@ class PluginHeader(QWidget):
         row.addWidget(Logo(40))
         brand = QVBoxLayout()
         brand.setSpacing(1)
-        self.group_label = QLabel(dcs_menu.GROUP)
+        self.group_label = QLabel(getattr(dcs_menu, "BRAND", None) or dcs_menu.GROUP)
         self.group_label.setObjectName("ppBrandTitle")
         theme.caps(self.group_label, 107)
         self.name_label = QLabel(name)           # the name as written: PosPro, AlignPro, CloudPro
