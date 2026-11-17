@@ -1,4 +1,4 @@
-"""StripPro QGIS plugin entry: Plugins > Canadian Lidar > Data Systems > StripPro.
+"""StripPro QGIS plugin entry: Plugins > CLDS > StripPro.
 
 The optional stage between AlignPro and CloudPro: it reads PosPro's trajectory, AlignPro's calibration and the
 survey lines, corrects the trajectory from the point cloud and finalizes it for CloudPro. Needs DCS Core."""
@@ -12,7 +12,7 @@ except ImportError:          # QGIS 3 / Qt5
     from qgis.PyQt.QtWidgets import QAction
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CORE_API = 16
+CORE_API = 19
 ICON = os.path.join(HERE, "icons", "strippro.svg")
 
 

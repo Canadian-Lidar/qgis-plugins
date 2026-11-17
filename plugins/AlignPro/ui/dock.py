@@ -542,15 +542,16 @@ class AlignProDock(PluginWindow):
             self.open_project(rec[0])
 
     def new_project(self):
-        """A new DCS project in the job folder (Processing/<Name>/); AlignPro works in 02_AlignPro."""
+        """A new DCS project in the job folder (<Name>.dcsproj and <Name>/); AlignPro works in 02_AlignPro."""
         from dcs_core import dialogs as dd
         from qgis.PyQt.QtWidgets import QMessageBox
         dcs = dd.new_project(self, "AlignPro")
         if dcs is None:
             return
         from ..core import clraw
+        from dcs_core.project import in_processing
         found = clraw.split_navigation([f for f in clraw.find_clraw([dcs.job_folder])
-                                        if os.sep + "Processing" + os.sep not in os.path.abspath(f)])[0]
+                                        if not in_processing(f, os.path.dirname(dcs.job_folder))])[0]
         if found and not dcs.capture_files():
             names = "\n".join(os.path.relpath(f, dcs.job_folder) for f in found[:12])
             more = "\n\u2026 and %d more" % (len(found) - 12) if len(found) > 12 else ""

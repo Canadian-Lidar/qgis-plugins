@@ -90,8 +90,8 @@ check(p.traj_info.get("source") == "pospro" and p.traj_info.get("handover_id") =
 check(len(p.lines) == len(files), "%d lines from the shared captures" % len(p.lines))
 check(p.dcs.shared("lidar_mounting")["mount_deg"] == truth["mount_entered"],
       "shared lidar_mounting = recorded mounting %s" % p.dcs.shared("lidar_mounting")["mount_deg"])
-check(os.path.isdir(os.path.join(p.folder, "work")) and any(f.startswith("line_") for f in
-                                                           os.listdir(os.path.join(p.folder, "work"))),
+check(os.path.isdir(p.work) and any(f.startswith("line_") for f in
+                                                           os.listdir(p.work)),
       "line caches in 02_AlignPro/work")
 p.start_run_log("auto_calibration")
 with p.dcs.run("alignpro", "AlignPro", "1.1.0"):
@@ -142,7 +142,7 @@ with p2.dcs.run("alignpro", "AlignPro", "1.1.0"):
 new_job = os.path.join(WORK, "moved", "Job_Oct20")
 os.makedirs(os.path.dirname(new_job))
 shutil.move(job, new_job)
-d3 = DcsProject.open(os.path.join(new_job, "Processing", "PatchTest_Oct20", "PatchTest_Oct20.dcsproj"))
+d3 = DcsProject.open(os.path.join(new_job, "PatchTest_Oct20.dcsproj"))
 check(len(d3.missing_captures()) > 0 or True, "captures looked up relative to the project")
 still = d3.relocate(new_job, "AlignPro")
 check(not still, "relocated")

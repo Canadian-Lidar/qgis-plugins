@@ -148,9 +148,15 @@ def _merge(base, over):
 STAGE_FILE = "pospro.json"
 
 
+
+def _sub(dcs, name):
+    """A stage subfolder's name: WORK / OUT / LOG in a layout 2 DCS project (DCS Core 1.18.0), else as given."""
+    f = getattr(dcs, "sub", None)
+    return f(name) if f else name
+
 class Project:
     """PosPro's settings. In a DCS project (the normal case since 1.2) they
-    live in Processing/<Name>/01_PosPro/pospro.json and self.dcs is the shared
+    live in <Name>/01_PosPro/pospro.json and self.dcs is the shared
     project; a stand-alone .pospro.json from earlier versions still opens
     (self.dcs is None)."""
 
@@ -200,9 +206,16 @@ class Project:
 
     @property
     def out_dir(self):
-        d = os.path.join(self.folder, "out")
+        d = os.path.join(self.folder, _sub(self.dcs, "out"))
         os.makedirs(d, exist_ok=True)
         return d
+
+    @property
+    def export_dir(self):
+        """Where exports go by default: the job's one deliverables folder <name>/EXPORT (layout 2 DCS project,
+        DCS Core 1.18.0), else export/ beside PosPro's settings."""
+        f = getattr(self.dcs, "export_dir", None)
+        return (f(create=False) if f else None) or os.path.join(self.folder, "export")
 
     def _shared_horizontal(self):
         """The projected CRS PosPro offers the next stages: the one the user exports easting/northing in.
@@ -334,7 +347,7 @@ class Project:
 
     @property
     def work_dir(self):
-        return os.path.join(self.folder, "work")
+        return os.path.join(self.folder, _sub(self.dcs, "work"))
 
     def wpath(self, *parts):
         p = os.path.join(self.work_dir, *parts)

@@ -1038,7 +1038,7 @@ class MainWindow(QtWidgets.QMainWindow):
                   "Processing the side scan")
 
     def _ss_exports(self):
-        d = os.path.join(self.project.root, "Exports", "SideScan")
+        d = self.project.export_dir or os.path.join(self.project.root, "Exports", "SideScan")
         os.makedirs(d, exist_ok=True)
         return d
 
@@ -3241,7 +3241,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def export(self):
         if self.project is None or self._guard("exporting"):
             return
-        d = ExportDialog(self, self.project.lines, os.path.join(self.project.root, self.project.name + ".las"),
+        d = ExportDialog(self, self.project.lines, os.path.join(self.project.export_dir or self.project.root,
+                                                                self.project.name + ".las"),
                          self.project.store.class_counts(), self.project.data.get("export_classes"),
                          self.project.data.get("export_format"), self._line_layers(),
                          self.project.data.get("export_sections"))

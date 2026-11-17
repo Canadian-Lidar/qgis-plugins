@@ -1,7 +1,17 @@
 """The shared DCS project (.dcsproj): one per job, used by every DCS plugin.
 
+Layout 2 (DCS Core 1.18.0, Sean 17 Nov 2026), beside the mapper's day folders:
+
+    <Project>/project.json, <YYYYMMDD>/...          the mapper's folder, as copied from the drive
+    <Project>/<Name>.dcsproj, <Name>.qgz
+    <Project>/<Name>/00_RemixPro/                    conversions (BeamworX, Inertial Explorer, Qinertia)
+                     01_PosPro/ 02_AlignPro/ 03_CloudPro/ 04_StripPro/   (WORK/ OUT/ LOG/)
+                     EXPORT/                         every deliverable
+
+Layout 1 (projects made before 1.18.0) keeps working where it is:
+
     JobFolder/Processing/<Name>/<Name>.dcsproj
-                                01_PosPro/ 02_AlignPro/ 03_CloudPro/  (work/ out/ log/)
+                                01_PosPro/ 02_AlignPro/ 02_StripPro/ 03_CloudPro/  (work/ out/ log/)
 
 Every change goes through modify(): the file is re-read under a short lock,
 the change applied to the fresh copy and written back atomically, so two
@@ -19,14 +29,20 @@ from . import files, locks
 SCHEMA = "dcs.project/1"
 SUFFIX = ".dcsproj"
 
-# (key, folder, label, schema of its handover file, handover file name)
+LAYOUT = 2                      # 1.18.0: the processing folder beside the mapper's day folders (see above)
+# (key, folder, label, schema of its handover file, handover file name), in run order
 STAGES = [
     ("pospro", "01_PosPro", "PosPro", "dcs.trajectory/1", "trajectory.json"),
     ("alignpro", "02_AlignPro", "AlignPro", "dcs.alignment/1", "alignment.json"),
-    # optional (DCS Core 1.13.0): the trajectory corrected from the point cloud; CloudPro uses it when finalized
-    ("strippro", "02_StripPro", "StripPro", "dcs.trajectory/1", "trajectory.json"),
     ("cloudpro", "03_CloudPro", "CloudPro", "dcs.cloud/1", "cloud.json"),
+    # optional (DCS Core 1.13.0): the trajectory corrected from the point cloud, run when CloudPro shows line
+    # separation; CloudPro then georeferences with it once it is finalized
+    ("strippro", "04_StripPro", "StripPro", "dcs.trajectory/1", "trajectory.json"),
 ]
+LAYOUT1_FOLDERS = {"strippro": "02_StripPro"}  # stage folders of layout 1 projects that differ
+REMIX_FOLDER = "00_RemixPro"
+EXPORT_FOLDER = "EXPORT"
+SUBFOLDERS = ("work", "out", "log", "filters")  # stage subfolders: upper case in layout 2
 STAGE = {s[0]: s for s in STAGES}
 UPSTREAM = {"pospro": [], "alignpro": ["pospro"], "strippro": ["pospro", "alignpro"],
             "cloudpro": ["pospro", "alignpro", "strippro"]}
@@ -63,6 +79,33 @@ def safe_name(name):
 
 def value_hash(v):
     return hashlib.sha256(json.dumps(v, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+def is_processing_dir(parent, name):
+    """True when the folder `name` in `parent` holds processing results, never raw data: a Processing folder
+    (layout 1) or a project's folder beside its <name>.dcsproj (layout 2)."""
+    return name.lower() == "processing" or os.path.isfile(os.path.join(parent, name + SUFFIX))
+
+
+def in_processing(path, stop=None):
+    """True when path lies inside a processing folder (is_processing_dir), looking no higher than stop."""
+    d = os.path.dirname(os.path.abspath(path))
+    stop = os.path.normcase(os.path.abspath(stop)) if stop else None
+    for _ in range(12):
+        up = os.path.dirname(d)
+        if up == d:
+            break
+        if is_processing_dir(up, os.path.basename(d)):
+            return True
+        if stop and os.path.normcase(up) == stop:
+            break
+        d = up
+    return False
+
+
+def prune_walk(root, dirs):
+    """For os.walk: drop processing folders and hidden folders from dirs in place."""
+    dirs[:] = [d for d in dirs if not d.startswith(".") and not is_processing_dir(root, d)]
 
 
 _FP_CACHE = {}          # abs path -> (size, mtime_ns, fingerprint): the latest only, so it cannot grow
@@ -113,21 +156,23 @@ class DcsProject:
     # ------------------------------------------------------------- create/open
     @classmethod
     def create(cls, job_folder, name, processing_root=None, plugin="DCS"):
-        """New project for the captures in job_folder. The project folder is
-        <processing_root or job_folder/Processing>/<name>/."""
+        """New project for the captures in job_folder (layout 2): <root>/<name>.dcsproj and the processing folder
+        <root>/<name>/, root = processing_root or the job folder itself."""
         name = safe_name(name)
         job_folder = os.path.abspath(job_folder)
         if not os.path.isdir(job_folder):
             raise ProjectError("the job folder %s does not exist" % job_folder)
-        root = os.path.abspath(processing_root) if processing_root else os.path.join(job_folder, "Processing")
-        folder = os.path.join(root, name)
+        folder = os.path.abspath(processing_root) if processing_root else job_folder
         path = os.path.join(folder, name + SUFFIX)
         if os.path.exists(path):
-            raise ProjectError("a project called %s already exists in %s; open it instead" % (name, root))
-        os.makedirs(folder, exist_ok=True)
-        data = {"schema": SCHEMA, "name": name, "created": now(), "modified": now(), "created_by": plugin,
-                "raw_root": files.portable(job_folder, folder), "captures": [], "shared": {}, "shared_meta": {},
-                "stages": {}}
+            raise ProjectError("a project called %s already exists in %s; open it instead" % (name, folder))
+        work = os.path.join(folder, name)
+        if os.path.isdir(work) and os.listdir(work):
+            raise ProjectError("%s already holds a folder called %s; choose another name" % (folder, name))
+        os.makedirs(work, exist_ok=True)
+        data = {"schema": SCHEMA, "name": name, "layout": LAYOUT, "created": now(), "modified": now(),
+                "created_by": plugin, "raw_root": files.portable(job_folder, folder), "captures": [], "shared": {},
+                "shared_meta": {}, "stages": {}}
         files.atomic_write_json(path, data)
         return cls(path, data)
 
@@ -135,9 +180,15 @@ class DcsProject:
     def open(cls, path):
         if os.path.isdir(path):
             cands = [f for f in os.listdir(path) if f.endswith(SUFFIX)]
-            if not cands:
+            beside = os.path.abspath(path) + SUFFIX      # layout 2: the processing folder, its .dcsproj beside it
+            if os.path.basename(path) + SUFFIX in cands:
+                path = os.path.join(path, os.path.basename(path) + SUFFIX)
+            elif cands:
+                path = os.path.join(path, sorted(cands)[0])
+            elif os.path.isfile(beside):
+                path = beside
+            else:
                 raise ProjectError("no %s file in %s" % (SUFFIX, path))
-            path = os.path.join(path, sorted(cands)[0])
         try:
             data = files.read_json_retry(path)
         except (OSError, ValueError) as e:
@@ -159,18 +210,25 @@ class DcsProject:
         """The project whose folder contains path (any file or folder in it), or None."""
         p = os.path.abspath(path)
         if os.path.isfile(p):
+            if p.endswith(SUFFIX):
+                return cls.open(p)
             p = os.path.dirname(p)
-        for _ in range(6):
+        child = None
+        for _ in range(7):
             try:
-                c = [f for f in os.listdir(p) if f.endswith(SUFFIX)]
+                c = sorted(f for f in os.listdir(p) if f.endswith(SUFFIX))
             except OSError:
                 c = []
             if c:
-                return cls.open(os.path.join(p, sorted(c)[0]))
+                # layout 2: several projects can sit in one job folder; the one whose folder the path is in
+                for want in (child, os.path.basename(p)):
+                    if want and want + SUFFIX in c:
+                        return cls.open(os.path.join(p, want + SUFFIX))
+                return cls.open(os.path.join(p, c[0]))
             up = os.path.dirname(p)
             if up == p:
                 break
-            p = up
+            child, p = os.path.basename(p), up
         return None
 
     def reload(self):
@@ -221,13 +279,52 @@ class DcsProject:
     def job_folder(self):
         return files.resolve(self.data.get("raw_root", ".."), self.folder)
 
+    @property
+    def layout(self):
+        try:
+            return int(self.data.get("layout") or 1)
+        except (TypeError, ValueError):
+            return 1
+
+    @property
+    def work_root(self):
+        """The folder holding the stage folders: <folder>/<name>/ (layout 2), the project folder (layout 1)."""
+        return os.path.join(self.folder, self.name) if self.layout >= 2 else self.folder
+
     def qgis_project_path(self):
         return os.path.join(self.folder, self.name + ".qgz")
 
+    def sub(self, name):
+        """A stage subfolder's name in this project's layout: WORK / OUT / LOG (layout 2), work / out / log."""
+        return name.upper() if self.layout >= 2 and name.lower() in SUBFOLDERS else name
+
+    def stage_folder(self, stage):
+        if self.layout < 2 and stage in LAYOUT1_FOLDERS:
+            return LAYOUT1_FOLDERS[stage]
+        return STAGE[stage][1]
+
     def stage_dir(self, stage, sub=None, create=True):
-        d = os.path.join(self.folder, STAGE[stage][1])
+        d = os.path.join(self.work_root, self.stage_folder(stage))
         if sub:
-            d = os.path.join(d, sub)
+            parts = sub.replace("\\", "/").split("/")
+            d = os.path.join(d, self.sub(parts[0]), *parts[1:])
+        if create:
+            os.makedirs(d, exist_ok=True)
+        return d
+
+    def remix_dir(self, create=False):
+        """RemixPro's conversions: <name>/00_RemixPro (layout 2), <project folder>/RemixPro (layout 1)."""
+        d = os.path.join(self.work_root, REMIX_FOLDER) if self.layout >= 2 else os.path.join(self.folder, "RemixPro")
+        if create:
+            os.makedirs(d, exist_ok=True)
+        return d
+
+    def export_dir(self, *parts, create=True):
+        """The project's one deliverables folder <name>/EXPORT/<parts> (layout 2); None in a layout 1 project,
+        whose plugins keep their own export folders."""
+        if self.layout < 2:
+            return None
+        d = os.path.join(self.work_root, EXPORT_FOLDER, *parts)
         if create:
             os.makedirs(d, exist_ok=True)
         return d
@@ -252,8 +349,10 @@ class DcsProject:
         for p in paths:
             p = os.path.abspath(p)
             folder = os.path.dirname(p)
-            # the capture folder is the one holding lidar/ ins/ (mapper layout)
-            if os.path.basename(folder).lower() in ("ins", "lidar", "processed", "beamworx"):
+            # the capture folder is the one holding lidar/ ins/ (mapper layout), the day folder holding
+            # NAV/ LIDAR/ IMU/ CLRAW/ ... (layout 2, 1.18.0)
+            if os.path.basename(folder).lower() in ("ins", "lidar", "processed", "beamworx", "nav", "imu", "clraw",
+                                                    "sonar", "gnss", "base"):
                 folder = os.path.dirname(folder)
             groups.setdefault(folder, []).append(p)
 
@@ -274,14 +373,15 @@ class DcsProject:
         if max_age and c and time.monotonic() - c[0] < max_age:
             return list(c[1])
 
-        proc = os.path.normcase(os.path.abspath(self.folder)) + os.sep
+        proc = os.path.normcase(os.path.abspath(self.work_root)) + os.sep
+        job = self.job_folder
 
         def walk(paths):
             found = clraw.find_clraw([p for p in paths if os.path.exists(p)])
             out = []
             for f in found:
                 a = os.path.normcase(os.path.abspath(f))
-                if a.startswith(proc) or "processing" in [x.lower() for x in a.split(os.sep)[:-1]]:
+                if a.startswith(proc) or in_processing(f, os.path.dirname(job)):
                     continue
                 out.append(f)
             return out
@@ -306,7 +406,7 @@ class DcsProject:
         found = []
         for r in roots:
             for root, dirs, fs in os.walk(r):
-                dirs[:] = [d for d in dirs if d.lower() != "processing"]
+                prune_walk(root, dirs)
                 found += [os.path.join(root, f) for f in fs if f.lower().endswith(".clraw")]
         found += [f for f in self.sonar_added() if os.path.exists(f)]
         seen, uniq = set(), []
@@ -401,7 +501,7 @@ class DcsProject:
 
     def update_stage(self, key, by="DCS", **fields):
         def fn(d):
-            s = d["stages"].setdefault(key, {"folder": STAGE[key][1]})
+            s = d["stages"].setdefault(key, {"folder": self.stage_folder(key)})
             s.update(fields)
         self.modify(fn, by)
 
@@ -441,7 +541,7 @@ class DcsProject:
         """(state, reasons): state is none, running, failed, done or stale."""
         s = self.stage(key)
         st = s.get("status", "none")
-        lk = locks.read(os.path.join(self.folder, STAGE[key][1], ".lock"))
+        lk = locks.read(os.path.join(self.stage_dir(key, create=False), ".lock"))
         if lk and locks.is_live(lk):
             return "running", ["%s is running on %s" % (lk.get("plugin", "a plugin"), lk.get("host", "?"))]
         if st == "running":

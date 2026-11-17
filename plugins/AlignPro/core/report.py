@@ -214,7 +214,8 @@ def _report_files(parent, depth=6):
         if root.count(os.sep) - base >= depth:
             dirs[:] = []
         dirs[:] = [d for d in dirs if d.lower() not in ("work", "log", "lidar", "ins", "clraw", "processed",
-                                                         "__pycache__")]
+                                                         "__pycache__", "nav", "imu", "sonar", "gnss", "base",
+                                                         "export", "00_remixpro")]
         for f in files:
             if f.startswith("Report_") and f.endswith(".txt"):
                 yield os.path.join(root, f)
@@ -222,7 +223,7 @@ def _report_files(parent, depth=6):
 
 def history(parent):
     """Calibration reports of this and sibling projects: everything under `parent` (by default the
-    folder above the job folders), so each job's Processing/<Name>/02_AlignPro/out is found."""
+    folder above the job folders), so each job's <Name>/02_AlignPro/OUT is found."""
     out = []
     pats = [list(_report_files(parent))]
     seen = set()

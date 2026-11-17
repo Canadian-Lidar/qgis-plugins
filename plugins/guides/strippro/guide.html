@@ -1,7 +1,7 @@
 <!--#contents-->
 
 <h1><span class="num">{N}</span>Introduction</h1>
-<p>StripPro corrects the trajectory with the Lidar itself. It is the optional stage between AlignPro and CloudPro: it reads the trajectory PosPro finalized, the calibration AlignPro finalized and the survey lines, and finalizes a corrected trajectory that CloudPro georeferences with instead of PosPro's.</p>
+<p>StripPro corrects the trajectory with the Lidar itself. It is the optional last stage, run after CloudPro when CloudPro's line separation shows the lines do not sit on each other: it reads the trajectory PosPro finalized, the calibration AlignPro finalized and the survey lines, and finalizes a corrected trajectory that CloudPro then georeferences with instead of PosPro's (<span class='ui'>Update</span> in CloudPro).</p>
 <p>It does two things at once:</p>
 <ul>
 <li><b>Fills recording holes.</b> When the INS recording has holes (mapper 2.9.0 recordings lost about a third of the Certus data, in holes of 0.5–3 s), the trajectory is a straight line across each hole, and the points recorded in it are tilted and shifted wherever the vehicle rolled, pitched or turned. The Lidar kept recording. A surface it sees before, during and after a hole carries the vehicle's motion through the hole.</li>
@@ -9,7 +9,7 @@
 </ul>
 <p>The correction belongs to the trajectory, not to the points: one shift and one small rotation of the vehicle per line, changing over time. It is pinned where the trajectory had data, free inside holes and smooth everywhere. Every point the Lidar recorded then follows from the corrected trajectory, also the ones StripPro did not look at.</p>
 <figure><img src="fig/xsec_area12.png"><figcaption><b>Figure {N}.1</b> Shirley, a 2 m slice across the road where Line 5 was inside a 3.1 s hole. Left: as recorded, Line 5's road surface tilts 1.5 m down over 15 m. Right: after StripPro it lies on Line 4.</figcaption></figure>
-<div class="note"><b>Note</b> StripPro never changes PosPro's trajectory, AlignPro's calibration or the recordings. It writes its own trajectory in <code>Processing/&lt;Name&gt;/02_StripPro/out/</code>.</div>
+<div class="note"><b>Note</b> StripPro never changes PosPro's trajectory, AlignPro's calibration or the recordings. It writes its own trajectory in <code>&lt;Name&gt;/04_StripPro/OUT/</code>.</div>
 
 <h1><span class="num">{N}</span>Installing and opening StripPro</h1>
 <h2>Requirements</h2>
@@ -26,7 +26,7 @@
 </ol>
 <h2>Opening StripPro</h2>
 <ul>
-<li><span class="ui">Plugins › Canadian Lidar › Data Systems › StripPro</span>, the StripPro button on the Plugins toolbar, or <b>StripPro</b> in the chain of any DCS plugin's header (it appears there once StripPro is installed).</li>
+<li><span class="ui">Plugins › CLDS › StripPro</span>, the StripPro button on the Plugins toolbar, or <b>StripPro</b> in the chain of any DCS plugin's header (it appears there once StripPro is installed).</li>
 <li>Open the job with the project box (<span class="ui">Open a DCS project…</span>) or from the chain, which opens it on the same job.</li>
 </ul>
 
@@ -34,7 +34,7 @@
 <figure><img src="fig/strippro_window.png"><figcaption><b>Figure {N}.1</b> StripPro on Shirley after Align strips.</figcaption></figure>
 <table>
 <tr><th>Part</th><th>What it shows</th></tr>
-<tr><td>Header</td><td>The chain (PosPro › AlignPro › StripPro › CloudPro) and StripPro's two steps, <span class="ui">Align strips</span> and <span class="ui">Finalize</span>, coloured by state. Click a step to do it.</td></tr>
+<tr><td>Header</td><td>The chain (PosPro › AlignPro › CloudPro › StripPro) and StripPro's two steps, <span class="ui">Align strips</span> and <span class="ui">Finalize</span>, coloured by state. Click a step to do it.</td></tr>
 <tr><td>This job</td><td>The trajectory used (PosPro's, when it was finalized), its recording holes (share of the time with no data, number, longest), the calibration and the lines.</td></tr>
 <tr><td>Before and after</td><td>How far overlapping lines sit apart before and after (median and 95 %), between lines and within a line where it saw a surface twice; per line how far the correction moved its points (median, inside holes, 95 %).</td></tr>
 <tr><td>Correction over time</td><td>Per line, how far the correction moves a point 20 m from the vehicle, over the line's time; the holes are shaded. The large corrections should sit in the holes.</td></tr>
@@ -69,7 +69,7 @@
 <p>The 3.7 cm height difference between the two passes (GNSS between the two times) is shared out: +1.8 cm on Line 4, −1.8 cm on Line 5, so the average stays where the GNSS put it.</p>
 
 <h1><span class="num">{N}</span>What StripPro hands to CloudPro</h1>
-<p><code>02_StripPro/out/trajectory.json</code> is a <code>dcs.trajectory/1</code> handover like PosPro's, with <code>trajectory_sbet.out</code> and <code>trajectory_smrmsg.out</code>, the same time, frame, lever arms and quality fields, and a <code>strip</code> section: the PosPro trajectory and AlignPro calibration it was made from, how many records were filled into holes, the before and after. Its <code>recording_holes</code> are the holes left (outside the lines, where the vehicle was standing).</p>
+<p><code>04_StripPro/OUT/trajectory.json</code> is a <code>dcs.trajectory/1</code> handover like PosPro's, with <code>trajectory_sbet.out</code> and <code>trajectory_smrmsg.out</code>, the same time, frame, lever arms and quality fields, and a <code>strip</code> section: the PosPro trajectory and AlignPro calibration it was made from, how many records were filled into holes, the before and after. Its <code>recording_holes</code> are the holes left (outside the lines, where the vehicle was standing).</p>
 <p>CloudPro uses StripPro's trajectory while it is current. When PosPro or AlignPro finalize again, StripPro is out of date and CloudPro goes back to PosPro's trajectory until StripPro runs again.</p>
 
 <h1><span class="num">{N}</span>Questions</h1>

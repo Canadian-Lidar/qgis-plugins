@@ -67,6 +67,15 @@ def _dspin(lo, hi, dec, step, suffix="", val=0.0):
     return s
 
 
+def _proc_dir(parent, name):
+    """A project's processing folder beside its .dcsproj (DCS Core 1.18.0 layout)."""
+    try:
+        from dcs_core.project import is_processing_dir
+    except ImportError:
+        return False
+    return is_processing_dir(parent, name)
+
+
 def find_captures(job_folder, max_depth=5):
     """Mapper captures in a job folder: {"lines": survey line .clraw files, "nav": mapper 2.10 navigation
     recordings (.clraw), "anpp": Certus logs (.anpp), used only where there is no .clraw}. The Processing
@@ -77,7 +86,7 @@ def find_captures(job_folder, max_depth=5):
     for root, dirs, fs in os.walk(base):
         depth = root[len(base):].count(os.sep)
         dirs[:] = [x for x in dirs if x.lower() not in ("processing", "processed") and not x.startswith(".")
-                   and depth < max_depth]
+                   and depth < max_depth and not _proc_dir(root, x)]
         for f in fs:
             low = f.lower()
             if low.endswith(".clraw"):
@@ -2667,7 +2676,7 @@ class ExportPage(Page):
 
     def _refresh(self, p):
         e = p.cfg["export"]
-        self.folder.setText(e.get("folder") or os.path.join(p.folder, "export"))
+        self.folder.setText(e.get("folder") or p.export_dir)
         inst = p.cfg["installation"]
         self.point.clear()
         mp = self.dock.marine_export_points if self.dock._marine else None
@@ -2727,7 +2736,7 @@ class ExportPage(Page):
                                                     "stereographic system (e.g. EPSG:2953).")
                 return
         span = p.rover_span() if self.crop.isChecked() else None
-        out_dir = e["folder"] or os.path.join(p.folder, "export")
+        out_dir = e["folder"] or p.export_dir
 
         def work(ctx):
             files = pipeline.export(p, ctx, out_dir, e["rate_hz"], lever, e["sbet"],

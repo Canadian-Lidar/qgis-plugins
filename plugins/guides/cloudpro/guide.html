@@ -1,6 +1,6 @@
 <!--#vars {
 "EXTRAS_ROW": "",
-"PROJECT_MENU_TABLE": "<table><tr><th>Item</th><th>What it does</th></tr><tr><td><span class='ui'>New job project…</span></td><td>DCS Core's New DCS project dialog (below). The new project opens in CloudPro at once.</td></tr><tr><td><span class='ui'>Open project…</span></td><td>Opens a <code>.dcsproj</code>. An older stand-alone CloudPro project (<code>*.cloudpro.json</code>) can be chosen in the same dialog.</td></tr><tr><td><span class='ui'>Recent</span></td><td>The last ten projects opened in CloudPro.</td></tr><tr><td><span class='ui'>Open the project folder</span></td><td>Opens <code>Processing/&lt;Name&gt;/</code> in the file manager.</td></tr><tr><td><span class='ui'>Raw data moved? Relocate the job folder…</span></td><td>Asks for the job folder's new location and finds the captures there again.</td></tr><tr><td><span class='ui'>Save the QGIS project in the project folder</span></td><td>Writes the current QGIS project as <code>&lt;Name&gt;.qgz</code> beside the <code>.dcsproj</code>.</td></tr><tr><td><span class='ui'>User guide (this version)</span></td><td>Opens this guide.</td></tr><tr><td>CloudPro's menu</td><td>Project properties, Georeference, Check line separation, Finalize for the job, Export, Save, the QGIS map tools, other captures, the memory limit, Remove all points, Windows, Keys and mouse and the user guide (<a href='#window'>Layout, menu and tools</a>).</td></tr><tr><td><span class='ui'>Performance report…</span></td><td>Saves the performance report to send for review (<a href='#large'>Large areas</a>).</td></tr></table>",
+"PROJECT_MENU_TABLE": "<table><tr><th>Item</th><th>What it does</th></tr><tr><td><span class='ui'>New job project…</span></td><td>DCS Core's New DCS project dialog (below). The new project opens in CloudPro at once.</td></tr><tr><td><span class='ui'>Open project…</span></td><td>Opens a <code>.dcsproj</code>. An older stand-alone CloudPro project (<code>*.cloudpro.json</code>) can be chosen in the same dialog.</td></tr><tr><td><span class='ui'>Recent</span></td><td>The last ten projects opened in CloudPro.</td></tr><tr><td><span class='ui'>Open the project folder</span></td><td>Opens <code>&lt;Name&gt;/</code> in the file manager.</td></tr><tr><td><span class='ui'>Raw data moved? Relocate the job folder…</span></td><td>Asks for the job folder's new location and finds the captures there again.</td></tr><tr><td><span class='ui'>Save the QGIS project in the project folder</span></td><td>Writes the current QGIS project as <code>&lt;Name&gt;.qgz</code> beside the <code>.dcsproj</code>.</td></tr><tr><td><span class='ui'>User guide (this version)</span></td><td>Opens this guide.</td></tr><tr><td>CloudPro's menu</td><td>Project properties, Georeference, Check line separation, Finalize for the job, Export, Save, the QGIS map tools, other captures, the memory limit, Remove all points, Windows, Keys and mouse and the user guide (<a href='#window'>Layout, menu and tools</a>).</td></tr><tr><td><span class='ui'>Performance report…</span></td><td>Saves the performance report to send for review (<a href='#large'>Large areas</a>).</td></tr></table>",
 "AFTER_CREATE": "When the job folder holds survey lines (<code>.clraw</code>; mapper 2.10 navigation recordings are not survey lines), CloudPro opens the Georeference dialog straight away (<a href='#georef'>Georeferencing</a>).",
 "STEPS_EXAMPLE": "GEOREFERENCE › CLEAN &amp; CLASSIFY › FINALIZE",
 "STEPS_ROW": "CloudPro's three steps, which are actions: <b>Georeference</b> (or update the points when the inputs changed; its tooltip says what the points were georeferenced with), <b>Clean &amp; classify</b> (opens the Automatic filters; optional, as long as you like) and <b>Finalize</b> (finalize for the job). The next step to do is underlined; clicking a step does it.",
@@ -36,6 +36,7 @@
 <div style="break-inside:avoid"><h2>What is new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>2.13.0</b></td><td><b>File structure</b> (DCS Core 1.18.0): a new project sits beside the mapper's day folders; CloudPro's folder is <code>&lt;Name&gt;/03_CloudPro</code> with <code>WORK</code>, <code>OUT</code>, <code>LOG</code> and <code>FILTERS</code>; Export, the side-scan mosaic, XTF and contacts go to the project's <code>EXPORT</code> folder by default. Menu: <span class='ui'>Plugins › CLDS</span>.</td></tr>
 <tr><td><b>2.12.1</b></td><td>Fixed: the side-scan waterfall failed to draw where one head's recording has a gap; the mosaic's 8-bit image in a colour palette failed to write.</td></tr>
 <tr><td><b>2.12.0</b></td><td>Side scan: <i>Hide static</i> no longer cuts real seabed (the data limit is found from the seabed's texture); the waterfall zooms (wheel), stretches (<kbd>Ctrl</kbd>+wheel) and pans (middle button); display options in its right-click menu; Process, Mosaic and Export XTF at the bottom right.</td></tr>
 <tr><td><b>2.11.0</b></td><td>Side scan: colour palettes (bronze, gold, sepia, ocean blue, green, thermal, grey), <i>Hide static</i> past each ping's data limit, <i>Slant range corrected</i> waterfall; the side-scan cursor is shown in the Plan, Slice and 3D, and theirs in the waterfall. Sonar lines named P1 Port, P1 Stbd… (passes numbered in time order over the job). Drive lines get direction arrows at a third and two thirds; lines starting together share one label.</td></tr>
@@ -95,8 +96,8 @@
 <h2>The inputs</h2>
 <table>
 <tr><th>Input</th><th>Used</th><th>When it is missing</th></tr>
-<tr><td>Trajectory</td><td>PosPro's <code>01_PosPro/out/trajectory.json</code>: the SBET with its SMRMSG, frame, epoch and GPS week.</td><td>The Certus real-time track recorded in the capture is used, with the warning that it can drift by metres without RTK. Run PosPro, then update.</td></tr>
-<tr><td>Mounting, Lidar lever arm, latency</td><td>AlignPro's <code>02_AlignPro/out/alignment.json</code>, when it uses the mapper's mounting convention.</td><td>The Lidar mounting shared in the project, else the one recorded in each capture; the lever arm recorded in the capture; no latency. Every result says <i>no calibration</i>.</td></tr>
+<tr><td>Trajectory</td><td>PosPro's <code>01_PosPro/OUT/trajectory.json</code>: the SBET with its SMRMSG, frame, epoch and GPS week.</td><td>The Certus real-time track recorded in the capture is used, with the warning that it can drift by metres without RTK. Run PosPro, then update.</td></tr>
+<tr><td>Mounting, Lidar lever arm, latency</td><td>AlignPro's <code>02_AlignPro/OUT/alignment.json</code>, when it uses the mapper's mounting convention.</td><td>The Lidar mounting shared in the project, else the one recorded in each capture; the lever arm recorded in the capture; no latency. Every result says <i>no calibration</i>.</td></tr>
 <tr><td>Captures</td><td>The <code>.clraw</code> files in the project's capture folders (never anything under <code>Processing/</code>).</td><td>A message says no <code>.clraw</code> files were found; use <span class="ui">project menu › Add other .clraw files to the job…</span></td></tr>
 <tr><td>Coordinate system</td><td>The job's shared horizontal CRS, else the one recorded in the capture, else EPSG:2953. Heights are ellipsoidal unless a geoid grid is given. A PosPro trajectory processed with PPP (no base station) is in ITRF2020 at the observation date; CloudPro moves it to NAD83(CSRS)v8 (the current realisation, at the observation epoch) for a NAD83(CSRS) CRS, uses it as it is for a WGS 84 CRS, and stops with a message for any other datum rather than leave the cloud metres off. <b>Epoch:</b> NAD83(CSRS) coordinates move a few millimetres a year, so they are given with an epoch; each province adopts one for its work (New Brunswick 1997.0; Nova Scotia, PEI, Newfoundland and Labrador and federal work 2010.0). Project properties › Geodetics › <span class="ui">Coordinate epoch</span> chooses it: the provincial standard for the CRS (the default), 1997.0, 2010.0 or as observed. When the trajectory is in another epoch &ndash; a PPP trajectory at the observation date, or a PPK one whose base position is at the observation date &ndash; CloudPro moves it with NRCan's NAD83(CSRS) velocity grid (about 8 cm horizontally and 2 cm vertically between 2026 and 1997.0 near Fredericton). A base position entered without an epoch is used as it is, with a warning. <code>cloud.json</code> and the report give the epoch of the points.</td><td>Change it in Project Properties › Geodetics.</td></tr>
 </table>
@@ -119,7 +120,7 @@
 <figure><img src="fig/progress.png"><figcaption><b>Figure {N}.2</b> The status strip while georeferencing: the current step on the left, the loaded point counts, the progress bar and Cancel on the right.</figcaption></figure>
 <figure class="h42"><img src="fig/georef_done.png"><figcaption><b>Figure {N}.3</b> The result: lines and points, the trajectory and mounting used, and how many edited points were carried over.</figcaption></figure>
 <div class="note"><b>Heights</b> The dialog's <span class="ui">Coordinate system</span> row follows the geoid field: <i>heights ellipsoidal</i> without a grid, <i>heights orthometric (geoid …)</i> with one. Project Properties › Project information and the report show the same afterwards.</div>
-<p>Each run writes a log in <code>03_CloudPro/log/</code> and a line in the History tab.</p>
+<p>Each run writes a log in <code>03_CloudPro/LOG/</code> and a line in the History tab.</p>
 
 <h2 id="update">Out of date: Update georeferencing</h2>
 <p>CloudPro compares the PosPro and AlignPro results its points were built with against what those stages have finalized now, every few seconds. When they differ, or when the georeferencing values in Project Properties were changed, the inputs line turns amber with the reason and the workflow strip's button reads <span class="ui">Update georeferencing</span>:</p>
@@ -183,7 +184,7 @@
 <tr><td><span class="ui">Open in AlignPro</span></td><td>AlignPro's Pairs page with the chosen line pair selected under <i>From the point cloud</i> (else the first pair with a calibration finding), ready for <span class="ui">Use these lines and their overlap</span>. Available when a pair points at the calibration.</td></tr>
 </table>
 <p>Both need the result to be current, PosPro or AlignPro installed, and DCS Core 1.12.0; with an older DCS Core the plugin opens on the job without going to the item. After the fix is finalized and CloudPro has updated the points, <span class="ui">Check again</span>.</p>
-<p>Click a pair or a line to show only it on the Plan; <span class="ui">All pairs on the Plan</span> shows every pair again. <span class="ui">Save report…</span> writes the same as a text file; each check is also kept in the History and in <code>log/</code>. The result is kept with the project and marked <i>out of date</i> when the points are georeferenced again. The check reads every point once: about as long as reading the project from the disk.</p>
+<p>Click a pair or a line to show only it on the Plan; <span class="ui">All pairs on the Plan</span> shows every pair again. <span class="ui">Save report…</span> writes the same as a text file; each check is also kept in the History and in <code>LOG/</code>. The result is kept with the project and marked <i>out of date</i> when the points are georeferenced again. The check reads every point once: about as long as reading the project from the disk.</p>
 
 <h2>Other captures, removing points</h2>
 <ul>
@@ -206,12 +207,13 @@
 <table>
 <tr><th>Path in <code>03_CloudPro/</code></th><th>Holds</th></tr>
 <tr><td><code>cloudpro.json</code></td><td>CloudPro's settings: lines, inputs used, view, history, filter runs, entered values.</td></tr>
-<tr><td><code>filters/groups.json</code></td><td>The filter groups of this project.</td></tr>
-<tr><td><code>work/store/</code></td><td>The point store in 50 m tiles and the project grids. A cache of the raw data: it can be deleted, Georeference rebuilds it (the edits are lost then).</td></tr>
-<tr><td><code>work/lines/</code></td><td>The sensor track of each line.</td></tr>
-<tr><td><code>out/</code></td><td>What Finalize delivers (<a href="#publish">Finalizing</a>).</td></tr>
-<tr><td><code>log/</code></td><td>One log per run (georeference, filter, tune, finalize).</td></tr>
+<tr><td><code>FILTERS/groups.json</code></td><td>The filter groups of this project.</td></tr>
+<tr><td><code>WORK/store/</code></td><td>The point store in 50 m tiles and the project grids. A cache of the raw data: it can be deleted, Georeference rebuilds it (the edits are lost then).</td></tr>
+<tr><td><code>WORK/lines/</code></td><td>The sensor track of each line.</td></tr>
+<tr><td><code>OUT/</code></td><td>What Finalize delivers (<a href="#publish">Finalizing</a>).</td></tr>
+<tr><td><code>LOG/</code></td><td>One log per run (georeference, filter, tune, finalize).</td></tr>
 </table>
+<p>Export (LAS, XYZ, grids), the side-scan mosaic, XTF and contacts go by default to the project's one deliverables folder, <code>&lt;Name&gt;/EXPORT/</code>. In a project made before DCS Core 1.18.0 the folders keep their lower-case names and exports go beside <code>cloudpro.json</code> (side scan: <code>Exports/SideScan/</code>).</p>
 <p>While a job's cloud is open in CloudPro it is locked for editing: a second QGIS that opens the same project is told <i>This job's point cloud is open elsewhere</i> and does not open it. Georeferencing, project-wide filter runs and finalizing also hold the stage lock, which shows CloudPro as <b>running</b> in the chain in the header.</p>
 
 <h2 id="marine">Marine jobs</h2>
@@ -339,7 +341,7 @@
 <p><b>Mouse.</b> Left drag turns the cloud the way you move, as if holding it, along the screen's directions like the arrows and about the same centre (drag right and its near side moves right); <kbd>Shift</kbd> + left drag or middle drag pans; the wheel zooms; <kbd>Ctrl</kbd> + wheel scales Z (shown as <i>Z x2.0</i>); double-click a point to centre the view on it (its information appears in the Info tab); right drag draws a lasso, or a rectangle when the Rectangle tool is active, and applies the current action.</p>
 <p><b>Keys</b> (click the view first): <kbd>W</kbd> / <kbd>A</kbd> / <kbd>D</kbd> fly forward, left and right and <kbd>Q</kbd> / <kbd>E</kbd> down and up, by the arrow / fly step; <kbd>O</kbd> switches orthographic projection; <kbd>0</kbd> or <kbd>Home</kbd> zooms to the Inspection Area; <kbd>+</kbd> / <kbd>-</kbd> zoom; <kbd>Esc</kbd> cancels a selection.</p>
 <div class="note"><b>Flying</b> <kbd>W</kbd> <kbd>S</kbd> <kbd>A</kbd> <kbd>D</kbd> <kbd>Q</kbd> <kbd>E</kbd> fly while the 3D view has the keyboard: click in it first. Elsewhere <kbd>S</kbd> is the key for the Select action.</div>
-<p><b>Performance report.</b> CloudPro writes the time of every step to <code>03_CloudPro/log/performance.log</code> in the job: each Inspection Area load (with where the time went: read, order, prepare, draw), each filter run and preview (with every filter's time), each job (georeferencing, also the automatic one, tiled filters, finalizing, exporting), and the 3D view (graphics card or processor, and its average frame times). Each time a job is opened the log starts with this computer: processor and cores, memory, QGIS, DCS Core and engine versions. To send it for review, choose <span class="ui">Performance report...</span> on the project menu (the job name in the header): it saves one text file, on the Desktop by default, with the computer, the job, the log, the recent History and the latest run logs. Nothing is sent anywhere by CloudPro itself.</p>
+<p><b>Performance report.</b> CloudPro writes the time of every step to <code>03_CloudPro/LOG/performance.log</code> in the job: each Inspection Area load (with where the time went: read, order, prepare, draw), each filter run and preview (with every filter's time), each job (georeferencing, also the automatic one, tiled filters, finalizing, exporting), and the 3D view (graphics card or processor, and its average frame times). Each time a job is opened the log starts with this computer: processor and cores, memory, QGIS, DCS Core and engine versions. To send it for review, choose <span class="ui">Performance report...</span> on the project menu (the job name in the header): it saves one text file, on the Desktop by default, with the computer, the job, the log, the recent History and the latest run logs. Nothing is sent anywhere by CloudPro itself.</p>
 <p><b>Graphics card.</b> When the computer has a graphics card with OpenGL 2.1 or later, the 3D view copies the loaded points to the card once and the card draws every point in each frame, while you move and when you stop; the eye-dome shading of a still frame is computed by the CloudPro engine on every core. When the window opens the job, the status bar says <i>3D view: graphics card</i> with the card's name, or <i>3D view: processor</i> and why (no OpenGL, a software OpenGL driver, or the card could not hold the points). On the processor the view works on any computer: while you move it draws fewer points to stay fluid, and a still frame that would take more than about 0.3 s draws a part only and says <i>showing N %</i> beside the title (<a href="#large">Large areas</a>). The picture is the same either way.</p>
 
 <h2 id="colours">Colours, legends and sizes</h2>
@@ -474,7 +476,7 @@
 <tr><td>Rename…</td><td>Renames the group.</td></tr>
 <tr><td>Mode</td><td><i>Combined</i>: all lines filtered together (lines that fit well). <i>Individually</i>: each line filtered on its own (lines that do not fit in height). <i>Reset modifications</i> and <i>Edit classification</i> always run combined.</td></tr>
 <tr><td>Import group (JSON)…, Export group (JSON)…</td><td>Share groups between projects.</td></tr>
-<tr><td>Save groups with the project</td><td>Writes <code>filters/groups.json</code> (Save and the 2-minute autosave do the same).</td></tr>
+<tr><td>Save groups with the project</td><td>Writes <code>FILTERS/groups.json</code> (Save and the 2-minute autosave do the same).</td></tr>
 <tr><td>Delete this group…</td><td>After a confirmation; the last group cannot be deleted.</td></tr>
 </table>
 <p>Ready-made groups added in a later version are added to older projects' lists automatically.</p>
@@ -616,14 +618,14 @@
 <p><b>Project files</b> has one row per <code>.clraw</code> file: <span class="ui">Points</span> shows or hides its points in the views, <span class="ui">Track</span> its drive line in the Plan; line, file, start (UTC), duration and size. Click a row to select that file's points in the Inspection Area and draw its drive line thicker (move the area onto the drive line if no points are selected). <span class="ui">Show all</span>, <span class="ui">Hide all</span>, <span class="ui">Clear selection</span>.</p>
 
 <h1 id="publish"><span class="num">{N}</span>Finalizing, exporting and QGIS layers</h1>
-<p><b>Finalize</b> is the job's delivery, in <code>03_CloudPro/out/</code>, recorded in the chain. <b>Export</b> writes a copy anywhere, for any purpose.</p>
+<p><b>Finalize</b> is the job's delivery, in <code>03_CloudPro/OUT/</code>, recorded in the chain. <b>Export</b> writes a copy anywhere, for any purpose.</p>
 
 <h2>Finalize</h2>
 <p><span class="ui">project menu › Finalize for the job (LAS, ground grid, cloud.json)…</span> (<kbd>Ctrl+P</kbd>). The project must be a job project of the chain and georeferenced.</p>
 <figure class="h50"><img src="fig/publish_dialog.png"><figcaption><b>Figure {N}.1</b> The Finalize dialog with the ground grid ticked. Out-of-date reasons and <i>no calibration</i> would be listed in amber above the options.</figcaption></figure>
 <table>
 <tr><th>Option</th><th>Effect</th></tr>
-<tr><td><span class="ui">Point cloud (LAS 1.4)</span>, <span class="ui">File</span></td><td>The whole cloud, all lines, as <i>LAZ, compressed</i> (<code>&lt;Name&gt;.laz</code>, the default) or <i>LAS, uncompressed</i> (<code>&lt;Name&gt;.las</code>). Both hold exactly the same points; LAZ is about 5–10 times smaller and takes longer to write. Deliver one of them, not both: LAZ unless the client asks for LAS. The choice is remembered for the job, and the other file left in <code>out/</code> by an earlier Finalize is removed.</td></tr>
+<tr><td><span class="ui">Point cloud (LAS 1.4)</span>, <span class="ui">File</span></td><td>The whole cloud, all lines, as <i>LAZ, compressed</i> (<code>&lt;Name&gt;.laz</code>, the default) or <i>LAS, uncompressed</i> (<code>&lt;Name&gt;.las</code>). Both hold exactly the same points; LAZ is about 5–10 times smaller and takes longer to write. Deliver one of them, not both: LAZ unless the client asks for LAS. The choice is remembered for the job, and the other file left in <code>OUT/</code> by an earlier Finalize is removed.</td></tr>
 <tr><td><span class="ui">Classes</span></td><td>Every class in the job with its point count (and rejected count, if any). Tick the classes to write; <span class="ui">All</span> and <span class="ui">None</span> tick or untick them all. All ticked writes every class. The choice is remembered for the job.</td></tr>
 <tr><td><span class="ui">Include rejected points (LAS withheld flag)</span></td><td>Off: rejected points are left out. On: they are written with the withheld flag.</td></tr>
 <tr><td><span class="ui">Ground grid (mean of class 2, GeoTIFF)</span>, <span class="ui">Grid cell</span></td><td>A grid of the mean height of the accepted ground points (gaps of up to 2 cells filled), at the chosen cell (0.5 m). Any cell size works on any job: the grid is written block by block, and areas without ground take no space in the file.</td></tr>
@@ -632,7 +634,7 @@
 <p><span class="ui">Finalize</span> needs something to write: the LAS with at least one class ticked, or the ground grid. Finalizing runs in the background and is all or nothing: the files are written under temporary names and renamed at the end.</p>
 <figure class="h40"><img src="fig/publish_done.png"><figcaption><b>Figure {N}.2</b> The result: the calibration state, the files and the folder.</figcaption></figure>
 <table>
-<tr><th>File in <code>out/</code></th><th>Content</th></tr>
+<tr><th>File in <code>OUT/</code></th><th>Content</th></tr>
 <tr><td><code>&lt;Name&gt;.laz</code> or <code>&lt;Name&gt;.las</code></td><td>LAS 1.4, point data record format 6 (compressed in the <code>.laz</code>), with the CRS as WKT. User data holds the laser channel (0–31, the laser id minus one), point source id the line number, GPS time in adjusted standard time; the scan angle is 0.</td></tr>
 <tr><td><code>&lt;Name&gt;_ground.tif</code></td><td>The ground grid (an ESRI ASCII <code>.asc</code> grid when GDAL is not available).</td></tr>
 <tr><td><code>cloud_report.txt</code></td><td>Readable report: inputs (trajectory, calibration, mounting, lever arm, latency, CRS, heights), lines, point and class counts, filters applied with their settings, outputs, warnings.</td></tr>
@@ -715,7 +717,7 @@ python -m cloudpro.cli info    D:/Job/Processing/Street/Street.dcsproj</pre>
 <tr><td><code>export</code></td><td>Writes LAS, XYZ or a grid.</td><td><code>--las</code>, <code>--xyz</code>, <code>--grid</code> file; <code>--cell</code> (0.5 m), <code>--stat mean|min|max|count|intensity</code>, <code>--classes</code>, <code>--lines</code>, <code>--per-line</code>, <code>--include-rejected</code>.</td></tr>
 <tr><td><code>create</code></td><td>Creates an older-style stand-alone project (no chain).</td><td><code>folder name --crs EPSG:2953 --tile 50</code>; for its <code>import</code>: <code>--sbet</code> (omit for the real-time track), <code>--bore dR dP dH</code>.</td></tr>
 </table>
-<p>A run in a job project holds the stage lock and writes a log in <code>03_CloudPro/log/</code>.</p>
+<p>A run in a job project holds the stage lock and writes a log in <code>03_CloudPro/LOG/</code>.</p>
 
 <h1 id="trouble"><span class="num">{N}</span>Troubleshooting</h1>
 <table>
@@ -742,7 +744,7 @@ python -m cloudpro.cli info    D:/Job/Processing/Street/Street.dcsproj</pre>
 <tr><td><i>Finalizing is for job projects of the DCS chain…</i></td><td>An older stand-alone project: use Export.</td></tr>
 <tr><td><i>The user guide is not in this installation</i></td><td>Reinstall CloudPro from its zip.</td></tr>
 </table>
-<p>Each georeferencing, project-wide filter run, tuning and publication writes a log in <code>03_CloudPro/log/</code>; a failed task shows its error in a message and leaves the earlier results in place.</p>
+<p>Each georeferencing, project-wide filter run, tuning and publication writes a log in <code>03_CloudPro/LOG/</code>; a failed task shows its error in a message and leaves the earlier results in place.</p>
 
 
 

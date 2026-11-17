@@ -1,4 +1,4 @@
-"""QGIS entry: Plugins > Canadian Lidar > Data Systems > CloudPro.
+"""QGIS entry: Plugins > CLDS > CloudPro.
 
 CloudPro is stage 03 of the DCS chain and needs the DCS Core plugin (shared
 project, handover files, menu and look). Without it a message bar says so
@@ -8,7 +8,7 @@ import os
 from .qt import QAction, QtCore, QtGui, QtWidgets, Qt, Signal
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CORE_API = 16
+CORE_API = 19
 
 
 def _core():

@@ -26,7 +26,7 @@
 </ol>
 <h2>Opening RemixPro</h2>
 <ul>
-<li><span class="ui">Plugins › Canadian Lidar › Data Systems › RemixPro</span>, or the RemixPro button on the Plugins toolbar.</li>
+<li><span class="ui">Plugins › CLDS › RemixPro</span>, or the RemixPro button on the Plugins toolbar.</li>
 <li>This guide: the <span class="ui">?</span> button in the header, <span class="ui">User guide (this version)</span> in the project box, or <span class="ui">Help › Plugins › RemixPro user guide</span>.</li>
 </ul>
 
@@ -93,7 +93,7 @@
 <h1><span class="num">{N}</span>Where the files go</h1>
 <p>The default output folder:</p>
 <ul>
-<li>with a DCS project open: <code>Processing/&lt;Name&gt;/RemixPro/</code>, inside the project, beside <code>01_PosPro</code> and the other stages;</li>
+<li>with a DCS project open: <code>&lt;Name&gt;/00_RemixPro/</code>, inside the project, beside <code>01_PosPro</code> and the other stages (<code>RemixPro/</code> in a project made before DCS Core 1.18.0);</li>
 <li>for recordings inside a mapper project folder (on the drive, a USB copy or a project download): <code>&lt;Project&gt;/Processing/RemixPro/</code>;</li>
 <li>otherwise: a <code>RemixPro</code> folder beside what you opened.</li>
 </ul>
@@ -107,6 +107,7 @@
                          README_QINERTIA.txt
   Deck_Test_NAV_20261104_124452/
     inertial_explorer/  qinertia/</pre>
+<p>A SonarView recording's <code>.clraw</code> does not go there: it goes into the day folder of the job, like the mapper's own recordings, as <code>&lt;job&gt;/YYYYMMDD/CLRAW/YYYYMMDD_NNN_001.clraw</code> (<code>_002</code> … when it is split). <code>YYYYMMDD</code> is the UTC date the recording started and <code>NNN</code> its number in that day: the next free one, after any lines already there, and the same number when the recording is made again. The job is the open DCS project's job folder; without a project, the folder holding the recording's day folder (keep the recordings in <code>&lt;job&gt;/YYYYMMDD/SONAR/</code> and the Reach files in <code>&lt;job&gt;/YYYYMMDD/GNSS/</code>). A recording outside a day folder, with no DCS project open, still goes into the output folder above.</p>
 <p>RemixPro refuses an output folder that is the folder holding the recording itself. <span class="ui">Open output folder</span> opens it in your file manager.</p>
 
 <h1><span class="num">{N}</span>Using the files</h1>

@@ -32,7 +32,7 @@ OFFSETS_FILE = "sonar_offsets.json"     # {"<device id>" | "<nickname>" | "port"
 
 # folders that never hold recordings: DCS processing projects (and RemixPro's own output), the mapper's old
 # conversions, the Lidar safety copies
-SKIP_DIRS = {"processing", "processed", "beamworx", "lidar", "__pycache__", "remixpro"}
+SKIP_DIRS = {"processing", "processed", "beamworx", "lidar", "__pycache__", "remixpro", "00_remixpro", "export"}
 _EPH_NAMES = re.compile(r"(^ephemeris_cache\.anpp$|_ephemeris\.anpp$)")
 _SEG = re.compile(r"^(?P<prefix>.+?)_(?P<number>\d{4})\.anpp$")       # ins_0001, <prefix>_0001, <line>_ins_0001
 
@@ -60,6 +60,7 @@ class Item:
         self.lever_source = ""
         self.config_source = ""         # BeamworX survey configuration: "recorded" / "built from hardware.json"
         # marine sonar recordings (SonarView .svlz / .svlog, alone or from a TidalCal project)
+        self.day_job = None             # the job folder whose day folder takes a sonar .clraw (make.day_clraw)
         self.sonar_file = None
         self.parts = []                 # the files of a recording SonarView split (sonar_file first)
         self.missing_parts = []         # earlier parts named but not there
@@ -151,7 +152,8 @@ def collect(paths, sonar=None):
     for p in paths:
         if os.path.isdir(p):
             for root, dirs, files in os.walk(p):
-                dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d.lower() not in SKIP_DIRS)
+                dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d.lower() not in SKIP_DIRS
+                                 and not os.path.isfile(os.path.join(root, d + ".dcsproj")))
                 for fn in files:
                     take(os.path.join(root, fn))
         elif os.path.isfile(p):
@@ -380,7 +382,9 @@ def _default_root(paths):
     except ValueError:          # different drives
         common = first
     base = os.path.basename(common).lower()
-    if base in ("clraw", "ins", "nav", "lines"):
+    if base in ("clraw", "ins", "nav", "lines", "sonar", "imu"):
+        common = os.path.dirname(common)
+    if re.match(r"^\d{8}$", os.path.basename(common)):        # a day folder (file structure of 17 Nov 2026)
         common = os.path.dirname(common)
     return os.path.join(common, "RemixPro")
 

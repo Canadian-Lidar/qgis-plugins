@@ -3,7 +3,7 @@
 In the DCS chain (the normal case) CloudPro is stage 03 of the job's shared
 project (DCS Core):
 
-    Processing/<Name>/<Name>.dcsproj
+    <Job>/<Name>.dcsproj, stages in <Job>/<Name>/ (layout 1: Processing/<Name>/<Name>.dcsproj)
                       03_CloudPro/cloudpro.json      CloudPro's own settings (lines, view, history)
                       03_CloudPro/filters/           filter groups
                       03_CloudPro/work/store/        tiled point store (rebuildable cache)
@@ -66,6 +66,12 @@ def crs_from_dcs(dcs):
     return "EPSG:2953"
 
 
+
+def _sub(dcs, name):
+    """A stage subfolder's name: WORK / OUT / LOG in a layout 2 DCS project (DCS Core 1.18.0), else as given."""
+    f = getattr(dcs, "sub", None)
+    return f(name) if f else name
+
 class Project:
     def __init__(self, path, dcs=None):
         """path = the settings file (03_CloudPro/cloudpro.json or <name>.cloudpro.json)."""
@@ -78,23 +84,29 @@ class Project:
     # ------------------------------------------------------------- folders
     @property
     def work(self):
-        return os.path.join(self.root, "work") if self.dcs is not None else self.root
+        return os.path.join(self.root, _sub(self.dcs, "work")) if self.dcs is not None else self.root
 
     @property
     def out_dir(self):
-        d = os.path.join(self.root, "out")
+        d = os.path.join(self.root, _sub(self.dcs, "out"))
         os.makedirs(d, exist_ok=True)
         return d
 
     @property
     def log_dir(self):
-        d = os.path.join(self.root, "log")
+        d = os.path.join(self.root, _sub(self.dcs, "log"))
         os.makedirs(d, exist_ok=True)
         return d
 
     @property
+    def export_dir(self):
+        """The job's one deliverables folder <name>/EXPORT (layout 2 DCS project, DCS Core 1.18.0), else None."""
+        f = getattr(self.dcs, "export_dir", None)
+        return f() if f else None
+
+    @property
     def filters_dir(self):
-        return os.path.join(self.root, "filters")
+        return os.path.join(self.root, _sub(self.dcs, "filters"))
 
     def _make_dirs(self):
         for d in (self.work, os.path.join(self.work, "lines"), self.filters_dir):

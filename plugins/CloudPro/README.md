@@ -1,6 +1,6 @@
 # CloudPro 1.5.0 – point cloud processing, stage 03 of the DCS chain
 
-**Plugins ▸ Canadian Lidar ▸ Data Systems ▸ CloudPro**
+**Plugins ▸ CLDS ▸ CloudPro**
 
 ```
 JobFolder/  (mapper captures, never changed)

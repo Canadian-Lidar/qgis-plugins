@@ -1,23 +1,30 @@
 <h1 id="projects"><span class="num">{N}</span>Projects and the job folder</h1>
-<p>PosPro, AlignPro and CloudPro work on one shared <b>processing project</b> per job. The mapper's capture folders are never changed: everything the plugins make goes in a <code>Processing</code> folder.</p>
+<p>The plugins work on one shared <b>processing project</b> per job, kept beside the mapper's day folders. The mapper's files are never changed: everything the plugins make goes in the project's own folder.</p>
 <table>
 <tr><th>Path</th><th>Holds</th></tr>
-<tr><td><code>Job_Oct20/</code></td><td>The job folder: the capture folders recorded by the mapper (read only)</td></tr>
-<tr><td><code>Job_Oct20/Processing/&lt;Name&gt;/&lt;Name&gt;.dcsproj</code></td><td>The shared project: captures, shared settings (coordinate system, base station, antennas, Lidar mounting, vehicle) and the state of each stage. A <code>.bak</code> copy is kept beside it.</td></tr>
-<tr><td><code>01_PosPro/</code>, <code>02_AlignPro/</code>, <code>03_CloudPro/</code></td><td>Each stage's own settings file, <code>work/</code>, <code>log/</code>, and <code>out/</code> with what it finalizes</td></tr>
-<tr><td><code>&lt;Name&gt;.qgz</code></td><td>The QGIS project, when you save it from the project menu</td></tr>
+<tr><td><code>Greenstone/</code></td><td>The job folder: the mapper's project folder, copied from the mapper as it is (read only)</td></tr>
+<tr><td><code>Greenstone/project.json</code></td><td>The mapper project: name, id, operator, vehicle</td></tr>
+<tr><td><code>Greenstone/20261014/</code></td><td>One day of survey: the UTC date the session started. A session that runs past midnight stays in the day it started; a second session the same day goes in the same folder.</td></tr>
+<tr><td><code>Greenstone/&lt;Name&gt;.dcsproj</code></td><td>The shared project: captures, shared settings (coordinate system, base station, antennas, Lidar mounting, vehicle) and the state of each stage. A <code>.bak</code> copy is kept beside it.</td></tr>
+<tr><td><code>Greenstone/&lt;Name&gt;.qgz</code></td><td>The QGIS project, when you save it from the project menu</td></tr>
+<tr><td><code>Greenstone/&lt;Name&gt;/</code></td><td>The project's folder: <code>00_RemixPro</code>, <code>01_PosPro</code>, <code>02_AlignPro</code>, <code>03_CloudPro</code>, <code>04_StripPro</code> (each with its settings file, <code>WORK/</code>, <code>LOG/</code>, and <code>OUT/</code> with what it finalizes) and <code>EXPORT/</code>, where every deliverable goes by default</td></tr>
 </table>
-<h2>Mapper 2.10 projects</h2>
-<p>From mapper 2.10 the mapper keeps its own projects. Use the mapper project's folder as the job folder:</p>
+<h2>A day folder</h2>
 <table>
 <tr><th>Path</th><th>Holds</th></tr>
-<tr><td><code>Deck_Test/project.json</code></td><td>The mapper project: name, id, next line, operator, vehicle</td></tr>
-<tr><td><code>Deck_Test/lines/Deck_Test_L001_20261104_124512/</code></td><td>One survey line (one Start/Stop), its files named <code>Deck_Test_L001_20261104_124512_0001.clraw</code>, <code>_0002</code> … Captures made before 2.10 that the mapper grouped into the project keep their old names here.</td></tr>
-<tr><td><code>Deck_Test/nav/Deck_Test_NAV_20261104_120000_0001.clraw</code></td><td>A navigation recording: everything the Certus sent while the project was open (no Lidar). A new one starts at each power-on, project opening, UTC date change and every 2 GB.</td></tr>
+<tr><td><code>session.json</code>, <code>events.json</code></td><td>Every session of the day, its settings and marks</td></tr>
+<tr><td><code>NAV/nav_20261014_0001.anpp</code> (and <code>.clraw</code>)</td><td>Navigation recordings: everything the Certus sent while the project was open (no Lidar)</td></tr>
+<tr><td><code>LIDAR/lidar_20261014_0001.pcap</code></td><td>The Lidar packets as recorded; <code>SONAR/</code> on a boat (the SonarView recordings)</td></tr>
+<tr><td><code>IMU/ins_20261014_0001.anpp</code>, <code>ephemeris_cache.anpp</code></td><td>The Certus logs and the ephemeris</td></tr>
+<tr><td><code>CLRAW/20261014_001_001.clraw</code></td><td>The survey lines: line 001 of the day, its first file. MapPro numbers the lines in the order they are recorded and carries on from the highest number in the folder. On a boat RemixPro writes the SonarView recordings here the same way.</td></tr>
+<tr><td><code>BASE/</code>, <code>GNSS/</code></td><td>Base station files (added in the office) and the rover's GNSS files (on a boat, the Reach logs)</td></tr>
+<tr><td><code>EXPORT/</code></td><td>The mapper's QC report</td></tr>
 </table>
-<p>If you pick the project's <code>lines</code> or <code>nav</code> folder, or a line folder, the New project dialog takes the mapper project's folder as the job folder. The survey lines are recognised from what the files record (their line number and capture), not from their names, so a line split over several files is one line and old and new captures mix freely, in recording order. Navigation recordings are never taken as survey lines.</p>
+<p>Lines are recognised from what the files record (their line number and capture), not from their names, so a line split over several files is one line. Navigation recordings are never taken as survey lines.</p>
+<h2>Jobs from before this layout</h2>
+<p>Projects made before DCS Core 1.18.0 keep working where they are: <code>Job/Processing/&lt;Name&gt;/&lt;Name&gt;.dcsproj</code> with <code>01_PosPro</code>, <code>02_AlignPro</code>, <code>02_StripPro</code>, <code>03_CloudPro</code> beside it; nothing is moved. Mapper 2.10 projects (<code>lines/</code> and <code>nav/</code> folders) and older capture folders are read as before.</p>
 
-<p>The Processing folder can also live on another drive (choose <b>Elsewhere…</b> when you create the project). Paths are stored relative to the job folder where possible, so a job can be copied or moved as a whole.</p>
+<p>The project can also live on another drive (choose <b>Elsewhere…</b> when you create it). Paths are stored relative to the job folder where possible, so a job can be copied or moved as a whole.</p>
 
 <h2>The project menu</h2>
 <figure class="half"><img src="fig/project_menu.png"><figcaption><b>Figure {N}.1</b> The project box menu in {NAME}.</figcaption></figure>
@@ -26,8 +33,8 @@
 <h2>Creating a project</h2>
 <ol class="steps">
 <li>Choose <span class="ui">New project…</span> in the project box.</li>
-<li><b>Job folder</b>: the folder that holds the mapper's capture folders. The project name defaults to the date of the first capture with a number, for example <i>2026-11-03_1</i>; when that project exists already the next number is offered (<i>2026-11-03_2</i>), so a second processing of the same job (another base station, other settings) gets its own folder. Type any other name if you prefer.</li>
-<li><b>Processing folder</b>: inside the job folder by default; <b>Elsewhere…</b> to put it on another drive.</li>
+<li><b>Job folder</b>: the mapper's project folder, the one holding <code>project.json</code> and the day folders (picking a day folder or one of its folders takes the project folder). The project name defaults to the date of the first capture with a number, for example <i>2026-11-03_1</i>; when that project exists already the next number is offered (<i>2026-11-03_2</i>), so a second processing of the same job (another base station, other settings) gets its own <code>.dcsproj</code> and folder. Type any other name if you prefer.</li>
+<li><b>Processing folder</b>: the job folder by default; <b>Elsewhere…</b> to put the project on another drive.</li>
 <li>Press OK. The project is created and opened. {AFTER_CREATE}</li>
 </ol>
 <figure class="half"><img src="fig/new_project.png"><figcaption><b>Figure {N}.2</b> The New DCS project dialog (the same in every plugin).</figcaption></figure>

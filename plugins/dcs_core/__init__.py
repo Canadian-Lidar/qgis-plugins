@@ -1,7 +1,7 @@
 """DCS Core: the shared base of the Canadian Lidar Data Collection Systems
 plugins (PosPro, AlignPro, CloudPro, RemixPro).
 
-  project   the shared .dcsproj project (Processing/<Name>/), stages, staleness
+  project   the shared .dcsproj project (<job>/<Name>.dcsproj, stages in <job>/<Name>/), staleness
   handover  publish / read the file each stage hands to the next
   files     atomic writes, fingerprints, portable paths
   locks     one writer per stage
@@ -11,7 +11,7 @@ plugins (PosPro, AlignPro, CloudPro, RemixPro).
   sbet      SBET / SMRMSG trajectories;  las  LAS 1.4 and 1.2 writers, reader
   mcap, zstd  the container and its decompression (zstandard bundled in ext/)
   ping      Cerulean / Blue Robotics Ping packets: SonarView .svlog / .svlz recordings
-  menu      Plugins > Canadian Lidar > Data Systems (menu.TOP, menu.GROUP)
+  menu      Plugins > CLDS: RemixPro, PosPro, AlignPro, CloudPro, StripPro (menu.TOP, menu.ORDER)
   header    the header bar: logo, name, workflow boxes, project box, window and guide buttons
   window    the standard plugin window: floating by default, docked only on request, remembered
   epochs    NAD83(CSRS) reference epochs (New Brunswick 1997.0, federal 2010.0) with NRCan's velocity grid
@@ -20,7 +20,7 @@ plugins (PosPro, AlignPro, CloudPro, RemixPro).
   theme, widgets, stepbar, dialogs, registry   the shared look and UI
 
 The plugins import it as `dcs_core`; it has no window of its own."""
-__version__ = "1.17.0"
+__version__ = "1.18.0"
 # API 2 (1.1.0): adds clraw, hesai, anpp, sbet, las, mcap, zstd and widgets.align_flags.
 # API 3 (1.2.0): adds window.PluginWindow (the standard plugin window) and theme.FAINT, DISABLED, VIEW_BG, GRID.
 # API 4 (1.3.0): adds header.PluginHeader (the same header bar in every plugin).
@@ -62,7 +62,12 @@ __version__ = "1.17.0"
 #   centre); marine.mounting_check / shared_strip (PosPro's mounting check, AlignPro's head-to-head strip).
 # API 18 (1.17.0): marine recording selection - DcsProject.sonar_clraw_files(include_excluded=), sonar_added,
 #   sonar_excluded, set_sonar_selection (recordings from other days' folders, recordings left out of the job).
-API = 18
+# API 19 (1.18.0): file structure of 17 Nov 2026 - layout 2 projects (<job>/<Name>.dcsproj, stages in <job>/<Name>/,
+#   04_StripPro, upper-case WORK / OUT / LOG, one EXPORT folder): DcsProject.layout, work_root, sub, stage_folder,
+#   remix_dir, export_dir; project.is_processing_dir, in_processing, prune_walk, LAYOUT, REMIX_FOLDER, EXPORT_FOLDER;
+#   STAGES in run order (StripPro after CloudPro); menu Plugins > CLDS (menu.ORDER, menu.BRAND); clraw reads the
+#   day-folder names YYYYMMDD_001_001.clraw and nav_YYYYMMDD_0001.clraw.
+API = 19
 
 
 def classFactory(iface):  # noqa: N802 - QGIS API

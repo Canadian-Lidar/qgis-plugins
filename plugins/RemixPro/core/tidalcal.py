@@ -36,7 +36,8 @@ def find_projects(paths):
             out.append(os.path.dirname(os.path.abspath(p)))
         elif os.path.isdir(p):
             for root, dirs, files in os.walk(p):
-                dirs[:] = [d for d in dirs if not d.startswith(".") and d.lower() != "processing"]
+                dirs[:] = [d for d in dirs if not d.startswith(".") and d.lower() != "processing"
+                           and not os.path.isfile(os.path.join(root, d + ".dcsproj"))]
                 if "project.tidalcal" in files:
                     out.append(os.path.abspath(root))
     return sorted(set(out))

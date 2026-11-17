@@ -446,7 +446,7 @@ class _Clock:
 
 def to_clraw(path, out_dir, base_name=None, line=1, project="", offsets=None, gnss=None, llh=(), ppk=(),
              rinex=(), extra_hw=None, extra_attachments=(), progress=None, cancelled=None, split_bytes=SPLIT_BYTES,
-             fallback_offsets=None, fallback_source="TidalCal vessel table"):
+             fallback_offsets=None, fallback_source="TidalCal vessel table", file_digits=4, capture_name=None):
     """Convert one SonarView recording (path: a file, or the files of a split recording in order). rinex:
     paths (the rover's) or (path, "rover" | "base") pairs; llh / ppk: the rover's solution logs only. Returns a
     summary dict (files written, counts, time span and basis)."""
@@ -477,7 +477,8 @@ def to_clraw(path, out_dir, base_name=None, line=1, project="", offsets=None, gn
     # GNSS side files: written once we know the recording's span (pass 2 below gives the last time)
     span0 = t_first
     md = {"format": "clraw", "format_version": "1", "kind": "sonar", "platform": "marine",
-          "writer": software(), "capture": base_name, "capture_name": base_name, "project": project or "",
+          "writer": software(), "capture": base_name, "capture_name": capture_name or base_name,
+          "project": project or "",
           "project_id": project or "", "line": int(line), "line_digits": 3, "source": "SonarView recording",
           "source_file": ",".join(os.path.basename(p) for p in parts), "sonars": ",".join(str(d) for d in sonar_ids),
           "time": "log_time = best UTC known for the packet (never decreasing); publish_time = the packet's own "
@@ -494,7 +495,7 @@ def to_clraw(path, out_dir, base_name=None, line=1, project="", offsets=None, gn
 
     def open_next():
         number[0] += 1
-        name = "%s_%04d%s" % (base_name, number[0], EXT)
+        name = "%s_%0*d%s" % (base_name, file_digits, number[0], EXT)
         w = Writer(os.path.join(out_dir, name), dict(md, file_number=str(number[0]), file_name=name),
                    atts + gnss_atts + list(extra_attachments) +
                    [("sources.json", "application/json", json.dumps(sources + [s for _a, s in gnss_src],
