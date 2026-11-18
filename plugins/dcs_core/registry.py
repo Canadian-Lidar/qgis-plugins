@@ -12,7 +12,11 @@ upstream is current.
 Focus (API 13, DCS Core 1.12.0): register(stage, open_fn, focus_fn) - focus(stage, project_path, target) opens the
 plugin on the project and then calls focus_fn(target), a dict saying what to show, e.g. {"kind": "cloud_area",
 "id": "C3"} (PosPro: that problem area in Trajectory Review) or {"kind": "cloud_pair", "lines": ["Line 4",
-"Line 5"]} (AlignPro: that pair on the Pairs page). A plugin without focus_fn is just opened."""
+"Line 5"]} (AlignPro: that pair on the Pairs page). A plugin without focus_fn is just opened.
+
+Leave (API 20, DCS Core 1.19.0): leave(widget) closes the plugin window holding widget. Every hand-over to another
+plugin (Continue, the chain breadcrumbs, CloudPro's Open in PosPro / AlignPro / Fix in StripPro) opens the next
+plugin on the project and then closes the one being left."""
 import logging
 
 _OPENERS = {}
@@ -55,6 +59,26 @@ def open(stage, project_path):    # noqa: A001 - mirrors the plugin action
     if fn is None:
         return False
     fn(project_path)
+    return True
+
+
+def leave(widget):
+    """Close the plugin window holding widget (API 20, DCS Core 1.19.0; Sean, 18 Nov 2026): moving on to another
+    plugin closes the one being left, so only the plugin in use is open. Closing it is the same as its close button
+    (CloudPro saves and frees its edit lock). True when a window was closed."""
+    try:
+        from .window import PluginWindow
+    except Exception:                           # noqa: BLE001 - no Qt (tests of the registry alone)
+        return False
+    w = widget
+    while w is not None and not isinstance(w, PluginWindow):
+        w = w.parentWidget()
+    if w is None:
+        return False
+    try:
+        w.close()
+    except RuntimeError:                        # already deleted
+        return False
     return True
 
 

@@ -8,7 +8,7 @@ import os
 from .qt import QAction, QtCore, QtGui, QtWidgets, Qt, Signal
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CORE_API = 19
+CORE_API = 20
 
 
 def _core():
@@ -45,7 +45,7 @@ class CloudProPlugin:
         a = QAction(QtGui.QIcon(os.path.join(HERE, "icons", "cloudpro.svg")), "CloudPro", self.iface.mainWindow())
         a.setObjectName("mCloudProAction")
         a.setToolTip("CloudPro: georeference, clean, classify and deliver the point cloud (stage 03)")
-        a.triggered.connect(self.show)
+        a.triggered.connect(self.from_menu)
         self.actions = [a]
         self.iface.addToolBarIcon(a)
         # QGIS Help > Plugins > CloudPro user guide
@@ -255,6 +255,18 @@ class CloudProPlugin:
         self.win.show()
         self.panel.show_window()        # where it was left; floating the first time
         return self.win
+
+    def from_menu(self, *_):
+        """The menu / toolbar entry (2.13.1, Sean 18 Nov 2026): opening CloudPro starts with no project. A job
+        held by the closed window is closed (its edit lock was freed when the window closed); a running background
+        georeference keeps it. Other plugins open CloudPro on their project through open_project."""
+        if self.win is not None and self.panel is not None and not self.panel.isVisible() and self._bg is None:
+            try:
+                if self.win.project is not None:
+                    self.win.close_project()
+            except Exception:       # noqa: BLE001
+                pass
+        return self.show()
 
     def _closed(self):
         """Closing the window saves the project and frees the edit lock, as closing CloudPro always did."""

@@ -6,7 +6,7 @@
 <table>
 <tr><th>Part</th><th>What it does</th></tr>
 <tr><td>Plugin name and version<br><span class="mono">PosPro v2.1.0</span></td><td>The plugin and the version you are running. Quote it when you report a problem; the user guide (<span class="ui">?</span>) is the one for this version.</td></tr>
-<tr><td>The chain<br><span class="mono">PosPro › AlignPro › CloudPro</span></td><td>The state of each stage on the open project, by colour: <b>green</b> finalized and current, <b>amber</b> out of date (an earlier stage was run again, the raw data or a shared setting changed), <b>blue</b> running, <b>red</b> failed, <b>grey</b> not run yet. The plugin you are in is underlined. Hover a name for the state and the reasons; click another stage to open that plugin on the same project. The chain refreshes every few seconds.</td></tr>
+<tr><td>The chain<br><span class="mono">PosPro › AlignPro › CloudPro</span></td><td>The state of each stage on the open project, by colour: <b>green</b> finalized and current, <b>amber</b> out of date (an earlier stage was run again, the raw data or a shared setting changed), <b>blue</b> running, <b>red</b> failed, <b>grey</b> not run yet. The plugin you are in is underlined. Hover a name for the state and the reasons; click another stage to open that plugin on the same project; {NAME} then closes. The chain refreshes every few seconds.</td></tr>
 <tr><td>{NAME}'s steps<br><span class="mono">{STEPS_EXAMPLE}</span></td><td>{STEPS_ROW} Each step is coloured the same way (green done, amber needs a check, red needs attention, blue running, grey not done yet); the current one is underlined. Hover a step for what is done and what to do next; click it to go there.</td></tr>
 {EXTRAS_ROW}
 <tr><td>Project box</td><td>The open project's name; click it for the project menu (<a href="#projects">Projects</a>){MENU_NOTE}. It turns red while {NAME} is working.</td></tr>
@@ -16,6 +16,7 @@
 
 <h2>Moving through the steps</h2>
 <p>{NAV_TEXT}</p>
+<p><b>One plugin at a time.</b> Moving on to another plugin (<span class="ui">Continue in …</span>, a stage in the chain, or CloudPro's <span class="ui">Open in PosPro</span>, <span class="ui">Open in AlignPro</span> and <span class="ui">Fix in StripPro</span>) opens that plugin on the same project and closes the one you leave. Opening a plugin from the <span class="ui">Plugins › CLDS</span> menu or its toolbar button starts it with no project: open or create one from the project box (<span class="ui">Recent</span> lists the last ones). A job still running in a closed window keeps it until it ends.</p>
 
 <h2>The window</h2>
 <p>{NAME} opens as a <b>window of its own</b>, centred on the QGIS screen the first time. Use the system's title bar to move it, maximise, minimise or close it; it does not dock into the QGIS window. {NAME} remembers its place and size, or that it was maximised, and opens the same way next time, also after QGIS restarts. <span class="ui">Reset window</span> in the project menu brings it back to its default size, centred.</p>

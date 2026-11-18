@@ -2369,6 +2369,8 @@ class MainWindow(QtWidgets.QMainWindow):
         path = self.project.dcs.path
         fn = getattr(registry, "focus", None)
         ok = fn(stage, path, target) if fn is not None else registry.open(stage, path)
+        if ok:
+            registry.leave(self)            # DCS Core 1.19.0: CloudPro closes as the other plugin opens
         if not ok:
             theme.msg_info(self, "CloudPro", "%s is not installed or not enabled in QGIS." % {
                 "pospro": "PosPro", "alignpro": "AlignPro", "strippro": "StripPro"}.get(stage, stage))

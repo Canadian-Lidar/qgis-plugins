@@ -50,7 +50,7 @@ class PosProPlugin:
         self.action = QAction(QIcon(os.path.join(HERE, "icon.svg")), "PosPro",
                               self.iface.mainWindow())
         self.action.setCheckable(True)
-        self.action.triggered.connect(self.toggle)
+        self.action.triggered.connect(self.from_menu)
         self.iface.addToolBarIcon(self.action)
         from dcs_core import menu, registry
         menu.add(self.iface, self.action)
@@ -99,6 +99,23 @@ class PosProPlugin:
             self.dock.show_window()     # where it was left; floating the first time
         else:
             self.dock.hide()
+
+    def from_menu(self, checked=False):
+        """The menu / toolbar entry (2.10.1, Sean 18 Nov 2026): opening PosPro starts with no project. The job held
+        by a closed window is let go (unless a job is still running in it); another plugin's Continue or chain
+        breadcrumbs open PosPro on their project through open_project."""
+        d = self.dock
+        if checked and d is not None and not d.isVisible() and getattr(d, "task", None) is None:
+            self._clear_marker()
+            try:
+                d.shutdown()
+            except Exception:       # noqa: BLE001
+                pass
+            for w in (self.editor, d, self.plots):
+                if w is not None:
+                    w.release_window()
+            self.dock = self.plots = self.editor = None
+        self.toggle(checked)
 
     def open_project(self, path):
         """Show PosPro on a DCS project (called from another plugin's chain bar)."""

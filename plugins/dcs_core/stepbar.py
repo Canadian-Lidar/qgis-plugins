@@ -177,4 +177,5 @@ class StepBar(Crumbs):
         if k != self.current:
             self.stageClicked.emit(k)
             if self.project is not None and registry.has(k):
-                registry.open(k, self.project.path)
+                if registry.open(k, self.project.path):
+                    registry.leave(self)        # 1.19.0: the plugin being left closes

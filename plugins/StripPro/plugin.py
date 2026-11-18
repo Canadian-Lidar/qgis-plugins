@@ -12,7 +12,7 @@ except ImportError:          # QGIS 3 / Qt5
     from qgis.PyQt.QtWidgets import QAction
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CORE_API = 19
+CORE_API = 20
 ICON = os.path.join(HERE, "icons", "strippro.svg")
 
 
@@ -35,7 +35,7 @@ class StripProPlugin:
         self.action.setObjectName("mStripProAction")
         self.action.setToolTip("StripPro: the trajectory corrected from the point cloud")
         self.action.setCheckable(True)
-        self.action.triggered.connect(self.toggle)
+        self.action.triggered.connect(self.from_menu)
         self.iface.addToolBarIcon(self.action)
         from .guide import MENU_TEXT
         self.help_action = QAction(QIcon(ICON), MENU_TEXT, self.iface.mainWindow())
@@ -92,6 +92,22 @@ class StripProPlugin:
             self.win.show_window()
         else:
             self.win.hide()
+
+    def from_menu(self, checked=False):
+        """The menu / toolbar entry (1.1.1, Sean 18 Nov 2026): opening StripPro starts with no project (unless
+        Align strips is still running in the closed window); CloudPro's Fix in StripPro opens it on its project."""
+        w = self.win
+        if checked and w is not None and not w.isVisible() and getattr(w, "worker", None) is None:
+            from dcs_core.window import alive
+            if alive(w):
+                try:
+                    w.visibilityChanged.disconnect(self.action.setChecked)
+                except (TypeError, RuntimeError):
+                    pass
+                w.cleanup()
+                w.release_window()
+            self.win = None
+        self.toggle(checked)
 
     def open_guide(self, *_):
         from .guide import open_guide
