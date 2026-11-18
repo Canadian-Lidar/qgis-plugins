@@ -178,7 +178,8 @@ class StepNav(QWidget):
             stage = self._cont[0]
             if stage == NEXT_PLUGIN.get(self.stage, (None,))[0]:
                 stage = next_stage(self.stage) or stage
-            registry.open(stage, self._cont[3])
+            if registry.open(stage, self._cont[3]):
+                registry.leave(self)            # 1.19.0: the plugin being left closes
 
 
 

@@ -65,7 +65,7 @@ class AlignProDock(PluginWindow):
         self._build()
         self._build_dataview(parent)
         self.set_enabled(False)
-        QTimer.singleShot(0, self.reopen_last)
+        # 1.13.1 (Sean, 18 Nov 2026): opening AlignPro starts with no project (Recent is in the project box)
 
     # ================================================================ layout
     def _build(self):
@@ -535,11 +535,6 @@ class AlignProDock(PluginWindow):
         for path in rec:
             nm = os.path.basename(path).replace(".dcsproj", "").replace(".alignpro.json", "")
             self.recent_menu.addAction(nm + "   \u2014   " + os.path.dirname(path), lambda p=path: self.open_project(p))
-
-    def reopen_last(self):
-        rec = dialogs.recent_projects()
-        if rec and self.p is None and self.job is None:
-            self.open_project(rec[0])
 
     def new_project(self):
         """A new DCS project in the job folder (<Name>.dcsproj and <Name>/); AlignPro works in 02_AlignPro."""

@@ -369,7 +369,8 @@ class StripProWindow(PluginWindow):
     def continue_cloudpro(self):
         from dcs_core import registry
         if self.dcs is not None and registry.has("cloudpro"):
-            registry.open("cloudpro", self.dcs.path)
+            if registry.open("cloudpro", self.dcs.path):
+                registry.leave(self)        # DCS Core 1.19.0: StripPro closes as CloudPro opens
 
     def open_guide(self, *_):
         if self._guide:

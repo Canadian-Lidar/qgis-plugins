@@ -2944,7 +2944,8 @@ class PosProDock(PluginWindow):
         self.setMinimumWidth(690)
         self.goto_page(0)
         self.set_enabled(False)
-        QTimer.singleShot(0, self.reopen_last)
+        # 2.10.1 (Sean, 18 Nov 2026): opening PosPro starts with no project; a job opens from the project box or
+        # from another plugin (Continue, the chain breadcrumbs)
 
     # ------------------------------------------------------------------
     def set_enabled(self, on):
@@ -2980,10 +2981,13 @@ class PosProDock(PluginWindow):
         return self.mpages if self._marine else self.pages
 
     def current_index(self):
+        """The step shown (0..7). A marine page left on show after a mobile mapping job was opened (or the other
+        way round) counts as its step, never as an index past the steps (2.10.1: IndexError in update_nav)."""
         w = self.stack.currentWidget()
-        if self._marine and w in self._mscroll:
+        if w in self._mscroll:
             return self._mscroll.index(w)
-        return self.stack.currentIndex()        # the mobile mapping page (also a marine job's shared steps)
+        k = self.stack.currentIndex()        # the mobile mapping page (also a marine job's shared steps)
+        return k if 0 <= k < len(self.keys) else 0
 
     def goto_page(self, k):
         if isinstance(k, str):
@@ -3327,14 +3331,6 @@ class PosProDock(PluginWindow):
                 return True
         return False
 
-    def reopen_last(self):
-        last = QSettings().value("PosPro/last_project", "")
-        if last and os.path.exists(last) and not self.project:
-            try:
-                self.set_project(Project.open_any(last))
-            except Exception:           # noqa: BLE001
-                pass
-
     def set_project(self, p):
         self.project = p
         QSettings().setValue("PosPro/last_project", p.dcs.path if p.dcs else p.path)
@@ -3396,7 +3392,7 @@ class PosProDock(PluginWindow):
         self.show_rt_track()
         if self.qc:
             self.show_trajectory()
-        self.goto_page(self.stack.currentIndex())
+        self.goto_page(self.current_index())     # the same step (never a marine page index) on the new job
 
     # ------------------------------------------------------------------
     def start_task(self, title, fn, on_done, quiet=False):

@@ -12,7 +12,7 @@ except ImportError:          # QGIS 3 / Qt5
     from qgis.PyQt.QtWidgets import QAction
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CORE_API = 19
+CORE_API = 20
 
 
 def _core():
@@ -34,7 +34,7 @@ class AlignProPlugin:
         self.action.setObjectName("mAlignProAction")
         self.action.setToolTip("AlignPro: Lidar boresight calibration (patch test)")
         self.action.setCheckable(True)
-        self.action.triggered.connect(self.toggle)
+        self.action.triggered.connect(self.from_menu)
         self.iface.addToolBarIcon(self.action)
         from .guide import MENU_TEXT
         self.help_action = QAction(QIcon(os.path.join(HERE, "icons", "alignpro.svg")), MENU_TEXT,
@@ -97,6 +97,23 @@ class AlignProPlugin:
             self.dock.show_window()     # where it was left; floating the first time
         else:
             self.dock.hide()
+
+    def from_menu(self, checked=False):
+        """The menu / toolbar entry (1.13.1, Sean 18 Nov 2026): opening AlignPro starts with no project. The job
+        held by a closed window is let go (unless a job is still running in it); another plugin's Continue or chain
+        breadcrumbs open AlignPro on their project through open_project."""
+        d = self.dock
+        if checked and d is not None and not d.isVisible() and getattr(d, "job", None) is None:
+            from .ui import docksafe
+            if docksafe.alive(d):
+                try:
+                    d.visibilityChanged.disconnect(self.action.setChecked)
+                except (TypeError, RuntimeError):
+                    pass
+                d.cleanup()
+                d.release_window()
+            self.dock = None
+        self.toggle(checked)
 
     def open_guide(self, *_):
         """The user guide PDF for the installed version (Help > Plugins > AlignPro user guide)."""
