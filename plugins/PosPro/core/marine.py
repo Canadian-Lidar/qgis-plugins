@@ -73,8 +73,27 @@ def adopt_sonar_files(project, paths=None):
     excluded = [f for f in dcs.sonar_excluded() if key(f) not in {key(p) for p in son}]
     dcs.set_sonar_selection(added=added, excluded=excluded, plugin="PosPro")
     project.cfg["rover"]["files"] = [f for f in rover if f not in son]
+    if not project.cfg["rover"]["files"]:
+        # what Read files made of them as Certus logs (0 IMU samples) must not stand for the boat's span
+        for k in ("extract", "time_start", "time_end"):
+            project.cfg["rover"][k] = None if k != "extract" else {}
     project.save()
     return len(son)
+
+
+def refresh_extent(project):
+    """cfg rover marine_span / marine_runs from the recordings in the job (cheap: the chunk index and the
+    first / last chunks), marine_xyz only when missing (it reads the autopilot). -> True when changed."""
+    runs = recording_runs(project)
+    span = [min(r[0] for r in runs), max(r[1] for r in runs)] if runs else None
+    rv = project.cfg["rover"]
+    changed = rv.get("marine_span") != span or rv.get("marine_runs") != runs
+    rv["marine_span"], rv["marine_runs"] = span, runs
+    if span and not rv.get("marine_xyz"):
+        _s, xyz = rover_extent(project)
+        rv["marine_xyz"] = list(xyz) if xyz else None
+        changed = True
+    return changed
 
 
 def is_marine(project):

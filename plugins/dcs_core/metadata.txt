@@ -3,7 +3,7 @@ name=DCS Core
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Shared base of the Canadian Lidar Data Collection Systems plugins (PosPro, AlignPro, CloudPro, RemixPro): one project per job, handover files between stages, stale-result detection, shared menu and look. Menu: Plugins > CLDS.
-version=1.19.0
+version=1.19.1
 author=Canadian Lidar
 email=seantobrien@gmail.com
 about=Install this before PosPro, AlignPro, CloudPro and RemixPro. It keeps one project per job beside the mapper's day folders (<Name>.dcsproj and the folder <Name>/), records what each stage published and what it was built from, flags results that are out of date when an earlier stage is re-run, and gives every plugin the same menu, look, chain bar and readers for the mapper's .clraw captures, SBET trajectories and LAS. It has no window of its own.
@@ -15,7 +15,8 @@ experimental=False
 deprecated=False
 hasProcessingProvider=no
 tags=canadian lidar,mobile mapping,dcs
-changelog=1.19.0 (API 20) One plugin at a time (Sean, 18 Nov 2026): moving on to another plugin (Continue, the chain breadcrumbs, CloudPro's Open in / Fix in) opens it on the project and closes the plugin being left (registry.leave).
+changelog=1.19.1 A marine recording's time span is its first to last sonar packet (RemixPro's start / stop events), not the Reach lines kept a minute either side: SonarView recordings made one after the other no longer read as covering the same time.
+    1.19.0 (API 20) One plugin at a time (Sean, 18 Nov 2026): moving on to another plugin (Continue, the chain breadcrumbs, CloudPro's Open in / Fix in) opens it on the project and closes the plugin being left (registry.leave).
     1.18.0 (API 19) File structure of 17 Nov 2026: a new project goes beside the mapper's day folders - <job>/<Name>.dcsproj and <Name>.qgz, and the folder <Name>/ with 00_RemixPro, 01_PosPro, 02_AlignPro, 03_CloudPro, 04_StripPro (WORK, OUT, LOG) and one EXPORT folder for every deliverable. Projects made before keep working where they are (Processing/<Name>/). StripPro is run after CloudPro (AlignPro continues in CloudPro). Menu: Plugins > CLDS > RemixPro, PosPro, AlignPro, CloudPro, StripPro. The mapper's day folders (<YYYYMMDD>/NAV, LIDAR, IMU, CLRAW, ...) and their file names (YYYYMMDD_001_001.clraw) are read.
     1.17.0 (API 18) Marine jobs: recordings can be added from other folders (other days) and left out of the job; every plugin reads the same selection.
     1.16.0 (API 17) Sonar heads: which side a head looks to now comes from its levelled beam centre (its own tilt sensor), so it stays right at any mounting angle; a mounting check from the data (tilt, how far the fan reaches past vertical, depth) and the width of seabed two heads both see.

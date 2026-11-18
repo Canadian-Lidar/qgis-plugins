@@ -455,6 +455,22 @@ import re as _re
 _R2_EPOCH = _re.compile(r"^ [ \d]\d [ \d]\d [ \d]\d [ \d]\d [ \d]\d [ \d]\d\.\d{7}  [0-6][ \d]{3}")
 
 
+def _rinex_kind(path):
+    """The RINEX file type of a plain file from its first header line ("O" observation, "N"/"G"/... navigation,
+    "B" SBAS broadcast), or "" when it is not RINEX."""
+    try:
+        with open(path, "r", encoding="ascii", errors="replace") as fh:
+            line = fh.readline()
+    except OSError:
+        return ""
+    if "RINEX VERSION" not in line[60:]:
+        return ""
+    t = line[20:21].strip().upper()
+    if not t and "OBSERVATION" in line.upper():
+        t = "O"
+    return t
+
+
 def base_obs_file(project, base, ctx):
     """One plain RINEX observation file covering the rover span (merged if
     the base came as several files)."""
@@ -472,6 +488,17 @@ def base_obs_file(project, base, ctx):
                 p = q
             p = products.crx2rnx(p)
         plain.append(p)
+    # 2.10.3: a base entry can hold its navigation and SBAS files too (the recordings' "Recorded" base, a base
+    # folder added whole): only RINEX observation files are merged
+    obs = [p for p in plain if _rinex_kind(p) == "O"]
+    skipped = [os.path.basename(p) for p in plain if p not in obs]
+    if skipped and ctx is not None:
+        ctx.log("info", "base %s: %s left out of the observations (navigation / SBAS, not observation files)"
+                % (base.get("name", ""), ", ".join(skipped)))
+    if not obs:
+        raise StepError("the base station %s has no RINEX observation file (%s)"
+                        % (base.get("name", ""), ", ".join(skipped) or "no files"))
+    plain = obs
     if len(plain) == 1:
         return plain[0]
     # concatenate bodies of RINEX files that have the same observation types;
