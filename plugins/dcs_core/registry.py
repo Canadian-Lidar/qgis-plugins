@@ -18,10 +18,16 @@ Leave (API 20, DCS Core 1.19.0): leave(widget) closes the plugin window holding 
 plugin (Continue, the chain breadcrumbs, CloudPro's Open in PosPro / AlignPro / Fix in StripPro) opens the next
 plugin on the project and then closes the one being left."""
 import logging
+import sys
 
-_OPENERS = {}
-_FOCUS = {}
-_LISTENERS = {}
+# 1.19.2 (Sean, 18 Nov 2026: Continue greyed out in every plugin, StripPro gone from the chain): QGIS reloads DCS
+# Core when it is upgraded, which gave a new, empty registry while PosPro, AlignPro, CloudPro and StripPro had
+# registered with the old one (they register once, in initGui). The tables live on the sys module, so a reloaded
+# DCS Core keeps them.
+_STATE = sys.__dict__.setdefault("_dcs_core_registry", {"openers": {}, "focus": {}, "listeners": {}})
+_OPENERS = _STATE["openers"]
+_FOCUS = _STATE["focus"]
+_LISTENERS = _STATE["listeners"]
 
 
 def register(stage, open_fn, focus_fn=None):
