@@ -83,6 +83,23 @@ try:
     harness.settle()
     assert not plugin.dock.isVisible(), "PosPro stayed open after moving on"
     print("registry.open shows the job; registry.leave closes PosPro")
+    # sonar recordings made outside the job (RemixPro's own output folder) added as rover files on the mobile
+    # mapping Data page (2.10.2): they become the job's recordings and the job opens as a marine job
+    out = os.path.join(tmp, "elsewhere", "2026-09-24-16-30", "clraw")
+    f = make_recording(os.path.join(tmp, "rec2"), out, TS.T0 + 86400.0, name="day2")
+    job2 = os.path.join(tmp, "Sissboo2")
+    os.makedirs(job2)
+    sp = Project.from_dcs(DcsProject.create(job2, "20261118"))
+    assert not marine.is_marine(sp)
+    sp.cfg["rover"]["files"] = [f]
+    sp.save()
+    d = plugin.dock
+    d.set_project(sp)
+    harness.settle()
+    assert d._marine and sp.cfg["rover"]["files"] == [], sp.cfg["rover"]["files"]
+    assert [os.path.normcase(x) for x in sp.dcs.sonar_added()] == [os.path.normcase(f)]
+    assert len(d.marine_recordings_all()) == 1 and d.stack.currentWidget() in d._mscroll
+    print("sonar .clraw given as rover files -> the job's recordings, marine pages")
     plugin.unload()
     print("OK")
 finally:

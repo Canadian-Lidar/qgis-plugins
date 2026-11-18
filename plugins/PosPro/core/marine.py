@@ -46,6 +46,37 @@ def recordings(dcs, include_excluded=False):
     return [sorted(v) for v in groups.values()]
 
 
+def adopt_sonar_files(project, paths=None):
+    """Sonar .clraw (RemixPro's SonarView recordings) given as rover files are the job's marine recordings
+    (PosPro 2.10.2; Sean, 18 Nov 2026: recordings added on the mobile mapping Data page read as 0 IMU samples):
+    they move from cfg rover files (and from paths, files being added) into the job's added recordings
+    (DcsProject.set_sonar_selection), so the job opens as a marine job. -> number of files moved (0 without a
+    DCS project)."""
+    from dcs_core import clraw
+    dcs = getattr(project, "dcs", None)
+    if dcs is None:
+        return 0
+    rover = project.cfg["rover"]["files"]
+    cand = list(rover) + [p for p in (paths or []) if p not in rover]
+    son = []
+    for p in cand:
+        try:
+            if p.lower().endswith(".clraw") and os.path.exists(p) and clraw.is_sonar(p):
+                son.append(p)
+        except Exception:       # noqa: BLE001
+            continue
+    if not son:
+        return 0
+    key = lambda f: os.path.normcase(os.path.abspath(f))       # noqa: E731
+    have = {key(f) for f in dcs.sonar_added()}      # kept as added even when the captures also list them
+    added = list(dcs.sonar_added()) + [p for p in son if key(p) not in have]
+    excluded = [f for f in dcs.sonar_excluded() if key(f) not in {key(p) for p in son}]
+    dcs.set_sonar_selection(added=added, excluded=excluded, plugin="PosPro")
+    project.cfg["rover"]["files"] = [f for f in rover if f not in son]
+    project.save()
+    return len(son)
+
+
 def is_marine(project):
     """A job whose captures are marine sonar recordings only (no Lidar, no Certus)."""
     dcs = getattr(project, "dcs", None)
