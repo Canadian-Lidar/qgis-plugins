@@ -35,9 +35,67 @@ def ext_dir():
     return os.path.join(HERE, "ext", tag)
 
 
+def _cache_dir():
+    """Per-user folder for the copies of the bundled packages (outside the plugin folder)."""
+    if sys.platform.startswith("win"):
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or os.path.expanduser("~")
+    else:
+        base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "DCS Core", "ext")
+
+
+def ext_copy(src=None):
+    """A copy of ext/<platform><python> in the per-user cache folder, named by its content (DCS Core 1.19.3).
+
+    Windows keeps a loaded extension (.pyd) locked until QGIS closes. Loaded from the plugin folder, it stopped the
+    plugin manager from upgrading DCS Core: the folder was left half deleted, without __init__.py, and QGIS then
+    reported "module 'dcs_core' has no attribute 'classFactory'" (Sean, 18 Nov 2026). The copy is loaded instead,
+    so the plugin folder is never locked; copies of older versions are removed when they are free. Falls back to
+    the plugin folder when the copy fails."""
+    import hashlib
+    import shutil
+    src = src or ext_dir()
+    if not os.path.isdir(src):
+        return None
+    try:
+        files = []
+        for root, _dirs, fs in os.walk(src):
+            for f in fs:
+                if f.endswith((".pyc", ".tmp")):
+                    continue
+                p = os.path.join(root, f)
+                files.append((os.path.relpath(p, src).replace("\\", "/"), p))
+        files.sort()
+        h = hashlib.sha1()
+        for rel, p in files:
+            h.update(rel.encode("utf-8"))
+            with open(p, "rb") as fh:
+                h.update(fh.read())
+        tag = os.path.basename(src.rstrip("/\\"))
+        base = _cache_dir()
+        dst = os.path.join(base, "%s-%s" % (tag, h.hexdigest()[:12]))
+        if not os.path.isfile(os.path.join(dst, ".complete")):
+            tmp = dst + ".tmp%d" % os.getpid()
+            shutil.rmtree(tmp, ignore_errors=True)
+            shutil.copytree(src, tmp, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            open(os.path.join(tmp, ".complete"), "w").close()
+            try:
+                os.replace(tmp, dst)
+            except OSError:                      # another QGIS made it meanwhile
+                shutil.rmtree(tmp, ignore_errors=True)
+                if not os.path.isfile(os.path.join(dst, ".complete")):
+                    return src
+        for d in os.listdir(base):               # older copies (in use ones stay until QGIS closes)
+            if d.startswith(tag + "-") and os.path.join(base, d) != dst:
+                shutil.rmtree(os.path.join(base, d), ignore_errors=True)
+        return dst
+    except Exception:       # noqa: BLE001 - the plugin folder still works, it is only locked while loaded
+        return src
+
+
 def _add_ext_path():
-    p = ext_dir()
-    if os.path.isdir(p) and p not in sys.path:
+    p = ext_copy()
+    if p and os.path.isdir(p) and p not in sys.path:
         sys.path.insert(0, p)
 
 
