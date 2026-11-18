@@ -244,6 +244,21 @@ class DataPage(Page):
         if not fs:
             return
         QSettings().setValue("PosPro/last_dir", os.path.dirname(fs[0]))
+        from ..core import marine
+        from dcs_core import clraw as dclraw
+        son = [f for f in fs if f.lower().endswith(".clraw") and dclraw.is_sonar(f)]
+        if son:
+            if self.project.dcs is None:
+                theme.msg_warn(self, "PosPro", "These are sonar recordings (made by RemixPro from SonarView). Marine "
+                                               "jobs need a DCS project: create one with New project in the project "
+                                               "box, then add them.")
+                return
+            marine.adopt_sonar_files(self.project, son)
+            fs = [f for f in fs if f not in son]
+            if not fs:
+                self.dock.toast("%d sonar recording file(s) added: this is a marine job" % len(son))
+                self.dock.set_project(self.project)     # the marine pages, with the recordings
+                return
         cur = self.project.cfg["rover"]["files"]
         for f in fs:
             if f not in cur:
@@ -3339,6 +3354,14 @@ class PosProDock(PluginWindow):
         self._set_pname(p.name)
         self.set_enabled(True)
         from ..core import marine
+        try:
+            n = marine.adopt_sonar_files(p)      # sonar recordings listed as rover files: the job's recordings
+        except Exception as e:      # noqa: BLE001
+            n = 0
+            self.log("warning", "could not move the sonar recordings into the job: %s" % e)
+        if n:
+            self.log("info", "%d sonar recording file(s) moved from the rover files to the job's recordings "
+                             "(a marine job)" % n)
         self._marine = marine.is_marine(p)
         self._mrecs = None
         self._mrecs_all = None
