@@ -106,7 +106,65 @@ def test_fan_edge():
     assert [f for f in light.filters if f.key == "m_gates"][0].v("edge") == 90.0
 
 
+def channel_pings(n_pings=60, per_ping=200, multipath=0.25, fish=0.02):
+    """Pings of one head looking to starboard across a river channel (12 m deep, a bank rising to 1 m at 35 m out):
+    beam centre 40 deg from the vertical, fan +-45 deg. -> (ps, kind) kind 0 seabed, 1 multipath beyond the
+    bottom (under the seabed and the bank), 2 fish in front of it."""
+    def bottom(y):
+        return np.where(y < 20, 12.0, np.maximum(1.0, 12.0 - (y - 20) * 11.0 / 15.0))
+    r_all, a_all, t_all, kind = [], [], [], []
+    for k in range(n_pings):
+        th = np.radians(rng.uniform(-5, 85, per_ping))                 # from the vertical
+        R = np.linspace(0.5, 120, 2400)
+        y = np.outer(np.sin(th), R)
+        z = np.outer(np.cos(th), R)
+        hit = z >= bottom(y)
+        first = np.where(hit.any(1), hit.argmax(1), -1)
+        m = first >= 0
+        rb = np.where(m, R[np.clip(first, 0, None)], np.nan)
+        rr = rb + rng.normal(0, 0.05, per_ping)
+        typ = np.zeros(per_ping, int)
+        u = rng.random(per_ping)
+        mp = m & (u < multipath)
+        rr[mp] = rb[mp] * rng.uniform(1.3, 2.5, mp.sum())                # multipath, side lobes: past the bottom
+        typ[mp] = 1
+        fs = m & (u > 1 - fish)
+        rr[fs] = rb[fs] * rng.uniform(0.3, 0.8, fs.sum())
+        typ[fs] = 2
+        keep = m
+        r_all.append(rr[keep]); a_all.append(np.degrees(th[keep]) - 40.0); t_all.append(np.full(keep.sum(), k * 0.1))
+        kind.append(typ[keep])
+    r, a, t, kind = (np.concatenate(v) for v in (r_all, a_all, t_all, kind))
+    ps = PointSet(len(r))
+    ps.line[:] = 7
+    ps.t[:] = 1790000000.0 + t
+    ps.az[:] = np.mod(np.round(a * 100), 36000).astype(np.uint16)
+    ps.rng[:] = np.clip(np.round(r * 100), 0, 65535).astype(np.uint16)
+    return ps, kind
+
+
+def test_first_bottom():
+    """Beyond the first bottom (CloudPro 2.14.0): what comes back from past the seabed a ping already reached is
+    rejected at any depth (under the channel and under the bank); the seabed and the water column are left."""
+    ps, kind = channel_pings()
+    ctx = F.Ctx(ps)
+    sel = np.arange(len(ps.x))
+    rej = np.zeros(len(sel), bool)
+    rej[F.make("m_first_bottom").run(ctx, sel)["reject"]] = True
+    print("first bottom: seabed kept %.1f %%, multipath removed %.1f %%, fish kept %.1f %%" % (
+        100 * (~rej[kind == 0]).mean(), 100 * rej[kind == 1].mean(), 100 * (~rej[kind == 2]).mean()))
+    assert (~rej[kind == 0]).mean() > 0.99
+    assert rej[kind == 1].mean() > 0.95
+    assert (~rej[kind == 2]).all()                                     # in front of the bottom: other filters' job
+    # the marine groups run it after the depth hypotheses
+    for name in ("Marine - standard", "Marine - strict", "Marine - water column"):
+        g = [x for x in F.default_groups(marine=True) if x.name.startswith(name)][0]
+        keys = [f.key for f in g.filters]
+        assert keys.index("m_first_bottom") == keys.index("m_cube") + 1, (name, keys)
+
+
 if __name__ == "__main__":
+    test_first_bottom()
     test_tvu()
     test_fan_edge()
     test_angle_gate_and_marine_first()

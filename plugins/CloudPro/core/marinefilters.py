@@ -16,6 +16,11 @@ Filters (group "Marine"):
               than the TVU), one hypothesis is kept (most soundings, CUBE's default "prior" disambiguation, or the
               one closest to the neighbouring cells), the others rejected. After Calder & Mayer 2003, G3 4(6):1048
               and HYPACK's CUBE; rejects water-column returns (fish, bubbles, turbulence) and multipath ghosts.
+  m_first_bottom  Beyond the first bottom - along each ping, nothing can come back from past the seabed the ping
+              already reached: a sounding further along (nearly) the same beam angle than that ping's bottom is
+              multipath, a side lobe or noise, whatever its depth (CloudPro 2.14.0; Sean, 18 Nov 2026: noise left
+              under the banks, below the seabed but inside the angle and depth gates). As the bottom-detection
+              logic of the sonars' own processing (first return along the beam).
   m_spline    Surface spline - a robust local surface (Tukey biweight, k nearest soundings) and a gate = IHO TVU x
               factor, above / below / both. As Qimera's surface spline (presets from Very weak to Very strong) and
               BeamworX's spline filter; "Very weak" follows the seabed most closely (best in the study above).
@@ -313,7 +318,103 @@ class SurfaceSpline(Filter):
         return _res(reject=sel[out])
 
 
-MARINE_FILTERS = (SonarGates, RejectOutliers, DepthHypotheses, SurfaceSpline)
+class FirstBottom(Filter):
+    key, name, group, speed = "m_first_bottom", "Beyond the first bottom (per ping)", "Marine", "++"
+    ref = "first-return bottom detection along each beam (sonar bottom detection); multipath / side-lobe rejection"
+    help = ("A ping cannot see past the seabed it has already reached. For each ping of each head (pooled over a "
+            "few pings), the seabed's slant range is found at every beam angle (a low percentile of the soundings "
+            "in each angle bin, joined between bins); soundings further along the same angle than that range plus "
+            "the margin are rejected: multipath and side-lobe returns under the seabed and under the banks, at any "
+            "depth. Run it after the depth hypotheses (fish and bubbles in the water column would otherwise stand "
+            "for the seabed). Angles where the ping saw no seabed are left alone.")
+    params = [P("bin", "Angle bin", "float", 2.0, 0.25, 10, 0.25, " deg"),
+              P("pool", "Pings pooled", "int", 5, 1, 50,
+                help="Consecutive pings of a head taken together for the seabed range (more = steadier, less = "
+                     "follows fast changes)"),
+              P("q", "Seabed percentile", "float", 20.0, 1, 50, 1, " %",
+                help="The seabed range in an angle bin = this percentile of the soundings' slant ranges there"),
+              P("nmin", "Min. soundings per bin", "int", 5, 1, 100),
+              P("gap", "Max. angle gap bridged", "float", 6.0, 0, 30, 0.5, " deg",
+                help="The seabed range is joined across angle bins without soundings up to this gap"),
+              P("margin", "Margin", "float", 1.0, 0.05, 50, 0.05, " m"),
+              P("frac", "Margin as a share of the range", "float", 10.0, 0, 100, 1, " %",
+                help="The margin is the larger of the fixed margin and this share of the seabed's slant range "
+                     "(the seabed's slope across one angle bin)")]
+
+    def run(self, ctx, sel):
+        bad = np.zeros(len(sel), bool)
+        if not len(sel):
+            return _res()
+        w = float(self.v("bin"))
+        nb = int(np.ceil(180.0 / w)) + 1
+        line = ctx.ps.line[sel].astype(np.int64)
+        t = ctx.ps.t[sel].astype(np.float64)
+        a = beam_angle(ctx.ps.az[sel])
+        r = ctx.ps.rng[sel].astype(np.float64) * 0.01
+        ok = np.isfinite(a) & np.isfinite(t) & (r > 0)
+        if ok.sum() < 3:
+            return _res()
+        # pings: one time per ping per line (head x pass); pooled in blocks of consecutive pings
+        o = np.lexsort((t, line))
+        ls, ts = line[o], t[o]
+        newp = np.ones(len(o), bool)
+        newp[1:] = (ls[1:] != ls[:-1]) | (np.abs(ts[1:] - ts[:-1]) > 1e-6)
+        pid = np.cumsum(newp) - 1                                       # ping number over all lines
+        newl = np.ones(len(o), bool)
+        newl[1:] = ls[1:] != ls[:-1]
+        first = np.maximum.accumulate(np.where(newl, pid, 0))           # ping number of the line's first ping
+        blk_o = (pid - first) // max(1, int(self.v("pool")))
+        lkey = np.cumsum(newl) - 1
+        grp = np.empty(len(o), np.int64)
+        grp[o] = lkey * (1 << 32) + blk_o
+        g_u, g = np.unique(grp, return_inverse=True)
+        b = np.clip(np.floor((a + 90.0) / w).astype(np.int64), 0, nb - 1)
+        # the seabed range per (group, bin): the q-th percentile of the soundings there
+        G = len(g_u)
+        key = g * nb + b
+        k = np.flatnonzero(ok)
+        oo = k[np.lexsort((r[k], key[k]))]
+        kk = key[oo]
+        start = np.flatnonzero(np.r_[True, kk[1:] != kk[:-1]])
+        cnt = np.diff(np.r_[start, len(oo)])
+        pick = start + np.floor((cnt - 1) * float(self.v("q")) / 100.0).astype(np.int64)
+        ref = np.full(G * nb, np.nan)
+        good = cnt >= int(self.v("nmin"))
+        ref[kk[start][good]] = r[oo[pick[good]]]
+        ref = ref.reshape(G, nb)
+        # nearest bin with a seabed range on each side, to join across empty bins
+        idx = np.arange(nb)[None, :].repeat(G, 0)
+        has = np.isfinite(ref)
+        prev = np.where(has, idx, -1)
+        prev = np.maximum.accumulate(prev, axis=1)
+        nxt = np.where(has, idx, nb)
+        nxt = np.minimum.accumulate(nxt[:, ::-1], axis=1)[:, ::-1]
+        # each sounding against the seabed at its own angle (linear between bin centres)
+        u = (a + 90.0) / w - 0.5
+        i0 = np.clip(np.floor(u).astype(np.int64), 0, nb - 1)
+        i1 = np.clip(i0 + 1, 0, nb - 1)
+        p0 = prev[g, i0]
+        p1 = nxt[g, i1]
+        gap_bins = float(self.v("gap")) / w
+        v0 = p0 >= 0
+        v1 = p1 < nb
+        r0 = np.where(v0, ref[g, np.clip(p0, 0, nb - 1)], np.nan)
+        r1 = np.where(v1, ref[g, np.clip(p1, 0, nb - 1)], np.nan)
+        span = np.where(v0 & v1, p1 - p0, np.inf)
+        f = np.where(v0 & v1 & (span > 0), (u - p0) / np.where(span > 0, span, 1), 0.0)
+        both = v0 & v1 & (span <= gap_bins + 1)
+        rb = np.where(both, r0 + np.clip(f, 0, 1) * (r1 - r0), np.nan)
+        # only one side known: use it when the sounding's angle is within half the gap of it
+        near0 = v0 & ~both & ((u - p0) <= max(0.5, gap_bins / 2))
+        near1 = v1 & ~both & ((p1 - u) <= max(0.5, gap_bins / 2))
+        rb = np.where(np.isnan(rb) & near0, r0, rb)
+        rb = np.where(np.isnan(rb) & near1, r1, rb)
+        tol = np.maximum(float(self.v("margin")), rb * float(self.v("frac")) / 100.0)
+        bad = ok & np.isfinite(rb) & (r > rb + tol)
+        return _res(reject=sel[bad])
+
+
+MARINE_FILTERS = (SonarGates, RejectOutliers, DepthHypotheses, FirstBottom, SurfaceSpline)
 
 
 def marine_groups(make, FilterGroup):
@@ -322,7 +423,7 @@ def marine_groups(make, FilterGroup):
     g = FilterGroup("Marine - standard clean (IHO Order 1a)")
     g.filters = [make("reset"), make("m_gates", inboard=20.0, outboard=65.0, edge=40.0),
                  make("isolated", interval=1.0, min_pts=10),
-                 make("m_cube"), make("m_outliers"), make("m_spline")]
+                 make("m_cube"), make("m_first_bottom"), make("m_outliers"), make("m_spline")]
     G.append(g)
     g = FilterGroup("Marine - light clean (reconnaissance)")
     g.filters = [make("reset"), make("m_gates"), make("isolated", interval=1.5, min_pts=5),
@@ -331,9 +432,9 @@ def marine_groups(make, FilterGroup):
     g = FilterGroup("Marine - strict (IHO Special Order)")
     g.filters = [make("reset"), make("m_gates", inboard=10.0, outboard=60.0, edge=40.0),
                  make("isolated", interval=0.75, min_pts=10), make("m_cube", order="Special"),
-                 make("m_outliers", order="Special"), make("m_spline", order="Special")]
+                 make("m_first_bottom"), make("m_outliers", order="Special"), make("m_spline", order="Special")]
     G.append(g)
     g = FilterGroup("Marine - water column and multipath")
-    g.filters = [make("m_cube"), make("m_spline", side="Above only"), make("m_spline", side="Below only", factor=2.0)]
+    g.filters = [make("m_cube"), make("m_first_bottom"), make("m_spline", side="Above only"), make("m_spline", side="Below only", factor=2.0)]
     G.append(g)
     return G
