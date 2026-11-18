@@ -40,3 +40,11 @@ if stepnav is not None:
     registry.unregister("strippro")
     print("next stage: AlignPro -> CloudPro; StripPro -> CloudPro")
 print("OK")
+
+# 1.19.2: a reloaded DCS Core (QGIS upgrades it while running) keeps the plugins registered with the old one
+import importlib  # noqa: E402
+registry.register("cloudpro", lambda p: None)
+registry2 = importlib.reload(registry)
+assert registry2.has("cloudpro"), "the registry was emptied by the reload"
+registry2.unregister("cloudpro")
+print("reload keeps the registry")
