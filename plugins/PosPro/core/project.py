@@ -415,6 +415,9 @@ class Project:
         """(t0, t1) GPS seconds of the rover data: the raw IMU's span, else (captures without raw IMU,
         processed in the real-time mode) the span of the Certus real-time solution. None before reading."""
         ex = self.cfg["rover"].get("extract") or {}
+        m = self.cfg["rover"].get("marine_span")
+        if m and not self.cfg["rover"].get("files"):             # marine job (2.10.3: whatever an old extract says)
+            return tuple(m)
         try:
             t0, t1 = float(ex.get("imu_t0")), float(ex.get("imu_t1"))
             if t1 > t0 > 0:
@@ -450,7 +453,7 @@ class Project:
 
     def approx_xyz(self):
         ex = self.cfg["rover"].get("extract") or {}
-        if not ex and self.cfg["rover"].get("marine_xyz"):    # marine job: the boat (autopilot position)
+        if self.cfg["rover"].get("marine_xyz") and (not ex or not self.cfg["rover"].get("files")):  # marine job
             return tuple(self.cfg["rover"]["marine_xyz"])
         try:
             v = [float(x) for x in ex.get("approx_xyz", "").split(",")]

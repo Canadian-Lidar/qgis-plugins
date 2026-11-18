@@ -60,6 +60,7 @@ class SonarRecording:
         self._veh = None
         self._heads = None
         self._looks = {}
+        self._span = None
 
     # ---------------------------------------------------------------- what it holds
     @property
@@ -119,9 +120,47 @@ class SonarRecording:
         self._looks[head] = frames.cerulean_looks(ang)
         return self._looks[head]
 
+    EDGE_CHUNKS = 600                   # chunks (<= 1 s each) searched at each end for the first / last sonar packet
+
     def span(self):
-        a = [f.span() for f in self.files]
-        return min(x[0] for x in a if x[0] is not None), max(x[1] for x in a if x[1] is not None)
+        """(first, last) sonar packet in UTC s: RemixPro's clraw_start / clraw_stop events (DCS Core 1.19.1).
+        The files also hold the Reach lines kept 60 s either side of the recording, so their chunk span reached
+        a minute past each end and back-to-back SonarView recordings read as covering the same 2 minutes. Files
+        without the events: the chunk span as before."""
+        if self._span is None:
+            a = [f.span() for f in self.files]
+            span = (min(x[0] for x in a if x[0] is not None), max(x[1] for x in a if x[1] is not None))
+            t0 = self._edge_event(self.files[0], "clraw_start", forward=True)
+            t1 = self._edge_event(self.files[-1], "clraw_stop", forward=False)
+            if t0 is not None and t1 is not None and t1 > t0:
+                span = (t0, t1)
+            self._span = span
+        return self._span
+
+    def _edge_event(self, f, name, forward):
+        """The time of event `name` found in the first (or last) EDGE_CHUNKS chunks of file f, else None."""
+        from . import mcap
+        try:
+            cid = f._m.topic_id(clraw.TOPIC_EVENTS)
+            if cid is None:
+                return None
+            n = len(f._m.chunk_pos)
+            order = range(min(n, self.EDGE_CHUNKS)) if forward else range(n - 1, max(-1, n - 1 - self.EDGE_CHUNKS), -1)
+            with open(f.path, "rb") as fh:
+                for ci in order:
+                    data = f._m.read_chunk(fh, ci)
+                    if data is None:
+                        continue
+                    for _ch, _lt, _pt, p in mcap.iter_messages(data, {cid}):
+                        try:
+                            e = json.loads(bytes(p).decode("utf-8"))
+                        except ValueError:
+                            continue
+                        if e.get("event") == name and e.get("t") is not None:
+                            return float(e["t"])
+        except Exception:       # noqa: BLE001 - fall back to the chunk span
+            return None
+        return None
 
     def _iter(self, topic):
         for f in self.files:

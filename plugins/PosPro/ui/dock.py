@@ -3363,6 +3363,12 @@ class PosProDock(PluginWindow):
             self.log("info", "%d sonar recording file(s) moved from the rover files to the job's recordings "
                              "(a marine job)" % n)
         self._marine = marine.is_marine(p)
+        if self._marine:
+            try:
+                if marine.refresh_extent(p) or n:      # the recordings' span, runs and position (2.10.3)
+                    p.save()
+            except Exception as e:      # noqa: BLE001
+                self.log("warning", "could not read the recordings' time span: %s" % e)
         self._mrecs = None
         self._mrecs_all = None
         self.nav.setVisible(True)
