@@ -3,7 +3,7 @@ name=DCS Core
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Shared base of the Canadian Lidar Data Collection Systems plugins (PosPro, AlignPro, CloudPro, RemixPro): one project per job, handover files between stages, stale-result detection, shared menu and look. Menu: Plugins > CLDS.
-version=1.19.3
+version=1.19.4
 author=Canadian Lidar
 email=seantobrien@gmail.com
 about=Install this before PosPro, AlignPro, CloudPro and RemixPro. It keeps one project per job beside the mapper's day folders (<Name>.dcsproj and the folder <Name>/), records what each stage published and what it was built from, flags results that are out of date when an earlier stage is re-run, and gives every plugin the same menu, look, chain bar and readers for the mapper's .clraw captures, SBET trajectories and LAS. It has no window of its own.
@@ -15,7 +15,8 @@ experimental=False
 deprecated=False
 hasProcessingProvider=no
 tags=canadian lidar,mobile mapping,dcs
-changelog=1.19.3 Upgrading DCS Core on Windows no longer fails with "module 'dcs_core' has no attribute 'classFactory'": the bundled zstandard is loaded from a copy in the user's folder, so Windows no longer locks the plugin folder and the upgrade can replace it.
+changelog=1.19.4 Audit (23 Nov 2026): a finished .clraw is opened from its index at the end of the file (a 394 MB sonar recording: 0.18 s -> 3 ms warm, seconds -> a fraction of a second on a cold or synced folder); attachments (the Reach RINEX files in a marine recording, 106 MB at Lumston) are read only when asked for, not kept in memory with every open recording; the theme guard of a DCS Core reloaded by an upgrade replaces the old one instead of running twice.
+    1.19.3 Upgrading DCS Core on Windows no longer fails with "module 'dcs_core' has no attribute 'classFactory'": the bundled zstandard is loaded from a copy in the user's folder, so Windows no longer locks the plugin folder and the upgrade can replace it.
     1.19.2 Upgrading DCS Core while QGIS is running no longer forgets which plugins are loaded: Continue, the chain and CloudPro's background georeferencing kept working only after a QGIS restart.
     1.19.1 A marine recording's time span is its first to last sonar packet (RemixPro's start / stop events), not the Reach lines kept a minute either side: SonarView recordings made one after the other no longer read as covering the same time.
     1.19.0 (API 20) One plugin at a time (Sean, 18 Nov 2026): moving on to another plugin (Continue, the chain breadcrumbs, CloudPro's Open in / Fix in) opens it on the project and closes the plugin being left (registry.leave).
