@@ -37,6 +37,7 @@
 <div style="break-inside:avoid"><h2>What is new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>2.16.0</b></td><td>Point clouds from other systems: <span class="ui">Import point clouds (LAS, LAZ, E57, PLY, PTS, XYZ)...</span> in the project menu takes LAS 1.0–1.4, LAZ, E57, PLY, PTS, PCD and text files into a job without PosPro or AlignPro (with no job open it makes one first). A file becomes a line, or one line per LAS point source / E57 scan / PTS block; colours, classes and withheld points are kept, and a file in another coordinate system is moved into the job's. The first step then reads <b>Import</b>. New colour <b>RGB</b>; LAS / LAZ exports carry the colours (point format 7). In a job with Lidar or sonar lines too, georeferencing again keeps the imported points and their edits.</td></tr>
 <tr><td><b>2.15.0</b></td><td>Workflow (23 Nov 2026): the steps are Georeference › Check › Clean &amp; classify › Finalize; Check measures the line separation and shows whether the lines agree, with the problem areas, before cleaning. Editing a filter setting starts the live preview on the Inspection Area (Run applies it to the scope). Group menu › <span class="ui">Update to the current version…</span> brings a ready-made group saved in a job up to date: new filters added at their place, new defaults where a setting was left at the old default (marine standard: 85° outboard; strict: 75°; Beyond the first bottom: 0.5 m or 3 %); settings you changed are kept. Background georeferencing waits until PosPro or AlignPro have stopped publishing for two minutes (opening the job runs it at once). Needs DCS Core 1.19.0.</td></tr>
 <tr><td><b>2.14.1</b></td><td>Saving a project, a result or an export no longer fails when Windows briefly holds the file open (OneDrive or other sync, antivirus, another program reading it): the replacement is retried for a few seconds. Opening recordings is much faster on synced or network folders (DCS Core 1.19.4 reads each file's index instead of every chunk header, and attachments only when needed).</td></tr>
 <tr><td><b>2.14.0</b></td><td>Marine filter <b>Beyond the first bottom (per ping)</b>: rejects what a ping returns from past the seabed it already reached (multipath and side lobes under the seabed and the banks, at any depth); in the standard, strict and water column groups after the depth hypotheses. Groups saved in a job before 2.14.0 keep their filters: add it with <span class="ui">+</span> (2.15.0: or the group menu › <span class="ui">Update to the current version…</span>).</td></tr>
@@ -190,6 +191,28 @@
 </table>
 <p>Both need the result to be current, PosPro or AlignPro installed, and DCS Core 1.12.0; with an older DCS Core the plugin opens on the job without going to the item. After the fix is finalized and CloudPro has updated the points, <span class="ui">Check again</span>.</p>
 <p>Click a pair or a line to show only it on the Plan; <span class="ui">All pairs on the Plan</span> shows every pair again. <span class="ui">Save report…</span> writes the same as a text file; each check is also kept in the History and in <code>LOG/</code>. The result is kept with the project and marked <i>out of date</i> when the points are georeferenced again. The check reads every point once: about as long as reading the project from the disk.</p>
+
+<h2 id="pointclouds">Point clouds from other systems</h2>
+<p>Point clouds made elsewhere – another scanner or mobile system, a drone, a terrestrial scanner, a cloud a client sent – can be checked, cleaned, classified and finalized in CloudPro without going through PosPro and AlignPro. <span class="ui">project menu › Import point clouds (LAS, LAZ, E57, PLY, PTS, XYZ)...</span> opens the import window; with no job open, the New DCS project dialog comes first (choose the folder holding the files as the job folder).</p>
+<table>
+<tr><th>Format</th><th>What is read</th></tr>
+<tr><td>LAS 1.0–1.4, LAZ</td><td>Point formats 0–10: position, intensity, returns, class, withheld flag, GPS time (adjusted standard GPS time becomes UTC), colours, point source id; the coordinate system from the file (WKT or GeoKeys). LAZ with the bundled decompressor.</td></tr>
+<tr><td>E57</td><td>Every scan with its pose (rotation and translation), cartesian or spherical coordinates, intensity and colours scaled by the file's limits, time stamps; invalid points left out. Scans compressed with a codec other than E57's own bit-packing are refused with the reason.</td></tr>
+<tr><td>PLY, PCD</td><td>ASCII or binary vertices with x, y, z and, when present, colours, intensity, class and time.</td></tr>
+<tr><td>PTS</td><td>Leica blocks (a count line, then x y z intensity r g b); each block is a scan.</td></tr>
+<tr><td>XYZ, TXT, CSV, ASC</td><td>One point per line, separated by spaces, tabs, commas or semicolons. A first line of names (x y z intensity red green blue class time …) sets the columns; otherwise 3 columns are x y z, 4 add intensity, 6 add colours, 7 intensity and colours.</td></tr>
+</table>
+<p>The import window lists each file with what it holds and its coordinate system:</p>
+<table>
+<tr><th>Setting</th><th>Meaning</th></tr>
+<tr><td><span class="ui">The files' coordinates</span></td><td><i>As each file says</i> (a file that says nothing is taken to be in the job's), or <i>All files are in</i> a coordinate system you give (EPSG code). A file in another system than the job's is moved into it (heights are kept as they are).</td></tr>
+<tr><td><span class="ui">The job's coordinate system</span></td><td>While the job has no points it follows the first file; afterwards it is the job's (Project properties).</td></tr>
+<tr><td><span class="ui">Lines</span></td><td>A file holding several LAS point sources, E57 scans or PTS blocks becomes one line each (named <i>file · scan</i>), so Check compares them; unticked, one line per file.</td></tr>
+<tr><td><span class="ui">Classes</span>, <span class="ui">Withheld</span></td><td>Keep the files' classes; points the file marks withheld start rejected with the reason <i>original</i>.</td></tr>
+<tr><td><span class="ui">Points</span></td><td>Keep every Nth point (1 = all).</td></tr>
+</table>
+<p>In a job of imported point clouds the first step reads <b>Import</b> (Import › Check › Clean &amp; classify › Finalize); clicking it adds more files. Check compares overlapping files or scans as it compares survey lines (no trajectory is needed). Finalize writes the LAS / LAZ and cloud.json with <i>source: imported point clouds</i>; the result goes out of date only when an imported file changes. Points with colours are exported as LAS point format 7 and CSV with Red, Green, Blue columns.</p>
+<p>Imported point clouds can also join a job of Lidar or sonar captures: they stay as they are when the captures are georeferenced again, with their edits and colours. A point cloud more than 2,000 km from the job's other points is refused (almost always a wrong coordinate system).</p>
 
 <h2>Other captures, removing points</h2>
 <ul>
@@ -368,6 +391,7 @@
 <tr><td>Height</td><td>Height, with the ramp chosen in <span class="ui">Colour ramp</span>.</td></tr>
 <tr><td>Intensity, Intensity (range normalised)</td><td>Intensity (grey when the ramp is Rainbow), or intensity × (range / 10 m)².</td></tr>
 <tr><td>Classification</td><td>The class colour (<a href="#classes">classes table</a>).</td></tr>
+<tr><td>RGB</td><td>The points' own colours, for imported point clouds that carry them (E57, PTS, PLY, LAS point formats 2, 3, 5, 7, 8, 10). Points without colours are black. Chosen for every view after a first import with colours.</td></tr>
 <tr><td>Line, File</td><td>The line's colour, or one colour per <code>.clraw</code> file.</td></tr>
 <tr><td>Return</td><td>Green last or single return, amber strongest.</td></tr>
 <tr><td>Channel</td><td>The laser (1–32).</td></tr>
@@ -718,6 +742,7 @@ python -m cloudpro.cli info    D:/Job/Processing/Street/Street.dcsproj</pre>
 <tr><th>Command</th><th>Does</th><th>Options</th></tr>
 <tr><td><code>import</code></td><td>Georeferences the job's captures with PosPro's trajectory and AlignPro's mounting (or the fallbacks), carrying edits over. Prints the inputs and warnings.</td><td><code>--clraw</code> files or folders instead of the job's captures; <code>--returns both|last|strongest</code>; <code>--rmin</code>, <code>--rmax</code> (1, 120 m); <code>--mount R P H</code> and <code>--lever F S D</code> override the mounting (then <i>no calibration</i>).</td></tr>
 <tr><td><code>update</code></td><td>Re-georeferences with the current inputs, keeping every edit.</td><td>–</td></tr>
+<tr><td><code>pointclouds</code></td><td>Imports point-cloud files (LAS, LAZ, E57, PLY, PTS, PCD, XYZ / TXT / CSV) into the job (<a href="#pointclouds">Point clouds from other systems</a>).</td><td>files; <code>--crs</code> the files' coordinate system when they do not say; <code>--job-crs</code> (job without points); <code>--one-line-per-file</code>; <code>--no-classes</code>; <code>--every N</code>.</td></tr>
 <tr><td><code>filter</code></td><td>Runs a group on the whole project, tile by tile, and records it.</td><td><code>--group</code> name (the project's groups, then the ready-made ones); <code>--lines</code> e.g. <code>1,3-4</code>.</td></tr>
 <tr><td><code>publish</code></td><td>Finalizes LAS, optional ground grid, report and <code>cloud.json</code>.</td><td><code>--dem</code> cell (0 = no grid); <code>--classes</code>; <code>--include-rejected</code>.</td></tr>
 <tr><td><code>info</code></td><td>Name, CRS, lines and points, coverage (area with points, median density, share at or above the target), the state of each stage and what is out of date.</td><td><code>--target 100</code> (pts/m²), <code>--cell 1</code> (m)</td></tr>

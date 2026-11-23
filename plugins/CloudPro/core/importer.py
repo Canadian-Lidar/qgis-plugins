@@ -310,12 +310,19 @@ class EditSpool:
         shutil.rmtree(self.dir, ignore_errors=True)
 
 
-def collect_edits(project, folder=None):
-    """Every edited point of the current store into an EditSpool (None when nothing is edited)."""
+def _not_in(lines_arr, skip):
+    if not skip:
+        return np.ones(len(lines_arr), bool)
+    return ~np.isin(lines_arr, np.fromiter(skip, np.int64))
+
+
+def collect_edits(project, folder=None, skip_lines=None):
+    """Every edited point of the current store into an EditSpool (None when nothing is edited). skip_lines:
+    line ids left out (imported point clouds, carried over with their edits by pcimport.carry_over)."""
     sp = EditSpool(folder or os.path.join(project.work, "edits_pending"))
     for k in project.store.keys():
         a = project.store.tile_array(k)
-        m = (a["flag"] != 0) | (a["cls"] != 1) | (a["dz"] != 0)
+        m = ((a["flag"] != 0) | (a["cls"] != 1) | (a["dz"] != 0)) & _not_in(a["line"], skip_lines)
         if m.any():
             r = np.asarray(a[m])
             sp.add(edit_key(r["t"], r["ch"], r["ret"]), r["flag"], r["cls"], r["dz"])
@@ -327,8 +334,9 @@ def collect_edits(project, folder=None):
     return sp
 
 
-def apply_edits(project, ed, progress=None, cancel=None):
-    """Put collected edits back on the re-georeferenced points (same firing, laser and return)."""
+def apply_edits(project, ed, progress=None, cancel=None, skip_lines=None):
+    """Put collected edits back on the re-georeferenced points (same firing, laser and return); imported
+    point-cloud lines (skip_lines) keep their own."""
     if ed is None or ed.count == 0:
         return 0
     n = 0
@@ -340,6 +348,9 @@ def apply_edits(project, ed, progress=None, cancel=None):
         if len(a) == 0:
             continue
         j, r = ed.lookup(edit_key(a["t"], a["ch"], a["ret"]))
+        if len(j) and skip_lines:
+            ok = _not_in(a["line"][j], skip_lines)
+            j, r = j[ok], r[ok]
         if len(j):
             a["flag"][j] = r["flag"]
             a["cls"][j] = r["cls"]
@@ -435,13 +446,18 @@ def import_chain(project, inp, opts, files=None, progress=None, cancel=None, kee
     if want == "default":
         want = "%.1f" % epochs.default_epoch(target_crs)
     datum = move_epoch(inp, fr, datum, want, target_crs) or datum
-    ed = collect_edits(project) if keep_edits and project.lines else None
+    from . import pcimport as _pc
+    pc_ids = _pc.pointcloud_line_ids(project)
+    ed = collect_edits(project, skip_lines=pc_ids) if keep_edits and project.lines else None
     from . import interpolate as _interp
     keep_interp = _interp.snapshot(project) if project.lines else None   # virtual points survive the rebuild
+    old_crs = project.crs
     project.begin_rebuild()
     try:
         project.data.update(settings)
         project.store.crs = project.crs
+        remap = _pc.carry_over(project, project._staged["store"], project._staged["data"].get("lines", []), old_crs)
+        new_pc = set(remap.values())
         if datum:
             project.data["trajectory_datum"] = datum
         else:
@@ -484,7 +500,7 @@ def import_chain(project, inp, opts, files=None, progress=None, cancel=None, kee
         if not out:
             raise ValueError("No line could be georeferenced: the trajectory (%s) covers none of the %d line(s)"
                              % (inp.traj_info.get("description") or "?", n))
-        restored = apply_edits(project, ed, progress, cancel) if ed is not None else 0
+        restored = apply_edits(project, ed, progress, cancel, skip_lines=new_pc) if ed is not None else 0
         _interp.restore(project, keep_interp)
         if progress:
             progress(0.95, "building the project grids")
@@ -524,13 +540,18 @@ def import_marine(project, inp, opts, progress=None, cancel=None, keep_edits=Tru
     sopts = SN.SonarOptions(**dict(project.data.get("sonar") or {}))
     sopts.geoid = opts.geoid
     sopts.source_crs = inp.source_crs
-    ed = collect_edits(project) if keep_edits and project.lines else None
+    from . import pcimport as _pc
+    pc_ids = _pc.pointcloud_line_ids(project)
+    ed = collect_edits(project, skip_lines=pc_ids) if keep_edits and project.lines else None
     from . import interpolate as _interp
     keep_interp = _interp.snapshot(project) if project.lines else None   # virtual points survive the rebuild
+    old_crs = project.crs
     project.begin_rebuild()
     try:
         project.data.update(settings)
         project.store.crs = project.crs
+        remap = _pc.carry_over(project, project._staged["store"], project._staged["data"].get("lines", []), old_crs)
+        new_pc = set(remap.values())
         out = []
         jobs = []
         for _key, paths in groups.items():
@@ -571,7 +592,7 @@ def import_marine(project, inp, opts, progress=None, cancel=None, keep_edits=Tru
             project.lines[lid]["calibration"] = inp.align_info.get("calibration")
             out.append((lid, st))
         SN.concise_names(project)                    # P1, P2... in time order over the recordings
-        restored = apply_edits(project, ed, progress, cancel) if ed is not None else 0
+        restored = apply_edits(project, ed, progress, cancel, skip_lines=new_pc) if ed is not None else 0
         _interp.restore(project, keep_interp)
         if progress:
             progress(0.95, "building the project grids")

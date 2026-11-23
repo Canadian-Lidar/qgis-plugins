@@ -110,6 +110,9 @@ def colour_points(ps, mode, lut="Rainbow", rng=None, line_colours=None, idx=None
         rgb = scalar_colours(v, lo, hi, "Grey" if lut == "Rainbow" else lut)
     elif mode == "Classification":
         rgb = CLASS_COLOURS[ps.cls[sl]]
+    elif mode == "RGB":                       # the points' own colours (imported point clouds, 2.16.0)
+        c = getattr(ps, "rgb", None)
+        rgb = np.asarray(c[sl], np.uint8) if c is not None else np.full((n, 3), 180, np.uint8)
     elif mode == "Line":
         lc = line_colours if line_colours is not None else np.array([LUTS["Rainbow"][(i * 47) % 256]
                                                                      for i in range(256)])

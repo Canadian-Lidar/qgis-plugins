@@ -48,6 +48,7 @@ class PointSet:
         for f in FIELDS:
             setattr(self, f, np.zeros(n, REC[f]))
         self.code = np.zeros(n, np.int64)          # key_id << 40 | record index
+        self.rgb = None                            # (n, 3) uint8 colours (CloudPro 2.16.0), None without
         self.box = None
 
     def __len__(self):
@@ -74,6 +75,7 @@ class PointSet:
         from . import engine
         eng = engine.available()
         t = store.tile
+        colours = store.has_rgb
 
         def one(k):
             i, j = (int(v) for v in k.split("_"))
@@ -104,7 +106,14 @@ class PointSet:
             if len(idx) == 0:
                 return None
             r = np.asarray(a) if len(idx) == len(a) else np.asarray(a[idx])
-            return r, (np.int64(store.key_id(k)) << 40) | idx.astype(np.int64)
+            c = None
+            if colours:
+                cm = store.tile_rgb(k)
+                c = np.zeros((len(idx), 3), np.uint8)
+                if cm is not None:
+                    ok = idx < len(cm)
+                    c[ok] = cm[idx[ok]]
+            return r, (np.int64(store.key_id(k)) << 40) | idx.astype(np.int64), c
 
         if len(keys) > 1:
             import concurrent.futures as cf
@@ -119,9 +128,12 @@ class PointSet:
             return ps
         r = np.concatenate([g[0] for g in got])
         code = np.concatenate([g[1] for g in got])
+        rgb = np.concatenate([g[2] for g in got]) if colours else None
         if max_points and len(r) > max_points:
             sel = np.sort(np.random.default_rng(0).choice(len(r), max_points, replace=False))
             r, code = r[sel], code[sel]
+            if rgb is not None:
+                rgb = rgb[sel]
         # single precision: the coordinates are millimetres from the project origin (a few km at most), so
         # float32 keeps them to about 0.1 mm while halving the memory of the three largest arrays
         k = np.float32(1e-3)
@@ -131,6 +143,7 @@ class PointSet:
         for f in FIELDS:
             setattr(ps, f, np.ascontiguousarray(r[f]))
         ps.code = code
+        ps.rgb = rgb
         return ps
 
     def subset(self, idx):
@@ -144,6 +157,7 @@ class PointSet:
             got = [getattr(self, f)[idx] for f in names]
         for f, v in zip(names, got):
             setattr(s, f, v)
+        s.rgb = None if self.rgb is None else self.rgb[idx]
         s.box = self.box
         return s
 

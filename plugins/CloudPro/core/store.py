@@ -41,6 +41,7 @@ REJECTED = 0x80
 REASONS = REJ_MANUAL | REJ_AUTO | REJ_ORIG
 
 GRID_CELL = 0.5          # overview grid cell (m)
+RGB = np.dtype("u1")     # colour sidecar (CloudPro 2.16.0): t_<key>.rgb, 3 bytes a point in the tile's order
 
 
 def tile_key(ix, iy):
@@ -119,6 +120,12 @@ class Store:
                         self.counts[key] = n_file
                         self.key_id(key)
                         changed = True
+                rp = self.rgb_path(key)
+                if os.path.exists(rp) and os.path.getsize(rp) != 3 * n_file:
+                    out.append("tile %s: colours for %d points, %d points in the tile (evened)" % (
+                        key, os.path.getsize(rp) // 3, n_file))
+                    if repair:
+                        self._rgb_extend(key, n_file, np.zeros((0, 3), RGB))
                 if repair and (rest or n_file != n_idx):
                     gp = self.grid_path(key)
                     if os.path.exists(gp):
@@ -188,9 +195,10 @@ class Store:
                 (ij[:, 0].max() + 1) * self.tile, (ij[:, 1].max() + 1) * self.tile)
 
     # -- writing (import) ----------------------------------------------------
-    def bin(self, rec):
-        """Split records into per-tile blocks -> [(key, records)]. Pure (no lock, no I/O): the importer's
-        worker threads do this, so the main thread only queues blocks."""
+    def bin(self, rec, rgb=None):
+        """Split records into per-tile blocks -> [(key, records)] (or [(key, records, colours)] with rgb, an
+        (n, 3) uint8 array). Pure (no lock, no I/O): the importer's worker threads do this, so the main thread
+        only queues blocks."""
         if len(rec) == 0:
             return []
         ts = self.tile * 1000.0
@@ -203,32 +211,129 @@ class Store:
         cuts = np.flatnonzero(np.diff(code)) + 1
         starts = np.r_[0, cuts]
         ends = np.r_[cuts, len(rec)]
+        if rgb is not None:
+            rgb = np.ascontiguousarray(rgb[order], RGB)
+            return [(tile_key(int(ix[order[a]]), int(iy[order[a]])), rec[a:b], rgb[a:b])
+                    for a, b in zip(starts, ends)]
         return [(tile_key(int(ix[order[a]]), int(iy[order[a]])), rec[a:b]) for a, b in zip(starts, ends)]
 
     def append_binned(self, parts):
         """Queue per-tile blocks from bin(); written by flush() every 4 M points."""
         with self.lock:
-            for key, a in parts:
-                self._buf.setdefault(key, []).append(a)
+            for part in parts:
+                key, a = part[0], part[1]
+                c = part[2] if len(part) > 2 else None
+                self._buf.setdefault(key, []).append((a, c))
                 self._bufn += len(a)
             if self._bufn > 4_000_000:
                 self.flush()
 
-    def append(self, rec):
-        """Append records (REC array, coordinates already relative to origin)."""
-        self.append_binned(self.bin(rec))
+    def append(self, rec, rgb=None):
+        """Append records (REC array, coordinates already relative to origin), with colours when given."""
+        self.append_binned(self.bin(rec, rgb))
 
     def flush(self):
         with self.lock:
             for key, parts in self._buf.items():
-                a = np.concatenate(parts) if len(parts) > 1 else parts[0]
+                recs = [a for a, _c in parts]
+                a = np.concatenate(recs) if len(recs) > 1 else recs[0]
                 self._close_mm(key)
+                before = self.counts.get(key, 0)
+                if any(c is not None for _a, c in parts) or os.path.exists(self.rgb_path(key)):
+                    # colours: the sidecar is kept the same length as the tile (grey where none were given)
+                    cols = [c if c is not None else np.full((len(a_), 3), 0, RGB) for a_, c in parts]
+                    self._rgb_extend(key, before, np.concatenate(cols) if len(cols) > 1 else cols[0])
                 with open(self.tile_path(key), "ab") as f:
                     a.tofile(f)
-                self.counts[key] = self.counts.get(key, 0) + len(a)
+                self.counts[key] = before + len(a)
                 self.key_id(key)
             self._buf = {}
             self._bufn = 0
+
+    # -- colours (sidecar files) ------------------------------------------------------
+    def rgb_path(self, key):
+        return os.path.join(self.tdir, "t_%s.rgb" % key)
+
+    @property
+    def has_rgb(self):
+        """True when any tile has colours."""
+        try:
+            return any(fn.endswith(".rgb") for fn in os.listdir(self.tdir))
+        except OSError:
+            return False
+
+    def _rgb_extend(self, key, n_before, cols):
+        p = self.rgb_path(key)
+        have = os.path.getsize(p) // 3 if os.path.exists(p) else 0
+        self._close_rgb(key)
+        with open(p, "ab" if have else "wb") as f:
+            if have > n_before:
+                f.truncate(n_before * 3)
+            elif have < n_before:
+                np.zeros(((n_before - have), 3), RGB).tofile(f)
+            np.ascontiguousarray(cols, RGB).tofile(f)
+
+    def _close_rgb(self, key):
+        mm = getattr(self, "_rgbmm", {}).pop(key, None)
+        if mm is not None:
+            del mm
+
+    def tile_rgb(self, key):
+        """(n, 3) uint8 colours of one tile, or None when the tile has none."""
+        with self.lock:
+            cache = self.__dict__.setdefault("_rgbmm", {})
+            mm = cache.get(key)
+            if mm is not None:
+                return mm
+            p = self.rgb_path(key)
+            if not os.path.exists(p) or os.path.getsize(p) < 3:
+                return None
+            mm = np.memmap(p, RGB, mode="r", shape=(os.path.getsize(p) // 3, 3))
+            if len(cache) > 256:
+                for k in list(cache)[:64]:
+                    self._close_rgb(k)
+            cache[key] = mm
+            return mm
+
+    def remove_line(self, lid):
+        """Take every point of line lid out of the tiles (and their colours) -> the tiles changed."""
+        import gc
+        self.flush()
+        changed = []
+        for k in self.keys():
+            a = self.tile_array(k)
+            m = a["line"] == lid
+            if not m.any():
+                del a, m
+                continue
+            keep = np.array(a[~m])
+            c = self.tile_rgb(k)
+            keep_c = np.array(c[:len(m)][~m[:len(c)]]) if c is not None else None
+            del a, c
+            with self.lock:
+                self._close_mm(k)
+                self._close_rgb(k)
+            gc.collect()
+            p = self.tile_path(k)
+            keep.tofile(p + ".tmp")
+            try:
+                _replace(p + ".tmp", p)
+            except PermissionError:             # still held by another reader after the retries
+                os.remove(p + ".tmp")
+                self.save_meta()
+                raise PermissionError("the tile %s is in use by another task; try again in a moment" % k)
+            if keep_c is not None:
+                if len(keep_c) < len(keep):
+                    keep_c = np.r_[keep_c, np.zeros((len(keep) - len(keep_c), 3), RGB)]
+                keep_c.tofile(self.rgb_path(k) + ".tmp")
+                _replace(self.rgb_path(k) + ".tmp", self.rgb_path(k))
+            self.counts[k] = len(keep)
+            gp = self.grid_path(k)
+            if os.path.exists(gp):
+                os.remove(gp)
+            changed.append(k)
+        self.save_meta()
+        return changed
 
     # -- reading / editing --------------------------------------------------------
     def _close_mm(self, key):
@@ -327,6 +432,8 @@ class Store:
         with self.lock:
             for k in list(self._mm):
                 self._close_mm(k)
+            for k in list(getattr(self, "_rgbmm", {})):
+                self._close_rgb(k)
 
     # -- overview grids -------------------------------------------------------------
     def grid_stats(self, key):

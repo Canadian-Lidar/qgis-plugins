@@ -12,23 +12,35 @@ like), Finalize for the job. Each step is coloured by its state, the next one to
 reason is the tooltip, and clicking a step does it.
 """
 STEPS = (("georef", "Georeference"), ("check", "Check"), ("clean", "Clean & classify"), ("publish", "Finalize"))
+IMPORT_STEPS = (("georef", "Import"), ("check", "Check"), ("clean", "Clean & classify"), ("publish", "Finalize"))
 
 
-def states(project, n_edits, visited_clean, quick_state=None, sep=None):
+def steps(import_mode=False):
+    """The step keys and labels: a job of imported point clouds (2.16.0) starts with Import."""
+    return IMPORT_STEPS if import_mode else STEPS
+
+
+def states(project, n_edits, visited_clean, quick_state=None, sep=None, import_mode=False):
     """{step: (state, reason)} for an open CloudPro project. quick_state(p) -> [reasons the inputs
     changed]; n_edits = filter runs + manual edits so far; sep = the line separation result as (exists, current,
     problem areas, findings) or None."""
     p = project
     out = {}
     why = (quick_state(p) if (quick_state and p.dcs is not None) else []) or []
-    if not p.lines:
+    lines = [ln for ln in p.lines if not ln.get("removed")]
+    if import_mode:
+        files = {f for ln in lines for f in ln.get("files", [])}
+        out["georef"] = (("done", "%d line%s from %d file%s; click IMPORT to add more" % (
+            len(lines), "" if len(lines) == 1 else "s", len(files), "" if len(files) == 1 else "s")) if lines else
+            ("todo", "click IMPORT to add point-cloud files (LAS, LAZ, E57, PLY, PTS, PCD, XYZ, TXT)"))
+    elif not p.lines:
         out["georef"] = ("todo", "click GEOREFERENCE (or project menu \u203a Georeference)")
     elif why:
         out["georef"] = ("warn", "inputs changed (%s): update" % "; ".join(why))
     else:
         out["georef"] = ("done", "%d line%s" % (len(p.lines), "" if len(p.lines) == 1 else "s"))
     if not p.lines:
-        out["check"] = ("todo", "after georeferencing")
+        out["check"] = ("todo", "after importing" if import_mode else "after georeferencing")
     elif len(p.lines) < 2:
         out["check"] = ("done", "one line: nothing to compare")
     elif not sep or not sep[0]:
@@ -42,7 +54,7 @@ def states(project, n_edits, visited_clean, quick_state=None, sep=None):
     else:
         out["check"] = ("done", "the lines agree")
     if not p.lines:
-        out["clean"] = ("todo", "after georeferencing")
+        out["clean"] = ("todo", "after importing" if import_mode else "after georeferencing")
     elif n_edits:
         out["clean"] = ("done", "%d filter run%s and edits" % (n_edits, "" if n_edits == 1 else "s"))
     elif visited_clean:
@@ -71,7 +83,7 @@ def next_step(st, visited_clean):
     """(step key, button label) for the Next button, or (None, "") when the job is finished."""
     g = st["georef"][0]
     if g == "todo":
-        return "georef", "NEXT: GEOREFERENCE"
+        return "georef", "NEXT: IMPORT" if st["georef"][1].startswith("click IMPORT") else "NEXT: GEOREFERENCE"
     if g == "warn":
         return "georef", "UPDATE GEOREFERENCING"
     c = st.get("check", ("done", ""))

@@ -126,7 +126,9 @@ def publish(project, outputs, warnings=(), version=""):
     stats = point_stats(project)
     inp = project.data.get("inputs") or {}
     warnings = list(warnings)
-    if (inp.get("alignment") or {}).get("calibration") != "applied":
+    from .pcimport import is_pointcloud_line, only_pointclouds
+    pc_only = only_pointclouds(project)
+    if (inp.get("alignment") or {}).get("calibration") != "applied" and not pc_only:
         warnings.append("no calibration: the Lidar mounting recorded in the capture was used")
     outs = {k: dict({kk: vv for kk, vv in v.items() if kk != "path"}, file=os.path.basename(v["path"]))
             for k, v in outputs.items()}
@@ -137,7 +139,11 @@ def publish(project, outputs, warnings=(), version=""):
     td = project.data.get("trajectory_datum")
     frame, epoch = used_frame(project, dcs)
     fields = {
-        "calibration": (inp.get("alignment") or {}).get("calibration", "no calibration"),
+        "source": ("imported point clouds" if pc_only else
+                   "georeferenced captures and imported point clouds" if any(is_pointcloud_line(l) for l in project.lines)
+                   else "georeferenced captures"),
+        "calibration": ("not applicable (imported point clouds)" if pc_only else
+                        (inp.get("alignment") or {}).get("calibration", "no calibration")),
         "trajectory": inp.get("trajectory") or {},
         "alignment": inp.get("alignment") or {},
         "georeferencing": {"mount_deg": inp.get("mount_deg"), "lidar_lever_m": inp.get("lidar_lever_m"),
@@ -148,7 +154,10 @@ def publish(project, outputs, warnings=(), version=""):
                 "height": project.data.get("vertical", "ellipsoidal"), "geoid": project.data.get("geoid") or None},
         "lines": [{"id": l["id"] + 1, "name": l.get("name"), "points": l.get("points"),
                    "files": [dfiles.portable(f, dcs.job_folder) for f in l.get("files", [])],
-                   "returns": l.get("returns"), "range_m": [l.get("rmin"), l.get("rmax")]} for l in project.lines],
+                   "returns": l.get("returns"), "range_m": [l.get("rmin"), l.get("rmax")],
+                   **({"kind": "pointcloud", "format": l.get("format"), "source_crs": l.get("source_crs"),
+                       "moved": l.get("moved"), "part": l.get("part_label")} if is_pointcloud_line(l) else {})}
+                  for l in project.lines if not l.get("removed")],
         "points": stats,
         "filters": project.data.get("filter_runs", []),
         "outputs": outs,
@@ -157,7 +166,8 @@ def publish(project, outputs, warnings=(), version=""):
     # built_from.stages = the upstream results really used ("ignored" = AlignPro left out on purpose:
     # Project properties > recorded or entered mounting); inputs = the survey-line files the points came from
     doc = handover.publish(dcs, "cloudpro", data_files, fields, PLUGIN, version, "CloudPro core",
-                           used=used_stages(inp),
+                           used=({u: "ignored" for u in ("pospro", "alignpro", "strippro")} if pc_only
+                                 else used_stages(inp)),
                            inputs=sorted({f for l in project.lines for f in l.get("files", [])}))
     project.data.setdefault("published", []).append({"utc": doc["created"], "id": doc["id"],
                                                      "outputs": list(outs)})

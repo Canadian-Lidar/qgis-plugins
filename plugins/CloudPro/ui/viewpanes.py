@@ -20,8 +20,8 @@ from .planview import ATTRS, DEFAULT_TARGET, PlanView
 from .view2d import CloudView2D
 from .view3d import CloudView3D
 
-COLOUR_MODES = ["Height", "Intensity", "Intensity (range normalised)", "Classification", "Line", "File", "Return",
-                "Channel", "Time", "Range"]
+COLOUR_MODES = ["Height", "Intensity", "Intensity (range normalised)", "Classification", "RGB", "Line", "File",
+                "Return", "Channel", "Time", "Range"]
 
 
 def _combo(items, tip, width=None):
