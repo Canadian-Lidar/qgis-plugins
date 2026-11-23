@@ -5,7 +5,7 @@ qgisMaximumVersion=4.99
 supportsQt6=True
 description=Files for BeamworX, Inertial Explorer and Qinertia from the Canadian Lidar mobile mapper's recordings: a side tool of the Data Collection Systems plugins (PosPro, AlignPro, CloudPro).
 about=RemixPro makes the files other programs read from the mapper's recordings, on the office PC, and turns the survey boat's SonarView recordings and TidalCal projects into .clraw for the DCS plugins: BeamworX raw files (.bwxraw, one per .clraw, with the survey configuration .xml) for AutoPatch, AutoClean and TrajEdit; Inertial Explorer files (IMR raw IMU in Inertial Explorer's axes, RINEX 3.04 observations of both receivers, GPS ephemeris, a setup note with the lever arm); Qinertia files (generic IMU $qimu, the same RINEX files, a setup note). Open a mapper project folder, a USB copy, an unzipped download or single .clraw / .anpp files; survey lines, navigation recordings and older captures are found from the files' own records. Outputs are made once, in a separate folder (in a DCS project: Processing/<Name>/RemixPro), and again only when the recordings change; the recordings are never modified. The files are the same, byte for byte, as the mapper made before version 2.10. Also runs from the command line (python -m RemixPro.cli). Needs the DCS Core plugin. Menu: Plugins > CLDS.
-version=1.3.1
+version=1.4.0
 author=Canadian Lidar
 email=seantobrien@gmail.com
 category=Plugins
@@ -15,7 +15,8 @@ experimental=False
 deprecated=False
 hasProcessingProvider=no
 plugin_dependencies=DCS Core
-changelog=1.3.1 Audit (23 Nov 2026): Saving a project, a result or an export no longer fails when Windows briefly holds the file open (OneDrive or other sync, antivirus, another program reading it): the replacement is retried for a few seconds. Opening recordings is much faster on synced or network folders (DCS Core 1.19.4 reads each file's index instead of every chunk header, and attachments only when needed).
+changelog=1.4.0 Converts SonarView recordings for PosPro (Add recordings… on PosPro's marine Data page) as its own window does, into the job's day folder; a recording already converted and unchanged is not made again. Needs DCS Core 1.20.0 for that.
+    1.3.1 Audit (23 Nov 2026): Saving a project, a result or an export no longer fails when Windows briefly holds the file open (OneDrive or other sync, antivirus, another program reading it): the replacement is retried for a few seconds. Opening recordings is much faster on synced or network folders (DCS Core 1.19.4 reads each file's index instead of every chunk header, and attachments only when needed).
     1.3.0 File structure of 17 Nov 2026 (DCS Core 1.18.0): a SonarView recording's .clraw goes into the job's day folder, <job>/<YYYYMMDD>/CLRAW/YYYYMMDD_NNN_001.clraw (the UTC date it started, the next free number of the day, kept when it is made again); the other conversions go to <Name>/00_RemixPro in a new project; MapPro 2.11 day folders are read (each line's .clraw in CLRAW/, its Certus logs in IMU/ and the navigation in NAV/, matched through the day's session.json); menu Plugins > CLDS. Needs DCS Core 1.18.0.
     1.2.2 SonarView's Mount Offset is stored as Cerulean documents it (X forward, Y starboard, Z down), undoing 1.2.1's port reading, with SonarView's raw values and the conversion used recorded beside it. The Hesai mounting and the Inertial Explorer axes come from DCS Core's shared frames (files unchanged, byte for byte). Needs DCS Core 1.15.0.
     1.2.1 SonarView's Mount Offset Y is to port (checked on reciprocal passes at Lumston: head 30053 looks to port): the offsets are now stored forward / starboard / down correctly. Loose sonar recordings take the TidalCal project (base, offsets) from the folder above them.

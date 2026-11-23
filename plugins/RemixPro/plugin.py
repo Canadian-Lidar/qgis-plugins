@@ -52,6 +52,9 @@ class RemixProPlugin:
             return
         from dcs_core import registry
         registry.register("remixpro", self.open_project)
+        if hasattr(registry, "provide"):            # DCS Core API 21: PosPro adds SonarView recordings with it
+            from .core import service
+            registry.provide("sonar_to_clraw", service.sonar_to_clraw)
 
     def unload(self):
         if self.help_action is not None:
@@ -68,6 +71,8 @@ class RemixProPlugin:
             if self.core is not None:
                 from dcs_core import registry
                 registry.unregister("remixpro")
+                if hasattr(registry, "withdraw"):
+                    registry.withdraw("sonar_to_clraw")
         if self.win is not None:
             from dcs_core.window import alive
             if alive(self.win):

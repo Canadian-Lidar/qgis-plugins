@@ -121,7 +121,8 @@ class MDataPage(MPage):
         v.addWidget(D._hint("The job's sonar recordings (.clraw made by RemixPro from SonarView and the Reach files). "
                             "Each holds every sonar head, the autopilot and, when they were found, the Reach rover "
                             "and base files. Untick a recording to leave it out of the job (PosPro, AlignPro and "
-                            "CloudPro); add recordings kept in other folders, such as other days."))
+                            "CloudPro); add recordings kept in other folders, such as other days, or SonarView .svlz / "
+                            ".svlog recordings (RemixPro converts them into the job's day folder)."))
         self.files = QListWidget()
         self.files.setMinimumHeight(90)
         self.files.setMaximumHeight(180)
@@ -135,7 +136,8 @@ class MDataPage(MPage):
         v.addWidget(self.overlap)
         rr = QHBoxLayout()
         b_add = QPushButton("Add recordings\u2026")
-        b_add.setToolTip("Add .clraw recordings from another folder (another day of the survey)")
+        b_add.setToolTip("Add recordings from another folder (another day of the survey): .clraw, or SonarView "
+                         ".svlz / .svlog, which RemixPro converts into the job's day folder first")
         b_add.clicked.connect(self._add_recordings)
         b_rm = QPushButton("Remove")
         b_rm.setToolTip("Leave the selected recordings out of the job (added ones are removed from the list)")
@@ -233,12 +235,46 @@ class MDataPage(MPage):
 
     def _add_recordings(self):
         from qgis.PyQt.QtWidgets import QFileDialog
-        from dcs_core import clraw
         dcs = self.project.dcs
         start = os.path.dirname(dcs.job_folder) if dcs else ""
-        fs, _ = QFileDialog.getOpenFileNames(self, "Add sonar recordings", start, "Sonar recordings (*.clraw)")
+        fs, _ = QFileDialog.getOpenFileNames(self, "Add sonar recordings", start,
+                                             "Sonar recordings (*.clraw *.svlz *.svlog);;RemixPro recordings (*.clraw)"
+                                             ";;SonarView recordings (*.svlz *.svlog)")
         if not fs:
             return
+        sv = [f for f in fs if f.lower().endswith(marine.SONARVIEW)]
+        if sv:
+            self._convert_sonarview(sv, [f for f in fs if f not in sv])
+            return
+        self._add_clraw(fs)
+
+    def _convert_sonarview(self, sv, other):
+        """SonarView recordings (PosPro 2.11.0): RemixPro makes their .clraw in the job's day folder, then they are
+        added like any other recording."""
+        dcs = self.project.dcs
+
+        def work(ctx):
+            ctx.progress(0.0, "converting the SonarView recordings with RemixPro")
+            return marine.convert_sonarview(dcs, sv, ctx)
+
+        def done(ok, res):
+            if not ok:
+                if res and "RemixPro" in str(res):
+                    self._D.theme.msg_warn(self, "PosPro", str(res).splitlines()[0])
+                return
+            for n in res.get("notes", []):
+                self.dock.log("info", n)
+            if res.get("failed"):
+                self._D.theme.msg_warn(self, "PosPro", "Not converted:\n" + "\n".join(
+                    "%s: %s" % (os.path.basename(p), why) for p, why in res["failed"]))
+            self.dock.log("info", "RemixPro made %d .clraw from %d SonarView file(s)" % (len(res["files"]), len(sv)))
+            if res["files"] or other:
+                self._add_clraw(list(res["files"]) + list(other))
+        self.dock.start_task("Converting SonarView recordings", work, done)
+
+    def _add_clraw(self, fs):
+        from dcs_core import clraw
+        dcs = self.project.dcs
         good = [f for f in fs if clraw.is_sonar(f)]
         if len(good) < len(fs):
             self._D.theme.msg_warn(self, "PosPro", "%d of the files are not sonar recordings and were not added."
