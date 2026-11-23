@@ -6,11 +6,27 @@ import numpy as np
 
 from .las import writer_for
 from .pointset import PointSet, rect_corners, to_box_frame
-from .store import REJECTED, parse_key
+from .store import REC, REJECTED, parse_key
 from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 
-def _iter_tiles(project, box=None, lines=None, include_rejected=False, classes=None, keys=None):
+REC_RGB = np.dtype(REC.descr + [("R", "u1"), ("G", "u1"), ("B", "u1")])
+
+
+def _with_rgb(store, k, a):
+    """The tile's records with their colours (REC_RGB; 0 where the tile has none)."""
+    out = np.zeros(len(a), REC_RGB)
+    for f in REC.names:
+        out[f] = a[f]
+    c = store.tile_rgb(k)
+    if c is not None:
+        n = min(len(c), len(a))
+        out["R"][:n], out["G"][:n], out["B"][:n] = c[:n, 0], c[:n, 1], c[:n, 2]
+    return out
+
+
+def _iter_tiles(project, box=None, lines=None, include_rejected=False, classes=None, keys=None, rgb=False):
+    """(tile number, tiles, records) of the selected points; rgb=True: records with R, G, B (REC_RGB)."""
     store = project.store
     if keys is not None:
         pass
@@ -34,7 +50,7 @@ def _iter_tiles(project, box=None, lines=None, include_rejected=False, classes=N
             u, v = to_box_frame(a["x"] * 1e-3, a["y"] * 1e-3, box["cx"], box["cy"], box["bearing"])
             m &= (np.abs(u) <= box["length"] / 2) & (np.abs(v) <= box["width"] / 2)
         if m.any():
-            yield n, len(keys), np.asarray(a[m])
+            yield n, len(keys), (_with_rgb(store, k, a)[m] if rgb else np.asarray(a[m]))
 
 
 def crs_wkt(crs):
@@ -171,8 +187,9 @@ def export_las(project, path, box=None, lines=None, include_rejected=False, clas
     ext = ext or ".las"
     total = 0
     cancelled = False
+    rgb = project.store.has_rgb                  # colours (imported point clouds): LAS point format 7
     try:
-        for n, N, a in _iter_tiles(project, box, lines, include_rejected, classes):
+        for n, N, a in _iter_tiles(project, box, lines, include_rejected, classes, rgb=rgb):
             if spacing:
                 a = a[thin(a, spacing, thin_mode, o)]
             groups = [(None, a)] if not per_line else [(int(l), a[a["line"] == l]) for l in np.unique(a["line"])]
@@ -184,10 +201,12 @@ def export_las(project, path, box=None, lines=None, include_rejected=False, clas
                             p = tile_name(base, ext, tx, ty, tile, lid)
                         else:
                             p = path if not per_line else "%s_L%03d%s" % (base, lid + 1, ext)
-                        writers[key] = writer_for(p)(_tmp(p), (np.floor(o[0]), np.floor(o[1]), np.floor(o[2])), wkt=wkt)
+                        writers[key] = writer_for(p)(_tmp(p), (np.floor(o[0]), np.floor(o[1]), np.floor(o[2])), wkt=wkt,
+                                                     rgb=rgb)
                         pairs.append((_tmp(p), p))
                     writers[key].write(r["x"] * 1e-3 + o[0], r["y"] * 1e-3 + o[1], r["z"] * 1e-3 + o[2], r["t"],
-                                       r["i"], r["ret"], r["cls"], r["ch"], r["line"], r["flag"])
+                                       r["i"], r["ret"], r["cls"], r["ch"], r["line"], r["flag"],
+                                       rgb=np.column_stack([r["R"], r["G"], r["B"]]) if rgb else None)
                     total += len(r)
             if progress:
                 progress((n + 1) / N, "%s points%s" % ("{:,}".format(total),
@@ -196,7 +215,8 @@ def export_las(project, path, box=None, lines=None, include_rejected=False, clas
                 cancelled = True
                 break
         if not writers and not per_line and not tile:   # nothing selected: still an (empty) valid file
-            writers[0] = writer_for(path)(_tmp(path), (np.floor(o[0]), np.floor(o[1]), np.floor(o[2])), wkt=wkt)
+            writers[0] = writer_for(path)(_tmp(path), (np.floor(o[0]), np.floor(o[1]), np.floor(o[2])), wkt=wkt,
+                                          rgb=rgb)
             pairs.append((_tmp(path), path))
     finally:
         for w in writers.values():
@@ -215,7 +235,11 @@ def export_xyz(project, path, box=None, lines=None, include_rejected=False, clas
     base, ext = os.path.splitext(path)
     ext = ext or ".csv"
     files = {}
-    fmt = {"E": "%.3f", "N": "%.3f", "Z": "%.3f", "I": "%d", "C": "%d", "L": "%d", "T": "%.6f", "R": "%.2f", "CH": "%d"}
+    fmt = {"E": "%.3f", "N": "%.3f", "Z": "%.3f", "I": "%d", "C": "%d", "L": "%d", "T": "%.6f", "R": "%.2f", "CH": "%d",
+           "Red": "%d", "Green": "%d", "Blue": "%d"}
+    rgb = project.store.has_rgb
+    if rgb and "Red" not in fields:
+        fields = tuple(fields) + ("Red", "Green", "Blue")       # the points' colours (imported point clouds)
 
     def out(tx, ty):
         key = (tx, ty)
@@ -228,13 +252,15 @@ def export_xyz(project, path, box=None, lines=None, include_rejected=False, clas
     try:
         if not tile:
             out(None, None)
-        for n, N, a in _iter_tiles(project, box, lines, include_rejected, classes):
+        for n, N, a in _iter_tiles(project, box, lines, include_rejected, classes, rgb=rgb):
             if spacing:
                 a = a[thin(a, spacing, thin_mode, o)]
             for tx, ty, r in _split(a, o, tile):
                 cols = {"E": r["x"] * 1e-3 + o[0], "N": r["y"] * 1e-3 + o[1], "Z": r["z"] * 1e-3 + o[2],
                         "I": r["i"], "C": r["cls"], "L": r["line"] + 1, "T": r["t"], "R": r["rng"] * 0.01,
                         "CH": r["ch"] + 1}
+                if rgb:
+                    cols.update(Red=r["R"], Green=r["G"], Blue=r["B"])
                 np.savetxt(out(tx, ty), np.column_stack([cols[k] for k in fields]), fmt=[fmt[k] for k in fields],
                            delimiter=",")
                 total += len(r)

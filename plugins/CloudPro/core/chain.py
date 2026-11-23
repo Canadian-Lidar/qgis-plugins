@@ -244,6 +244,9 @@ def georef_state(project, inp=None):
     """Reasons why the georeferenced points no longer match the chain's current inputs ([] = current)."""
     if project.dcs is None or not project.lines:
         return []
+    from .pcimport import only_pointclouds
+    if only_pointclouds(project):
+        return []
     used = project.data.get("inputs") or {}
     if inp is None:
         inp = resolve(project.dcs, override=project.data.get("override"))
@@ -281,6 +284,9 @@ def quick_state(project):
     """Like georef_state but without reading the trajectory: compares the handover ids recorded at
     georeferencing with the ids the upstream stages have published now (for the 5 s header refresh)."""
     if project.dcs is None or not project.lines:
+        return []
+    from .pcimport import only_pointclouds
+    if only_pointclouds(project):            # imported point clouds: no trajectory, nothing to georeference
         return []
     try:
         project.dcs.reload()

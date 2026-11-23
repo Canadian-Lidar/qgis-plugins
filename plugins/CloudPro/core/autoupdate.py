@@ -36,6 +36,9 @@ def decide(dcs_path, project=None):
         return False, "cannot open CloudPro's stage (%s)" % e
     if p.dcs is None or not p.lines:
         return False, "never georeferenced (the first georeferencing is done in CloudPro)"
+    from .pcimport import only_pointclouds
+    if only_pointclouds(p):
+        return False, "imported point clouds: nothing to georeference"
     if not enabled(p):
         return False, "automatic updates are off for this job"
     dcs = p.dcs

@@ -280,3 +280,90 @@ def trajectory_to_datum(traj, frame_name, epoch, target):
     how = next((x for x in steps if " to " in x and "Conversion" not in x), steps[0])
     return ("trajectory moved from %s (epoch %.3f) to %s: %.2f m north, %.2f m east, %.2f m up (%s)" %
             (frame_name, ep, dst.name, dn, de, du, how[:80]), dst.name)
+
+
+# ---------------------------------------------------------------------------
+# CRS to CRS (imported point clouds, CloudPro 2.16.0)
+# ---------------------------------------------------------------------------
+def identify_crs(crs):
+    """'EPSG:n' for an EPSG code or a WKT that names one (pyproj, else QGIS); else the text as given."""
+    if not crs:
+        return ""
+    code = epsg_code(crs)
+    if code:
+        return "EPSG:%d" % code
+    try:
+        import pyproj
+        c = pyproj.CRS.from_user_input(crs)
+        e = c.to_epsg(min_confidence=70)
+        if e:
+            return "EPSG:%d" % e
+    except Exception:       # noqa: BLE001
+        pass
+    try:
+        from qgis.core import QgsCoordinateReferenceSystem
+        q = QgsCoordinateReferenceSystem.fromWkt(crs)
+        if q.isValid() and q.authid():
+            return q.authid()
+    except Exception:       # noqa: BLE001
+        pass
+    return str(crs)
+
+
+def same_crs(a, b):
+    a, b = identify_crs(a), identify_crs(b)
+    if not a or not b:
+        return True                         # unknown: taken as the project's
+    if a == b:
+        return True
+    try:
+        import pyproj
+        return pyproj.CRS.from_user_input(a) == pyproj.CRS.from_user_input(b)
+    except Exception:       # noqa: BLE001
+        return False
+
+
+class Reprojector:
+    """transform(x, y, z) from one projected / geographic CRS to another (pyproj, else QGIS point by point).
+    Heights are passed through unchanged unless both CRSs carry a vertical datum pyproj can relate."""
+
+    def __init__(self, source, target):
+        self.source, self.target = identify_crs(source), identify_crs(target)
+        self.backend = None
+        errs = []
+        try:
+            import pyproj
+            tr = pyproj.Transformer.from_crs(pyproj.CRS.from_user_input(self.source),
+                                             pyproj.CRS.from_user_input(self.target), always_xy=True)
+            self._fn = lambda x, y, z: tr.transform(x, y, z)
+            self.backend = "pyproj"
+            return
+        except Exception as e:      # noqa: BLE001
+            errs.append("pyproj: %s" % e)
+        try:
+            from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsPointXY, QgsProject
+
+            def crs(s):
+                c = QgsCoordinateReferenceSystem(s)
+                return c if c.isValid() else QgsCoordinateReferenceSystem.fromWkt(s)
+            src, dst = crs(self.source), crs(self.target)
+            if not (src.isValid() and dst.isValid()):
+                raise ValueError("invalid CRS")
+            qt = QgsCoordinateTransform(src, dst, QgsProject.instance())
+
+            def fn(x, y, z):
+                X = np.empty(len(x))
+                Y = np.empty(len(x))
+                for i in range(len(x)):
+                    q = qt.transform(QgsPointXY(float(x[i]), float(y[i])))
+                    X[i], Y[i] = q.x(), q.y()
+                return X, Y, z
+            self._fn = fn
+            self.backend = "qgis"
+        except Exception as e:      # noqa: BLE001
+            errs.append("qgis: %s" % e)
+            raise ValueError("cannot transform %s to %s (%s)" % (self.source[:60], self.target, "; ".join(errs)))
+
+    def transform(self, x, y, z):
+        X, Y, Z = self._fn(np.asarray(x, float), np.asarray(y, float), np.asarray(z, float))
+        return np.asarray(X, float), np.asarray(Y, float), np.asarray(Z, float)

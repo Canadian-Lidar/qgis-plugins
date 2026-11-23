@@ -25,6 +25,7 @@ from ..core import separation as SEP
 from ..core import chain
 from ..core import filters as F
 from ..core import importer as IM
+from ..core import pcimport as PCI
 from ..core.edits import EditManager
 from ..core.pointset import PointSet, rect_corners, to_box_frame
 from ..core.project import Project
@@ -412,6 +413,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for txt, fn, sc in (("Project properties (information, geodetics, survey configuration, files)...",
                              self.show_properties, "Ctrl+R"), (None, None, None),
                             ("Georeference / update the points...", self.georeference, "Ctrl+I"),
+                            ("Import point clouds (LAS, LAZ, E57, PLY, PTS, XYZ)...", self.import_pointclouds, ""),
                             ("Check line separation...", self.check_separation, ""),
                             ("Interpolation (fill holes in the grid)", self.interpolate, ""),
                             ("Side scan (marine: waterfall, contacts, mosaic, XTF)", self.side_scan, ""),
@@ -743,6 +745,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not same:
             self._reset_view_state()
         self.project = p
+        self._has_raw = None                         # .clraw / sonar recordings in the job (found when first asked)
         if any(ln.get("kind") == "sonar" for ln in p.lines):
             from ..core import sonar as _SN
             if _SN.concise_names(p):                 # 2.10.1: P4 Port / P4 Stbd (older jobs: long names)
@@ -1239,22 +1242,24 @@ class MainWindow(QtWidgets.QMainWindow):
         p = self.project
         if p is None or not hasattr(self, "header"):
             return
-        from .workflow import STEPS, next_step, states
+        from .workflow import next_step, states, steps
+        imp = self.import_mode()
         hist = p.data.get("history", [])
         n_edits = len(p.data.get("filter_runs", [])) + sum(1 for h in hist if str(h.get("text", "")).endswith(
             "points)") and not str(h.get("text", "")).startswith(("Undo", "Redo")))
         why = getattr(self, "_why", None)
         qs = (lambda _p: why) if why is not None else chain.quick_state      # computed once per refresh
-        st = states(p, n_edits, self._visited_clean, qs, self._separation_summary())
+        st = states(p, n_edits, self._visited_clean, qs, self._separation_summary(), import_mode=imp)
         nxt, _label = next_step(st, self._visited_clean)
         inputs = self.lbl_inputs.text()
         items = []
-        for k, t in STEPS:
+        for k, t in steps(imp):
             state, reason = st[k]
             tip = reason
-            if k == "georef" and inputs:
+            if k == "georef" and inputs and not imp:
                 tip = (inputs + ("\n" + reason if reason and reason != inputs else "")).strip()
-            items.append((k, t, state, tip + "\nClick to %s." % {"georef": "georeference (or update)",
+            items.append((k, t, state, tip + "\nClick to %s." % {"georef": "import point clouds" if imp else
+                                                                 "georeference (or update)",
                                                                  "check": "check the line separation",
                                                                  "clean": "open the automatic filters",
                                                                  "publish": "finalize for the job"}[k]))
@@ -1284,10 +1289,36 @@ class MainWindow(QtWidgets.QMainWindow):
         self._sep_summary = (key, out)
         return out
 
+    def has_raw(self):
+        """The job has Lidar (.clraw) or sonar recordings to georeference (cached per project)."""
+        p = self.project
+        if p is None or p.dcs is None:
+            return False
+        if getattr(self, "_has_raw", None) is None:
+            try:
+                self._has_raw = bool(chain.clraw_files(p.dcs) or p.dcs.sonar_clraw_files())
+            except Exception:       # noqa: BLE001
+                self._has_raw = False
+        return self._has_raw
+
+    def import_mode(self):
+        """CloudPro's first step is Import (2.16.0): a job of imported point clouds, or a job with nothing to
+        georeference."""
+        p = self.project
+        if p is None:
+            return False
+        if PCI.only_pointclouds(p):
+            return True
+        if any(not PCI.is_pointcloud_line(ln) and ln.get("kind") != "interpolated" for ln in p.lines):
+            return False
+        return bool(p.data.get("pointcloud_job")) or (p.dcs is not None and not self.has_raw())
+
     def _step_clicked(self, key):
         if self.project is None:
             return
-        if key == "georef":
+        if key == "georef" and self.import_mode():
+            self.import_pointclouds()
+        elif key == "georef":
             self.georeference()
         elif key == "check":
             if self.plan.separation is not None and self.plan.separation_current:
@@ -1397,6 +1428,8 @@ class MainWindow(QtWidgets.QMainWindow):
         for ln in self.project.lines:
             if ln.get("file_spans") and len(ln["file_spans"]) == len(ln.get("files", [])):
                 continue
+            if PCI.is_pointcloud_line(ln) or ln.get("kind") == "interpolated":
+                continue                             # not .clraw: nothing to read
             spans, sizes = [], []
             for f in ln.get("files", []):
                 try:
@@ -1607,8 +1640,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._error("Cannot read the chain's inputs", ex)
             return
         if not inp.files and not inp.marine:
-            theme.msg_warn(self, "CloudPro", "No .clraw files were found in the job's captures (%s).\nUse "
-                           "Menu > Add other .clraw files, or record the captures in PosPro." % p.dcs.job_folder)
+            if theme.msg_choice(self, "CloudPro", "No .clraw files were found in the job's captures (%s): nothing "
+                                "to georeference.\n\nPoint clouds made elsewhere (LAS, LAZ, E57, PLY, PTS, XYZ) can be "
+                                "imported instead; or add .clraw files (menu \u203a Add other .clraw files) or record "
+                                "the captures in PosPro." % p.dcs.job_folder,
+                                ["Import point clouds...", "Close"]) == 0:
+                self.import_pointclouds()
             return
         from .dialogs import GeorefDialog
         d = GeorefDialog(self, inp, p)
@@ -1721,6 +1758,60 @@ class MainWindow(QtWidgets.QMainWindow):
                       ["%s: %s" % (k, v) for k, v in doc["files"].items()] + doc.get("warnings", []))
             return doc, add
         self._run("publish", job, "Finalizing")
+
+    def import_pointclouds(self, files=None):
+        """Import point clouds... (2.16.0): finished point clouds (LAS, LAZ, E57, PLY, PTS, PCD, text) into the open
+        job, or into a new one (the New DCS project dialog first) when none is open."""
+        if self._guard("importing point clouds"):
+            return
+        if self.project is None:
+            from dcs_core import dialogs
+            dcs = dialogs.new_project(self, PLUGIN)
+            if dcs is None:
+                return
+            try:
+                p = Project.from_dcs(dcs)
+            except Exception as ex:
+                self._error("Cannot create the project", ex)
+                return
+            p.data["pointcloud_job"] = True
+            p.save()
+            self.set_project(p)
+            if self.project is not p:
+                return
+        p = self.project
+        if p.dcs is None:
+            theme.msg_info(self, "CloudPro", "Point clouds go into a job project: make one with New job project...")
+            return
+        from .pcdialog import PointCloudDialog
+        new_job = p.store.total == 0
+        start = p.data.get("last_pc_dir") or p.dcs.job_folder
+        d = PointCloudDialog(self, files or (), job_crs=p.crs, new_job=new_job, start_dir=start)
+        if not files and not d.sources:
+            d.add_files()
+        if exec_(d) != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        paths = d.paths()
+        if not paths:
+            return
+        opts = d.options()
+        p.data["last_pc_dir"] = os.path.dirname(paths[0])
+        if new_job:
+            tgt = d.target_crs()
+            if tgt and tgt != p.crs:
+                p.data["crs"] = tgt
+                p.store.crs = tgt
+                p.log("Coordinate system for the imported point clouds: %s" % tgt)
+        self._pc_first = new_job
+        self.clear_preview(refresh=False)
+        project = p
+
+        def job(progress, cancel):
+            try:
+                return PCI.import_files(project, paths, opts, progress=progress, cancel=cancel)
+            except PCI.Cancelled:
+                raise IM.Cancelled()
+        self._run("pcimport", job, "Importing %d point-cloud file(s)" % len(paths))
 
     def import_lines(self):
         if self._guard("adding files"):
@@ -3548,8 +3639,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if isinstance(res, (IM.Cancelled, ExportCancelled)) and tag == "georef":
             self._auto_georef = False
         if isinstance(res, (IM.Cancelled, ExportCancelled)):
-            self.status("%s cancelled: %s" % (tag.replace("_", " ").title(),
+            self.status("%s cancelled: %s" % ("Import" if tag == "pcimport" else tag.replace("_", " ").title(),
                                                "the previous points and edits are kept" if tag == "georef"
+                                               else "nothing was added" if tag == "pcimport"
                                                else "nothing was written"), 10000)
             if tag == "filter_tiled":
                 self._after_points_changed()
@@ -3595,6 +3687,20 @@ class MainWindow(QtWidgets.QMainWindow):
             ok, why2 = autoupdate.decide(self.project.dcs.path, self.project) if self.project.dcs else (False, "")
             if ok:
                 QtCore.QTimer.singleShot(0, lambda: self.auto_update(why2))
+        elif tag == "pcimport":
+            out, warn = res
+            if getattr(self, "_pc_first", False) and self.project.store.has_rgb:
+                for k in ("plan", "slice", "3d"):          # a first import with colours: show them
+                    self.panes[k].colour.setCurrentText("RGB")
+            self._pc_first = False
+            self._after_points_changed()
+            n = sum(self.project.lines[l].get("points", 0) for l, _ in out)
+            msg = "Imported %d line(s), %s points." % (len(out), "{:,}".format(n))
+            if warn:
+                msg += "\n\n" + "\n".join("! " + w for w in warn)
+            if len(self.project.lines) > 1 and n:
+                msg += "\n\nNext: CHECK compares the lines where they overlap."
+            theme.msg_info(self, "CloudPro", msg)
         elif tag == "import":
             self._after_points_changed()
             theme.msg_info(self, "CloudPro", "Imported %d line(s), %s points" % (

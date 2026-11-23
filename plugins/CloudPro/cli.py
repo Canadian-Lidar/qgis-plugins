@@ -91,6 +91,15 @@ def main(argv=None):
     sp.add_argument("--tolerance", type=float, default=0.03, help="m (default 0.03)")
     sp.add_argument("--patch", type=float, default=1.0, help="cube size, m: 0.5, 1 or 2 (default 1)")
     sp.add_argument("--report", default="", help="also write the report to this file")
+    pc = sub.add_parser("pointclouds", help="import point clouds (LAS, LAZ, E57, PLY, PTS, PCD, XYZ/TXT/CSV) into a "
+                                            "DCS project (2.16.0)")
+    pc.add_argument("project")
+    pc.add_argument("files", nargs="+")
+    pc.add_argument("--crs", default="", help="the files' coordinate system when they do not say (EPSG:n)")
+    pc.add_argument("--job-crs", default="", help="the job's coordinate system (only while it has no points)")
+    pc.add_argument("--one-line-per-file", action="store_true")
+    pc.add_argument("--no-classes", action="store_true", help="start unclassified")
+    pc.add_argument("--every", type=int, default=1, help="keep every Nth point")
     u = sub.add_parser("update")
     u.add_argument("project")
     pb = sub.add_parser("publish")
@@ -108,6 +117,24 @@ def main(argv=None):
     prj = Project.open_any(a.project)
     if prj.dcs is not None and a.cmd in ("import", "update", "filter", "publish"):
         return _dcs_cmd(a, prj)
+    if a.cmd == "pointclouds":
+        from .core import pcimport
+        if prj.dcs is None:
+            print("point clouds go into a DCS project (.dcsproj)", file=sys.stderr)
+            return 1
+        if a.job_crs and prj.store.total == 0:
+            prj.data["crs"] = a.job_crs
+            prj.store.crs = a.job_crs
+        opts = pcimport.PcOptions(source_crs=a.crs or None, split="file" if a.one_line_per_file else "smart",
+                                  keep_classes=not a.no_classes, decimate=a.every)
+        out, warn = pcimport.import_files(prj, a.files, opts,
+                                          progress=lambda f, m: print("\r%3.0f%% %s" % (100 * f, m), end="", flush=True))
+        print()
+        for lid, st in out:
+            print("  L%d %-30s %12s pts" % (lid + 1, prj.lines[lid]["name"], "{:,}".format(st.get("points", 0))))
+        for w in warn:
+            print("  ! " + w)
+        return 0
     if a.cmd == "info":
         print("%s  %s  %d lines  %s points  origin %s" % (prj.name, prj.crs, len(prj.lines),
                                                            "{:,}".format(prj.store.total), prj.store.origin))
