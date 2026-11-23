@@ -336,8 +336,8 @@ class FirstBottom(Filter):
               P("nmin", "Min. soundings per bin", "int", 5, 1, 100),
               P("gap", "Max. angle gap bridged", "float", 6.0, 0, 30, 0.5, " deg",
                 help="The seabed range is joined across angle bins without soundings up to this gap"),
-              P("margin", "Margin", "float", 1.0, 0.05, 50, 0.05, " m"),
-              P("frac", "Margin as a share of the range", "float", 10.0, 0, 100, 1, " %",
+              P("margin", "Margin", "float", 0.5, 0.05, 50, 0.05, " m"),
+              P("frac", "Margin as a share of the range", "float", 3.0, 0, 100, 1, " %",
                 help="The margin is the larger of the fixed margin and this share of the seabed's slant range "
                      "(the seabed's slope across one angle bin)")]
 
@@ -417,11 +417,26 @@ class FirstBottom(Filter):
 MARINE_FILTERS = (SonarGates, RejectOutliers, DepthHypotheses, FirstBottom, SurfaceSpline)
 
 
+# Version of the ready-made marine groups and what changed in each (CloudPro 2.15.0): "Update to the current version"
+# in the group menu adds the filters a saved group lacks and applies these setting changes where the saved value is
+# still the old default (a value the user changed is kept). (group name or None for every group, filter key,
+# setting, old default, new default).
+GROUP_VERSION = 2
+GROUP_CHANGES = {
+    2: [("Marine - standard clean (IHO Order 1a)", "m_gates", "outboard", 65.0, 85.0),
+        ("Marine - strict (IHO Special Order)", "m_gates", "outboard", 60.0, 75.0),
+        (None, "m_first_bottom", "margin", 1.0, 0.5),
+        (None, "m_first_bottom", "frac", 10.0, 3.0)],
+}
+
+
 def marine_groups(make, FilterGroup):
-    """The ready-made marine groups (IHO Order 1a unless named otherwise)."""
+    """The ready-made marine groups (IHO Order 1a unless named otherwise). 2.15.0 (version 2, Sean's Sissboo
+    river survey): Beyond the first bottom catches the noise under the banks, so the outboard angle no longer has
+    to cut the banks' seabed (standard 65 -> 85 deg, strict 60 -> 75 deg); its margin 0.5 m / 3 %."""
     G = []
     g = FilterGroup("Marine - standard clean (IHO Order 1a)")
-    g.filters = [make("reset"), make("m_gates", inboard=20.0, outboard=65.0, edge=40.0),
+    g.filters = [make("reset"), make("m_gates", inboard=20.0, outboard=85.0, edge=40.0),
                  make("isolated", interval=1.0, min_pts=10),
                  make("m_cube"), make("m_first_bottom"), make("m_outliers"), make("m_spline")]
     G.append(g)
@@ -430,11 +445,13 @@ def marine_groups(make, FilterGroup):
                  make("m_outliers", factor=2.0)]
     G.append(g)
     g = FilterGroup("Marine - strict (IHO Special Order)")
-    g.filters = [make("reset"), make("m_gates", inboard=10.0, outboard=60.0, edge=40.0),
+    g.filters = [make("reset"), make("m_gates", inboard=10.0, outboard=75.0, edge=40.0),
                  make("isolated", interval=0.75, min_pts=10), make("m_cube", order="Special"),
                  make("m_first_bottom"), make("m_outliers", order="Special"), make("m_spline", order="Special")]
     G.append(g)
     g = FilterGroup("Marine - water column and multipath")
     g.filters = [make("m_cube"), make("m_first_bottom"), make("m_spline", side="Above only"), make("m_spline", side="Below only", factor=2.0)]
     G.append(g)
+    for g in G:
+        g.base, g.version = g.name, GROUP_VERSION
     return G

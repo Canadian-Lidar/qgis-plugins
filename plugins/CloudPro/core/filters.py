@@ -1393,15 +1393,22 @@ class FilterGroup:
         self.filters = filters or []
         self.mode = mode           # Combined | Individually (per line)
         self.user = ""
+        self.base = None           # 2.15.0: the ready-made group it came from, and that group's version then
+        self.version = 0
 
     def to_dict(self):
-        return {"name": self.name, "mode": self.mode, "user": self.user,
-                "filters": [f.to_dict() for f in self.filters]}
+        d = {"name": self.name, "mode": self.mode, "user": self.user,
+             "filters": [f.to_dict() for f in self.filters]}
+        if self.base:
+            d["base"], d["version"] = self.base, self.version
+        return d
 
     @classmethod
     def from_dict(cls, d):
         g = cls(d.get("name", "Group"), mode=d.get("mode", "Combined"))
         g.user = d.get("user", "")
+        g.base = d.get("base")
+        g.version = int(d.get("version", 0) or 0)
         for fd in d.get("filters", []):
             if fd.get("key") in REGISTRY:
                 f = make(fd["key"], **fd.get("values", {}))
@@ -1476,6 +1483,66 @@ def apply_result(ctx, r):
 # =============================================================================
 # default groups
 # =============================================================================
+def ready_made_for(group, marine=False):
+    """The current ready-made group a saved group came from (by its recorded base, else by its name), or None."""
+    key = getattr(group, "base", None) or group.name
+    for g in default_groups(marine) + default_groups(not marine):
+        if g.name == key:
+            return g
+    return None
+
+
+def update_group(saved, marine=False):
+    """Bring a saved group up to the current ready-made group it came from (CloudPro 2.15.0; Sean, 23 Nov 2026:
+    groups saved in a job never got the new filter). -> (updated group, [changes as sentences]) or (None, reason).
+    - filters the ready-made group has and the saved one lacks are added at their place (after the filter before
+      them);
+    - the setting changes of later versions (marinefilters.GROUP_CHANGES) are applied where the saved value is
+      still the old default; every value the user changed is kept, so are the filters the user added.
+    """
+    from . import marinefilters as MF
+    cur = ready_made_for(saved, marine)
+    if cur is None:
+        return None, "this group is not one of the ready-made groups"
+    g = FilterGroup.from_dict(saved.to_dict())
+    changes = []
+    have = [f.key for f in g.filters]
+    need = {}
+    for f in cur.filters:
+        need[f.key] = need.get(f.key, 0) + 1
+    pos = -1
+    for f in cur.filters:
+        if f.key in have[pos + 1:]:
+            pos = pos + 1 + have[pos + 1:].index(f.key)
+            continue
+        if have.count(f.key) >= need[f.key]:            # there, somewhere else (the user moved it): leave it
+            continue
+        nf = make(f.key, **dict(f.values))
+        nf.enabled = f.enabled
+        g.filters.insert(pos + 1, nf)
+        have.insert(pos + 1, f.key)
+        pos += 1
+        changes.append("added %s" % nf.name)
+    v0 = int(getattr(saved, "version", 0) or 1)
+    for ver in sorted(MF.GROUP_CHANGES):
+        if ver <= v0:
+            continue
+        for gname, key, param, old, new in MF.GROUP_CHANGES[ver]:
+            if gname is not None and gname != cur.name:
+                continue
+            for f in g.filters:
+                if f.key == key and param in f.values and abs(float(f.values[param]) - float(old)) < 1e-9:
+                    f.values[param] = new
+                    label = next((p.label for p in f.all_params() if p.key == param), param)
+                    changes.append("%s: %s %s -> %s" % (f.name, label, _fmt(old), _fmt(new)))
+    g.base, g.version = cur.name, getattr(cur, "version", 0)
+    return g, changes
+
+
+def _fmt(v):
+    return ("%g" % v) if isinstance(v, (int, float)) else str(v)
+
+
 def default_groups(marine=False):
     """The ready-made groups: the marine ones first on a marine job (sonar soundings), else last."""
     L = _lidar_groups()

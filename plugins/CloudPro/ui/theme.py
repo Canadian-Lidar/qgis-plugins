@@ -4,7 +4,7 @@ what only CloudPro's views need (view background, fonts for the painted
 views, the main-window tool bars and status bar) on top of it."""
 from dcs_core import theme as _t
 from dcs_core.theme import (ACCENT, AMBER, BG, BLUE, BORDER, BRIGHT, DIM, FIELD, MAPLE, RED, SURF, SURF2,  # noqa: F401
-                            TEXT, VIOLET, dark_menu, font, get_text, mark, msg_info, msg_question, msg_warn,
+                            TEXT, VIOLET, dark_menu, font, get_text, mark, msg_choice, msg_info, msg_question, msg_warn,
                             polish)
 
 VIEW_BG = (42, 45, 49)          # dcs_core.theme.VIEW_BG

@@ -101,7 +101,7 @@ def test_fan_edge():
     assert len(F.make("m_gates", rmax=500.0, outboard=90.0).run(ctx, sel)["reject"]) == 0      # 90 = off
     std = [x for x in F.default_groups(marine=True) if x.name.startswith("Marine - standard")][0]
     gate = [f for f in std.filters if f.key == "m_gates"][0]
-    assert gate.v("edge") == 40.0 and gate.v("outboard") == 65.0
+    assert gate.v("edge") == 40.0 and gate.v("outboard") == 85.0      # 2.15.0 (was 65)
     light = [x for x in F.default_groups(marine=True) if x.name.startswith("Marine - light")][0]
     assert [f for f in light.filters if f.key == "m_gates"][0].v("edge") == 90.0
 
@@ -163,7 +163,43 @@ def test_first_bottom():
         assert keys.index("m_first_bottom") == keys.index("m_cube") + 1, (name, keys)
 
 
+def test_update_group():
+    """2.15.0: a ready-made group saved in a job before 2.14.0 (no Beyond the first bottom, outboard 65 deg) gains
+    the new filter at its place and the new outboard default; a setting the user changed is kept."""
+    old = {"name": "Marine - standard clean (IHO Order 1a)", "mode": "Combined", "user": "",
+           "filters": [{"key": "reset", "enabled": True, "values": {}},
+                       {"key": "m_gates", "enabled": True, "values": {"inboard": 20.0, "outboard": 65.0, "edge": 40.0,
+                                                                      "dmax": 35.0}},
+                       {"key": "isolated", "enabled": True, "values": {"interval": 1.0, "min_pts": 10}},
+                       {"key": "m_cube", "enabled": True, "values": {"nmin": 2}},
+                       {"key": "m_outliers", "enabled": True, "values": {}},
+                       {"key": "m_spline", "enabled": True, "values": {}}]}
+    g0 = F.FilterGroup.from_dict(old)
+    g, changes = F.update_group(g0, marine=True)
+    keys = [f.key for f in g.filters]
+    assert keys == ["reset", "m_gates", "isolated", "m_cube", "m_first_bottom", "m_outliers", "m_spline"], keys
+    gates = g.filters[1]
+    assert gates.values["outboard"] == 85.0 and gates.values.get("dmax", 35.0) == 35.0
+    assert g.filters[3].values["nmin"] == 2                         # the user's setting kept
+    assert g.version == 2 and any("Beyond the first bottom" in c for c in changes), changes
+    g2, changes2 = F.update_group(g, marine=True)                    # up to date now
+    assert not changes2, changes2
+    # a user-changed outboard angle is kept
+    old["filters"][1]["values"]["outboard"] = 78.0
+    g3, _ = F.update_group(F.FilterGroup.from_dict(old), marine=True)
+    assert g3.filters[1].values["outboard"] == 78.0
+    # Beyond the first bottom added by hand and moved up (as Sean did): not added twice
+    moved = dict(old)
+    moved["filters"] = old["filters"][:2] + [{"key": "m_first_bottom", "enabled": True, "values": {}}] + old["filters"][2:]
+    g4, _ = F.update_group(F.FilterGroup.from_dict(moved), marine=True)
+    assert [f.key for f in g4.filters].count("m_first_bottom") == 1
+    # round trip keeps base / version
+    assert F.FilterGroup.from_dict(g.to_dict()).version == 2
+    print("group update: %s" % "; ".join(changes))
+
+
 if __name__ == "__main__":
+    test_update_group()
     test_first_bottom()
     test_tvu()
     test_fan_edge()

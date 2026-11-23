@@ -130,8 +130,9 @@ class FilterPanel(QtWidgets.QWidget):
         bar = QtWidgets.QHBoxLayout()
         self.btn_prev = QtWidgets.QPushButton("Live preview")
         self.btn_prev.setCheckable(True)
-        self.btn_prev.setToolTip("Show what the group would do (orange = rejected, green = re-accepted); settings "
-                                 "changes update it at once unless paused. Nothing is changed until Accept.")
+        self.btn_prev.setToolTip("Show what the group would do on the loaded Inspection Area (orange = rejected, "
+                                 "green = re-accepted); it starts when you change a setting and follows each change "
+                                 "unless paused. Nothing is changed until Accept (the area) or Run (the scope).")
         self.btn_prev.toggled.connect(self._toggle_preview)
         self.btn_pause = QtWidgets.QPushButton("Pause")
         self.btn_pause.setCheckable(True)
@@ -152,7 +153,8 @@ class FilterPanel(QtWidgets.QWidget):
                                   "visible lines over the whole project, or everything (tile by tile)")
         bar.addWidget(self.cmb_scope, 1)
         self.btn_run = QtWidgets.QPushButton("Run")
-        self.btn_run.setToolTip("Run the whole group on the scope now")
+        self.btn_run.setToolTip("Run the whole group on the scope now. Tune first: changing a setting previews it "
+                                "on the loaded Inspection Area in seconds; Run is the last step.")
         self.btn_run.clicked.connect(lambda: self.runRequested.emit(self.cmb_scope.currentText()))
         bar.addWidget(self.btn_run)
         lay.addLayout(bar)
@@ -227,6 +229,10 @@ class FilterPanel(QtWidgets.QWidget):
         dm = m.addMenu("Add a ready-made group")
         for g in F.default_groups(self.marine):
             dm.addAction(g.name, lambda gg=g: self._add_group(F.FilterGroup.from_dict(gg.to_dict())))
+        a = m.addAction("Update to the current version...", self.update_group)
+        a.setEnabled(self.group is not None and F.ready_made_for(self.group, self.marine) is not None)
+        a.setToolTip("Adds the filters this ready-made group gained in later CloudPro versions and their new "
+                     "defaults; the settings you changed are kept")
         m.addAction("Rename...", self._rename)
         mm = m.addMenu("Mode")
         for md, tip in (("Combined", "all lines filtered together (good positioning)"),
@@ -244,6 +250,27 @@ class FilterPanel(QtWidgets.QWidget):
         for x in (m, dm, mm):
             theme.dark_menu(x)
         exec_(m, self.btn_gmenu.mapToGlobal(self.btn_gmenu.rect().bottomLeft()))
+
+    def update_group(self):
+        """2.15.0: bring the shown group up to the current ready-made group it came from (filters.update_group)."""
+        if self.group is None:
+            return
+        g, changes = F.update_group(self.group, self.marine)
+        if g is None:
+            theme.msg_info(self, "CloudPro", "Nothing to update: %s." % changes)
+            return
+        if not changes:
+            theme.msg_info(self, "CloudPro", "%s is up to date." % self.group.name)
+            return
+        text = ("Update %s to the current version?\n\n%s\n\nThe settings you changed are kept."
+                % (self.group.name, "\n".join("  - " + c for c in changes)))
+        if theme.msg_choice(self, "CloudPro", text, ["Update", "Cancel"]) != 0:
+            return
+        i = self.groups.index(self.group)
+        self.groups[i] = g
+        self._fill_groups(i)
+        self.save_quiet()
+        self.updated_text = changes
 
     def refresh_values(self):
         """Show the settings again after they were changed from outside (tuning)."""
@@ -365,7 +392,7 @@ class FilterPanel(QtWidgets.QWidget):
         i = self.cmb_f.currentIndex()
         g.filters.insert(i + 1 if i >= 0 else len(g.filters), F.make(key))
         self._fill_filters(i + 1 if i >= 0 else len(g.filters) - 1)
-        self._changed()
+        self._edited()
 
     def remove_filter(self):
         i = self.cmb_f.currentIndex()
@@ -373,7 +400,7 @@ class FilterPanel(QtWidgets.QWidget):
             return
         del self.group.filters[i]
         self._fill_filters(max(0, i - 1))
-        self._changed()
+        self._edited()
 
     def clone_filter(self):
         i = self.cmb_f.currentIndex()
@@ -382,7 +409,7 @@ class FilterPanel(QtWidgets.QWidget):
         f = self.group.filters[i]
         self.group.filters.insert(i + 1, F.make(f.key, **f.values))
         self._fill_filters(i + 1)
-        self._changed()
+        self._edited()
 
     def move(self, d):
         i = self.cmb_f.currentIndex()
@@ -392,14 +419,14 @@ class FilterPanel(QtWidgets.QWidget):
             return
         fl[i], fl[j] = fl[j], fl[i]
         self._fill_filters(j)
-        self._changed()
+        self._edited()
 
     def _toggle_filter(self, on):
         if self._building or self.current is None:
             return
         self.current.enabled = bool(on)
         self._relabel()
-        self._changed()
+        self._edited()
 
     def _filter_selected(self, i):
         while self.form.rowCount():
@@ -436,7 +463,7 @@ class FilterPanel(QtWidgets.QWidget):
 
         def setv(val, f=f, p=p):
             f.values[p.key] = val
-            self._changed()
+            self._edited()
         if p.kind == "float":
             w = QtWidgets.QDoubleSpinBox()
             step = p.step or 0.1
@@ -473,6 +500,15 @@ class FilterPanel(QtWidgets.QWidget):
     def _changed(self):
         if self.btn_prev.isChecked() and not self.btn_pause.isChecked():
             self._timer.start()
+
+    def _edited(self):
+        """A setting or a filter of the group was changed by the user (2.15.0, Sean 23 Nov 2026: tune on the
+        Inspection Area, then Run on the whole project): the live preview on the loaded Inspection Area starts by
+        itself (unless paused), so each try takes seconds; Run stays the step that applies the group to the scope."""
+        if not self.btn_prev.isChecked() and not self.btn_pause.isChecked() and self.isEnabled():
+            self.btn_prev.setChecked(True)          # starts the preview (_toggle_preview)
+            return
+        self._changed()
 
     def _live(self):
         if self.btn_prev.isChecked():

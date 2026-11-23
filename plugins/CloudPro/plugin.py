@@ -72,11 +72,34 @@ class CloudProPlugin:
         registry.on_publish("cloudpro", lambda path, stage: self._bridge.published.emit(path, stage))
 
     # ----------------------------------------------------------- background georeferencing
+    SETTLE_MS = 120000      # 2.15.0: wait this long after the last upstream finalize before georeferencing again
+
     def _on_published(self, path, stage):
-        """A stage published (main thread): georeference this job again if its upstream is now current."""
+        """A stage finalized (main thread). 2.15.0 (Sean, 23 Nov 2026): wait until the upstream edits settle -
+        PosPro's Trajectory Review finalizes again after each batch of edits, and each finalize used to start a
+        full re-georeferencing - then look once: SETTLE_MS after the last finalize, or at once when CloudPro is
+        opened on that job (open_project)."""
         if stage == "cloudpro":
             return
         path = os.path.abspath(path)
+        timers = self.__dict__.setdefault("_settle", {})
+        t = timers.get(path)
+        if t is None:
+            t = timers[path] = QtCore.QTimer()
+            t.setSingleShot(True)
+            t.timeout.connect(lambda p=path: self._settled(p))
+        t.start(max(0, int(self.SETTLE_MS)))
+
+    def _settle_now(self, path):
+        """CloudPro is opened on a job with upstream changes waiting: look now."""
+        t = self.__dict__.get("_settle", {}).get(os.path.abspath(path))
+        if t is not None and t.isActive():
+            t.stop()
+            self._settled(os.path.abspath(path))
+
+    def _settled(self, path):
+        """The upstream edits settled: georeference this job again if its upstream is now current."""
+        self.__dict__.get("_settle", {}).pop(path, None)
         if self._bg is not None:
             self._bg_pending.add(path)          # look again when the running job ends
             return
@@ -170,14 +193,19 @@ class CloudProPlugin:
             self._open_after = None
             self.open_project(path)
         pend, self._bg_pending = self._bg_pending, set()
-        for pp in pend:                         # published again while it ran
-            self._on_published(pp, "pospro")
+        for pp in pend:                         # published again while it ran (already settled): look now
+            self._settled(pp)
 
     def open_guide(self):
         from . import guide
         return guide.open_guide(self.win if self.win is not None else self.iface.mainWindow())
 
     def unload(self):
+        for t in self.__dict__.pop("_settle", {}).values():     # waiting background updates: dropped
+            try:
+                t.stop()
+            except RuntimeError:
+                pass
         if getattr(self, "help_action", None) is not None:
             try:
                 self.iface.pluginHelpMenu().removeAction(self.help_action)
@@ -278,6 +306,7 @@ class CloudProPlugin:
 
     def open_project(self, path):
         """Show CloudPro on a DCS project (called from another plugin's chain bar)."""
+        self._settle_now(path)                  # 2.15.0: upstream changes waiting for this job: now
         win = self.show()
         if win is not None:
             win.open_project(path)
