@@ -1301,3 +1301,30 @@ def publish(project, ctx):
     if ctx:
         ctx.log("info", "marine trajectory finalized for AlignPro and CloudPro: %s" % os.path.join(od, "trajectory.json"))
     return {"id": doc["id"], "path": os.path.join(od, "trajectory.json")}
+
+
+# ----------------------------------------------------------------------------- SonarView recordings added on the Data page
+SONARVIEW = (".svlz", ".svlog")
+
+
+def convert_sonarview(dcs, paths, ctx):
+    """SonarView recordings chosen on the Data page (PosPro 2.11.0) -> their .clraw, made by RemixPro (DCS Core
+    registry service "sonar_to_clraw") into the job's day folder. -> {"files", "notes", "failed"}.
+    Raises MarineError when RemixPro is not loaded (or is older than 1.4.0)."""
+    from dcs_core import registry
+    fn = registry.service("sonar_to_clraw") if hasattr(registry, "service") else None
+    if fn is None:
+        raise MarineError("SonarView recordings are converted by RemixPro 1.4.0 or later: install or turn on "
+                          "RemixPro (Plugins > Manage and Install Plugins), then add them again.")
+    try:
+        out_root = dcs.remix_dir(create=True)
+    except Exception:       # noqa: BLE001  (older DCS Core)
+        out_root = None
+    from . import engine
+    try:
+        return fn(list(paths), job_folder=dcs.job_folder if getattr(dcs, "layout", 1) >= 2 else None,
+                  out_root=out_root, progress=lambda f, t="": ctx.progress(f, t), cancelled=ctx.cancelled)
+    except Exception as e:      # noqa: BLE001
+        if type(e).__name__ == "Cancelled":
+            raise engine.Cancelled() from e
+        raise

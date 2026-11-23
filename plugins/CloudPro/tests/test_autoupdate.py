@@ -53,9 +53,41 @@ from dcs_core import registry                                     # noqa: E402
 plugin = CloudPro.classFactory(iface)
 plugin.initGui()
 assert "cloudpro" in registry._LISTENERS
+# 2.15.0: finalizes in quick succession (PosPro's Trajectory Review edits) start one run, after they settle
+plugin.SETTLE_MS = 1500
+
+
+def pump(sec):
+    t = time.time()
+    while time.time() - t < sec:
+        harness.settle(1)
+        time.sleep(0.02)
+
+
+starts = []
+_orig_start = plugin._bg_start
+plugin._bg_start = lambda path, why: (starts.append(time.time()), _orig_start(path, why))
+higher(0.02)
+pump(0.5)
+higher(0.03)
+pump(0.5)
+assert not starts, "started before the edits settled"
+higher(0.04)
+t_last = time.time()
+pump(0.8)
+assert not starts, "started before the edits settled"
+pump(1.5)
+assert len(starts) == 1 and starts[0] - t_last >= 1.4, (starts, t_last)
+plugin.cancel_background()
+t0 = time.time()
+while plugin._bg is not None and time.time() - t0 < 300:
+    harness.settle(1)
+plugin._bg_start = _orig_start
+print("three finalizes 0.5 s apart: one background run, 1.5 s after the last")
+plugin.SETTLE_MS = 0
 higher(0.05)
-harness.settle(2)
-assert plugin._bg is not None, "no background run started"
+pump(0.3)
+assert plugin._bg is not None, "no background run started: %s" % (autoupdate.decide(dcs.path),)
 win = plugin.show()
 win.open_project(dcs.path)                                          # busy: deferred
 assert win.project is None or os.path.abspath(win.project.dcs.path) != os.path.abspath(dcs.path)

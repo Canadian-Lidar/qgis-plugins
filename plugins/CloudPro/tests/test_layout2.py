@@ -40,9 +40,9 @@ harness.settle(4)
 
 # header: steps, tools right of the project box, the menu in the project box
 h = win.header
-assert [k for k, *_ in h.steps.items] == ["georef", "clean", "publish"]
-assert [t for _k, t, *_ in h.steps.items] == ["Georeference", "Clean & classify", "Finalize"]
-assert h.steps.isVisible() and h.steps.current in ("clean", "publish")
+assert [k for k, *_ in h.steps.items] == ["georef", "check", "clean", "publish"]       # 2.15.0: Check
+assert [t for _k, t, *_ in h.steps.items] == ["Georeference", "Check", "Clean & classify", "Finalize"]
+assert h.steps.isVisible() and h.steps.current in ("check", "clean", "publish")
 assert win.b_pan.geometry().left() > win.btn_project.geometry().right()
 names = [a.text() for a in win.btn_project.menu().actions()]
 assert any(t.startswith("Finalize for the job") for t in names) and any(t.startswith("Georeference") for t in names)

@@ -24,6 +24,7 @@
 <h2>What's new</h2>
 <table>
 <tr><th>Version</th><th>Changes</th></tr>
+<tr><td><b>1.14.0</b></td><td>Marine: the soundings read from the sonar recordings are kept in 02_AlignPro/WORK/soundings and read again only when a recording, PosPro's attitude or a read setting changes (the second Read soundings of a job takes a moment); they take about half the memory (40 bytes a sounding instead of 72). Needs DCS Core 1.19.0.</td></tr>
 <tr><td><b>1.13.2</b></td><td>Saving a project, a result or an export no longer fails when Windows briefly holds the file open (OneDrive or other sync, antivirus, another program reading it): the replacement is retried for a few seconds. Opening recordings is much faster on synced or network folders (DCS Core 1.19.4 reads each file's index instead of every chunk header, and attachments only when needed).</td></tr>
 <tr><td><b>1.13.1</b></td><td>Opening AlignPro from the menu starts with no project (it no longer opens the last one by itself); moving on to another plugin (Continue, the chain, Open in AlignPro) closes AlignPro. Needs DCS Core 1.19.0.</td></tr>
 <tr><td><b>1.13.0</b></td><td><b>File structure</b> (DCS Core 1.18.0): a new project sits beside the mapper's day folders; AlignPro's folder is <code>&lt;Name&gt;/02_AlignPro</code> with <code>WORK</code>, <code>OUT</code> and <code>LOG</code>. Continue goes on to CloudPro; StripPro is run after CloudPro when needed. Menu: <span class='ui'>Plugins › CLDS</span>.</td></tr>

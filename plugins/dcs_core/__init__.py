@@ -20,7 +20,7 @@ plugins (PosPro, AlignPro, CloudPro, RemixPro).
   theme, widgets, stepbar, dialogs, registry   the shared look and UI
 
 The plugins import it as `dcs_core`; it has no window of its own."""
-__version__ = "1.19.4"
+__version__ = "1.20.0"
 # API 2 (1.1.0): adds clraw, hesai, anpp, sbet, las, mcap, zstd and widgets.align_flags.
 # API 3 (1.2.0): adds window.PluginWindow (the standard plugin window) and theme.FAINT, DISABLED, VIEW_BG, GRID.
 # API 4 (1.3.0): adds header.PluginHeader (the same header bar in every plugin).
@@ -69,7 +69,9 @@ __version__ = "1.19.4"
 #   day-folder names YYYYMMDD_001_001.clraw and nav_YYYYMMDD_0001.clraw.
 # API 20 (1.19.0): registry.leave(widget) - moving on to another plugin closes the one being left (Continue, the chain
 #   breadcrumbs, CloudPro's Open in / Fix in buttons); opening a plugin from the menu starts with no project.
-API = 20
+# API 21 (1.20.0): registry.provide / withdraw / service - a plugin offers a job to the others without being imported
+#   (RemixPro's "sonar_to_clraw": PosPro's marine Data page adds SonarView recordings).
+API = 21
 
 
 def classFactory(iface):  # noqa: N802 - QGIS API

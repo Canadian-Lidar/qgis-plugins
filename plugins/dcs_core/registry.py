@@ -16,7 +16,12 @@ plugin on the project and then calls focus_fn(target), a dict saying what to sho
 
 Leave (API 20, DCS Core 1.19.0): leave(widget) closes the plugin window holding widget. Every hand-over to another
 plugin (Continue, the chain breadcrumbs, CloudPro's Open in PosPro / AlignPro / Fix in StripPro) opens the next
-plugin on the project and then closes the one being left."""
+plugin on the project and then closes the one being left.
+
+Services (API 21, DCS Core 1.20.0): provide(name, fn) / withdraw(name) / service(name) - one plugin offers a job
+another can ask for without importing it. RemixPro provides "sonar_to_clraw": fn(paths, job_folder=None,
+out_root=None, progress=None, cancelled=None) -> {"files": [.clraw], "notes": [str], "failed": [(path, reason)]}
+(PosPro's marine Data page adds SonarView .svlz / .svlog recordings with it)."""
 import logging
 import sys
 
@@ -25,9 +30,11 @@ import sys
 # registered with the old one (they register once, in initGui). The tables live on the sys module, so a reloaded
 # DCS Core keeps them.
 _STATE = sys.__dict__.setdefault("_dcs_core_registry", {"openers": {}, "focus": {}, "listeners": {}})
+_STATE.setdefault("services", {})
 _OPENERS = _STATE["openers"]
 _FOCUS = _STATE["focus"]
 _LISTENERS = _STATE["listeners"]
+_SERVICES = _STATE["services"]
 
 
 def register(stage, open_fn, focus_fn=None):
@@ -104,3 +111,17 @@ def notify_publish(project_path, stage):
             fn(project_path, stage)
         except Exception:               # noqa: BLE001 - a listener never breaks a publish
             logging.getLogger("dcs_core").exception("publish listener %s failed", key)
+
+
+def provide(name, fn):
+    """Offer a service under name (API 21): replaces an earlier provider of the same name."""
+    _SERVICES[name] = fn
+
+
+def withdraw(name):
+    _SERVICES.pop(name, None)
+
+
+def service(name):
+    """The function offered under name, or None when no loaded plugin offers it."""
+    return _SERVICES.get(name)

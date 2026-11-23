@@ -40,6 +40,71 @@ def is_marine(dcs):
         return False
 
 
+CACHE_VERSION = 1
+COMPACT = {"t": np.float64, "angle": np.float32, "tof": np.float32, "sos": np.float32, "power": np.float32,
+           "up": np.float32, "ping": np.int32}
+
+
+def compact_soundings(S):
+    """Soundings in their compact types (float32 except the time): 40 bytes a sounding instead of 72."""
+    return {k: np.ascontiguousarray(v, COMPACT.get(k, v.dtype)) for k, v in S.items()}
+
+
+def _cache_key(paths, did, att_path, every, power, rmax):
+    import hashlib
+    h = hashlib.sha1()
+    for f in sorted(paths) + ([att_path] if att_path else []):
+        try:
+            st = os.stat(f)
+            h.update(("%s|%d|%d;" % (os.path.normcase(os.path.abspath(f)), st.st_size, st.st_mtime_ns)).encode())
+        except OSError:
+            h.update(("%s|missing;" % f).encode())
+    h.update(("v%d|head %s|every %s|power %s|rmax %.3f" % (CACHE_VERSION, did, every, power, float(rmax))).encode())
+    return h.hexdigest()[:20]
+
+
+def cache_dir(dcs, create=True):
+    """02_AlignPro/WORK/soundings: the soundings read from the sonar recordings, kept between sessions."""
+    try:
+        return dcs.stage_dir("alignpro", "work/soundings", create=create)
+    except Exception:       # noqa: BLE001  (read-only folder, older DCS Core)
+        return None
+
+
+def _cached_soundings(dcs, rec, paths, did, att_path, every, power, rmax, att):
+    """sample_soundings for one head of one recording, read again only when a recording, PosPro's attitude or the
+    read settings changed (AlignPro 1.14.0): the second read of a job takes a moment instead of minutes."""
+    from dcs_core import marine
+    import re
+    d = cache_dir(dcs)
+    f = None
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", str(rec.name))[:60]
+    if d:
+        f = os.path.join(d, "%s_head%s_%s.npz" % (name, did, _cache_key(paths, did, att_path if att is not None
+                                                                         else None, every, power, rmax)))
+        if os.path.exists(f):
+            try:
+                with np.load(f) as z:
+                    if not len(z.files):
+                        return None
+                    return {k: z[k] for k in COMPACT}
+            except Exception:       # noqa: BLE001  (half-written or old: read again)
+                pass
+    s = marine.sample_soundings(rec, did, every=every, power=power, rmax=rmax, attitude=att)
+    s = compact_soundings(s) if s is not None else None
+    if f:
+        try:
+            for old in os.listdir(d):                       # the same recording and head read with other settings
+                if old.startswith("%s_head%s_" % (name, did)) and old.endswith(".npz"):
+                    os.remove(os.path.join(d, old))
+            tmp = f + ".part.npz"
+            np.savez(tmp, **(s or {}))
+            os.replace(tmp, f)
+        except OSError:
+            pass
+    return s
+
+
 def load(dcs, every=2, power="medium", rmax=RMAX):
     """{"traj": LocalTrajectory, "heads": {did: {"S": soundings, "lever", "nickname", "side" (looks to)}}, "doc": the
     trajectory handover} from PosPro's finalized marine trajectory and the job's sonar recordings."""
@@ -64,7 +129,7 @@ def load(dcs, every=2, power="medium", rmax=RMAX):
             p = (doc.get("paths") or {}).get("sonar_%d_attitude" % did)
             if p and os.path.exists(p):
                 att = np.load(p)
-            s = marine.sample_soundings(rec, did, every=every, power=power, rmax=rmax, attitude=att)
+            s = _cached_soundings(dcs, rec, paths, did, p, every, power, rmax, att)
             if s is None:
                 continue
             sens = (doc.get("sensors") or {}).get("sonar_%d" % did) or {}

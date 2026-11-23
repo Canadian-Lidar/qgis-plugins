@@ -5,7 +5,7 @@ qgisMaximumVersion=4.99
 supportsQt6=True
 description=Lidar boresight calibration (patch test) for the Canadian Lidar mobile mapper: stage 02 of the Data Collection Systems chain (PosPro, AlignPro, CloudPro).
 about=AlignPro calibrates the Lidar mounting angles of the mobile mapper from its .clraw captures. It opens the job's shared processing project, uses the trajectory PosPro published, pairs the passes, finds planar surfaces seen by several passes and solves roll, pitch and heading with a point-to-plane adjustment; leaving each line out in turn gives the SDEV. A Data View shows plan, profile and section of the points live while roll, pitch, heading, lever arm and latency are adjusted by hand. The applied values are published for CloudPro (alignment.json) and given in the mapper's mounting convention, ready for Settings > Hardware > Survey sensor. Quality control, sweeps, PDF and text reports and calibration history. Needs the DCS Core plugin. Menu: Plugins > CLDS.
-version=1.13.2
+version=1.14.0
 author=Canadian Lidar
 email=seantobrien@gmail.com
 category=Plugins
@@ -15,7 +15,8 @@ experimental=False
 deprecated=False
 hasProcessingProvider=no
 plugin_dependencies=DCS Core
-changelog=1.13.2 Audit (23 Nov 2026): Saving a project, a result or an export no longer fails when Windows briefly holds the file open (OneDrive or other sync, antivirus, another program reading it): the replacement is retried for a few seconds. Opening recordings is much faster on synced or network folders (DCS Core 1.19.4 reads each file's index instead of every chunk header, and attachments only when needed).
+changelog=1.14.0 Marine: the soundings read from the sonar recordings are kept in 02_AlignPro/WORK/soundings and read again only when a recording, PosPro's attitude or a read setting changes (the second Read soundings of a job takes a moment); they take about half the memory (40 bytes a sounding instead of 72). Needs DCS Core 1.19.0.
+    1.13.2 Audit (23 Nov 2026): Saving a project, a result or an export no longer fails when Windows briefly holds the file open (OneDrive or other sync, antivirus, another program reading it): the replacement is retried for a few seconds. Opening recordings is much faster on synced or network folders (DCS Core 1.19.4 reads each file's index instead of every chunk header, and attachments only when needed).
     1.13.1 Opening AlignPro from the menu starts with no project (Recent is in the project box); Continue and the chain close AlignPro as the next plugin opens. Needs DCS Core 1.19.0.
     1.13.0 File structure of 17 Nov 2026 (DCS Core 1.18.0): in a new project the stage folder is <Name>/02_AlignPro with WORK, OUT and LOG; Continue goes on to CloudPro (StripPro is run after CloudPro when needed); menu Plugins > CLDS. Needs DCS Core 1.18.0.
     1.12.1 Marine: survey lines named as in CloudPro, P1 Port / P1 Stbd (pairs, report, section legend).

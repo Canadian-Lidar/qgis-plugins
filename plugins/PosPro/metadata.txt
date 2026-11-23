@@ -3,7 +3,7 @@ name=PosPro
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 description=Post-processing of GNSS/INS trajectories for mobile mapping: tightly and loosely coupled (both antennas), PPK and PPP, base-station PPP and NRCan CSRS-PPP, antenna lever-arm solver, SBET/SMRMSG and text export.
-version=2.10.4
+version=2.11.0
 author=Canadian Lidar
 email=seantobrien@gmail.com
 about=PosPro processes Advanced Navigation Certus logs (.anpp) and mapper captures (.clraw) directly. It extracts the raw IMU and raw GNSS observations, downloads ephemeris, precise products and base-station data, computes base positions by PPP or CSRS-PPP, and runs a tightly or loosely coupled GNSS/INS filter forward and backward with a combined (smoothed) result. Quality is shown on the map and in plots, and the trajectory is exported as SBET/SMRMSG or text. A calibration step solves the antenna lever arms from the drive. Styled like the Mobile Mapper dashboard. Processing runs in a separate engine process (RTKLIB-EX inside), so a fault never closes QGIS.
@@ -16,7 +16,8 @@ deprecated=False
 hasProcessingProvider=no
 plugin_dependencies=DCS Core
 tags=gnss,ins,imu,ppk,ppp,trajectory,mobile mapping,lidar,sbet,rtklib,advanced navigation,certus,dcs
-changelog=2.10.4 Audit (23 Nov 2026): Saving a project, a result or an export no longer fails when Windows briefly holds the file open (OneDrive or other sync, antivirus, another program reading it): the replacement is retried for a few seconds. Opening recordings is much faster on synced or network folders (DCS Core 1.19.4 reads each file's index instead of every chunk header, and attachments only when needed). Needs DCS Core 1.19.4 for the faster opening.
+changelog=2.11.0 Marine Data page: Add recordings… also takes SonarView recordings (.svlz / .svlog); RemixPro converts them into the job's day folder (<job>/<YYYYMMDD>/CLRAW) with progress and they are added to the job. Needs RemixPro 1.4.0 for that (and DCS Core 1.20.0).
+    2.10.4 Audit (23 Nov 2026): Saving a project, a result or an export no longer fails when Windows briefly holds the file open (OneDrive or other sync, antivirus, another program reading it): the replacement is retried for a few seconds. Opening recordings is much faster on synced or network folders (DCS Core 1.19.4 reads each file's index instead of every chunk header, and attachments only when needed). Needs DCS Core 1.19.4 for the faster opening.
     2.10.3 Marine: PPP and processing of the Recorded base use only its RINEX observation files (its navigation and SBAS files stopped PPP with "different observation types"); a job whose sonar files were read as Certus logs first takes its time span and position from the recordings (Download... and the time range work); back-to-back recordings no longer reported as covering the same time. Needs DCS Core 1.19.1.
     2.10.2 Sonar recordings (.clraw made by RemixPro from SonarView) added as rover files on the Data page become the job's marine recordings, so the job opens as a marine job (they read as 0 IMU samples and no GNSS before). Jobs already holding them are fixed when opened.
     2.10.1 Fixed IndexError (list index out of range) when a mobile mapping job was opened after a marine one, which also left the previous job's recordings on the Data page. Opening PosPro from the menu starts with no project; Continue and the chain close PosPro as the next plugin opens. Needs DCS Core 1.19.0.

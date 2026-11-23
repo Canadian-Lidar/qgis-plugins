@@ -1234,8 +1234,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_workflow()
 
     def refresh_workflow(self):
-        """CloudPro's steps in the header (Georeference › Clean & classify › Finalize), coloured by state, the next
-        one to do marked; the guidance is in their tooltips. Clicking a step does it."""
+        """CloudPro's steps in the header (Georeference › Check › Clean & classify › Finalize), coloured by state, the
+        next one to do marked; the guidance is in their tooltips. Clicking a step does it."""
         p = self.project
         if p is None or not hasattr(self, "header"):
             return
@@ -1245,7 +1245,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "points)") and not str(h.get("text", "")).startswith(("Undo", "Redo")))
         why = getattr(self, "_why", None)
         qs = (lambda _p: why) if why is not None else chain.quick_state      # computed once per refresh
-        st = states(p, n_edits, self._visited_clean, qs)
+        st = states(p, n_edits, self._visited_clean, qs, self._separation_summary())
         nxt, _label = next_step(st, self._visited_clean)
         inputs = self.lbl_inputs.text()
         items = []
@@ -1255,15 +1255,45 @@ class MainWindow(QtWidgets.QMainWindow):
             if k == "georef" and inputs:
                 tip = (inputs + ("\n" + reason if reason and reason != inputs else "")).strip()
             items.append((k, t, state, tip + "\nClick to %s." % {"georef": "georeference (or update)",
+                                                                 "check": "check the line separation",
                                                                  "clean": "open the automatic filters",
                                                                  "publish": "finalize for the job"}[k]))
         self.header.set_steps(items, nxt or "publish")
+
+    def _separation_summary(self):
+        """(exists, current, problem areas, calibration / trajectory findings) of the line separation result."""
+        res = getattr(getattr(self, "plan", None), "separation", None)
+        if res is None:
+            return (False, False, 0, 0)
+        cur = bool(self.plan.separation_current)
+        key = (id(res), getattr(res, "stamp", None), round(float(self.plan.tolerance), 4), cur)
+        c = getattr(self, "_sep_summary", None)
+        if c is not None and c[0] == key:
+            return c[1]                         # refresh_workflow runs with every chain refresh
+        try:
+            n_areas = len(res.problem_areas(self.plan.tolerance))
+        except Exception:       # noqa: BLE001
+            n_areas = 0
+        try:
+            cc = SEP.calibration_check(self.project, res, self.plan.tolerance)
+            n_find = sum(1 for pr in cc.get("pairs", []) for f in pr.get("findings", [])
+                         if f.get("kind") in ("calibration", "trajectory", "either", "recording"))
+        except Exception:       # noqa: BLE001
+            n_find = 0
+        out = (True, cur, n_areas, n_find)
+        self._sep_summary = (key, out)
+        return out
 
     def _step_clicked(self, key):
         if self.project is None:
             return
         if key == "georef":
             self.georeference()
+        elif key == "check":
+            if self.plan.separation is not None and self.plan.separation_current:
+                self.show_dock("separation")
+            else:
+                self.check_separation()
         elif key == "clean":
             self._visited_clean = True
             self.show_dock("filters")
@@ -3126,8 +3156,11 @@ class MainWindow(QtWidgets.QMainWindow):
         tim = ", ".join("%s %.1fs" % (n, t) for n, t in getattr(ctx, "timings", []))
         perflog.log(self.project, "preview", "'%s' on %s points: %.1f s (%s)" % (
             self.filters.group.name, "{:,}".format(len(ps)), dt_, tim))
-        self.filters.set_status("Preview: %s to reject (orange), %s re-accepted, %s re-classified in %.1f s\n%s%s" % (
-            "{:,}".format(newly), "{:,}".format(reacc), "{:,}".format(ncls), dt_, tim,
+        where = "slice" if self.filters.cmb_scope.currentText() == "Slice" else "Inspection Area"
+        self.filters.set_status("Preview (%s): %s to reject (orange), %s re-accepted, %s re-classified in %.1f s; Run "
+                                "applies it to: %s\n%s%s" % (
+            where, "{:,}".format(newly), "{:,}".format(reacc), "{:,}".format(ncls), dt_,
+            self.filters.cmb_scope.currentText().lower(), tim,
             ("\n" + "\n".join(ctx.messages)) if ctx.messages else ""))
         self._col_cache = {}
         self._fill_classes()
