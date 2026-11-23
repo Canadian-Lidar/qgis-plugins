@@ -13,6 +13,7 @@ import time
 import zlib
 
 from . import geo, products
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 RADIUS_KM = 150
 PROVIDER_LABEL = {"noaa": "NOAA CORS", "igs": "IGS", "nrcan": "NRCan CACS", "rtk": "NRCan RTK list"}
@@ -107,7 +108,7 @@ def _cached_list(net, fn, force, log, centre=None):
         tmp = path + ".part"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump([s.to_json() for s in sts], fh)
-        os.replace(tmp, path)
+        _replace(tmp, path)
     return sts
 
 
@@ -330,7 +331,7 @@ def _fetch_crx(url, out_dir, log):
         os.makedirs(out_dir, exist_ok=True)
         with open(local + ".part", "wb") as fh:          # a cut download never looks complete
             fh.write(data)
-        os.replace(local + ".part", local)
+        _replace(local + ".part", local)
     try:
         return products.crx2rnx(local, log)
     except (EOFError, OSError, zlib.error) as e:

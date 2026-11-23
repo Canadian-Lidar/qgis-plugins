@@ -12,6 +12,7 @@ import numpy as np
 from . import export as EX
 from .filters import ASPRS
 from .store import REJ_AUTO, REJ_MANUAL, REJECTED
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 PLUGIN = "CloudPro"
 
@@ -202,7 +203,7 @@ def deliver(project, las=True, per_line=False, dem_cell=0.0, include_rejected=Fa
         except OSError:
             pass
         for k, (a, b) in tmp_paths.items():
-            os.replace(a, b)
+            _replace(a, b)
             outputs[k]["path"] = b
         if "las" in tmp_paths:
             other = os.path.join(od, base + (".las" if tmp_paths["las"][1].endswith(".laz") else ".laz"))

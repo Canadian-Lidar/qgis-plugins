@@ -21,6 +21,7 @@ import struct
 import time
 
 import numpy as np
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 COG_MIN_SPEED = 0.5            # m/s: below it the heading is the autopilot's compass
 COG_SMOOTH_S = 2.0
@@ -974,7 +975,7 @@ def write_pass(path, P, T, direction=1):
         fo.write(b"PPTRJ001" + struct.pack("<Q", n) + struct.pack("<3d", 0, 0, 0) + struct.pack("<ii", 0, direction)
                  + b"\0" * 24)
         out.tofile(fo)
-    os.replace(path + ".tmp", path)
+    _replace(path + ".tmp", path)
     return n
 
 
@@ -1235,10 +1236,10 @@ def publish(project, ctx):
     written = pipeline.export(project, sub, tmp, rate_hz=0, lever=[0.0, 0.0, 0.0], sbet=True)
     files = {"sbet": os.path.join(od, "trajectory_sbet.out"), "smrmsg": os.path.join(od, "trajectory_smrmsg.out"),
              "qc": os.path.join(od, "trajectory_qc.csv")}
-    os.replace(written[0], files["sbet"])
-    os.replace(written[1], files["smrmsg"])
+    _replace(written[0], files["sbet"])
+    _replace(written[1], files["smrmsg"])
     shutil.copyfile(os.path.join(project.work_dir, "results", "qc.csv"), files["qc"] + ".tmp")
-    os.replace(files["qc"] + ".tmp", files["qc"])
+    _replace(files["qc"] + ".tmp", files["qc"])
     from dcs_core import sbet as dsbet
     week = int((T["t"][0] + 18 - dsbet.GPS_EPOCH_UNIX) // dsbet.WEEK)
     sensors = {}
@@ -1246,7 +1247,7 @@ def publish(project, ctx):
         src = os.path.join(wdir, "sonar_%s_attitude.npy" % did)
         dst = os.path.join(od, "sonar_%s_attitude.npy" % did)
         shutil.copyfile(src, dst + ".tmp")
-        os.replace(dst + ".tmp", dst)
+        _replace(dst + ".tmp", dst)
         files["sonar_%s_attitude" % did] = dst
         h = summ["heads"][did]
         sensors["sonar_%s" % did] = {"attitude": os.path.basename(dst), "time": "UTC seconds",

@@ -15,6 +15,7 @@ import os
 import numpy as np
 
 from . import anpp, clraw, hesai
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 CACHE_VERSION = 5          # 5: packets fired while stopped are skipped (1.6.2)
 
@@ -197,7 +198,7 @@ def read_line(files, settings, cache_dir=None, progress=None, cancelled=None):
         os.makedirs(cache_dir, exist_ok=True)
         tmp = cpath + ".tmp.npz"
         np.savez(tmp, **out)
-        os.replace(tmp, cpath)
+        _replace(tmp, cpath)
     return _unpack(out)
 
 

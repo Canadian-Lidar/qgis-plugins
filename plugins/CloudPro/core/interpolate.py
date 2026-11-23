@@ -25,6 +25,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 
 from . import store as S
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 METHODS = [("hole_idw", "Hole - inverse distance"), ("hole_tri", "Hole - triangulation (straight line)"),
            ("area_tri", "Area - triangulation (straight line)"), ("area_extra", "Area - extrapolation (inverse distance)")]
@@ -405,7 +406,7 @@ def _save_file(project, lid):
             os.remove(f)
         return
     np.savez(f + ".tmp.npz", **snap)
-    os.replace(f + ".tmp.npz", f)
+    _replace(f + ".tmp.npz", f)
 
 
 def snapshot(project):

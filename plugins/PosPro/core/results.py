@@ -3,6 +3,7 @@ import csv
 import math
 import os
 import struct
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 STATUS = {6: "Fixed", 5: "Float", 4: "PPP", 3: "Code (DGNSS)", 2: "Single", 1: "INS only", 0: "None"}
 # the Mobile Mapper's GNSS solution colours: fixed mint, float blue, DGNSS
@@ -309,5 +310,5 @@ def write_gpx(qc, path, name="PosPro trajectory"):
             fh.write('<trkpt lat="%.9f" lon="%.9f"><ele>%.3f</ele><time>%s</time></trkpt>\n' % (
                 la, lo, h, geo.gps_to_utc(t).strftime("%Y-%m-%dT%H:%M:%SZ")))
         fh.write("</trkseg></trk>\n</gpx>\n")
-    os.replace(path + ".tmp", path)
+    _replace(path + ".tmp", path)
     return path

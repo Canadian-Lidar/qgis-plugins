@@ -25,6 +25,7 @@ import threading
 import numpy as np
 
 from . import engine
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 REC = np.dtype([("x", "<i4"), ("y", "<i4"), ("z", "<i4"), ("t", "<f8"), ("i", "u1"), ("ret", "u1"),
                 ("ch", "u1"), ("cls", "u1"), ("flag", "u1"), ("line", "<u2"), ("rng", "<u2"), ("az", "<u2"),
@@ -135,7 +136,7 @@ class Store:
             tmp = self.meta_path + ".tmp"
             with open(tmp, "w") as f:
                 json.dump(m, f)
-            os.replace(tmp, self.meta_path)
+            _replace(tmp, self.meta_path)
 
     @property
     def total(self):
@@ -382,7 +383,7 @@ class Store:
         p = self.grid_path(key)
         tmp = p[:-4] + ".tmp.npz"
         np.savez(tmp, **out)
-        os.replace(tmp, p)
+        _replace(tmp, p)
 
     def load_grid(self, key):
         p = self.grid_path(key)

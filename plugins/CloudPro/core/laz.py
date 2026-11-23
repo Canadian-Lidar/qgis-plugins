@@ -14,6 +14,7 @@ import struct
 import sys
 import tempfile
 import threading
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _lock = threading.Lock()
@@ -54,7 +55,7 @@ def _copy_of(src):
             os.makedirs(os.path.dirname(os.path.join(tmp, rel)), exist_ok=True)
             shutil.copyfile(os.path.join(src, rel), os.path.join(tmp, rel))
         try:
-            os.replace(tmp, dst)
+            _replace(tmp, dst)
         except OSError:                     # another QGIS made it first
             shutil.rmtree(tmp, ignore_errors=True)
     for f in os.listdir(base):

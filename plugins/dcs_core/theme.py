@@ -5,6 +5,7 @@ system.
 
 The style sheet is applied to PosPro's own panels only, never to QGIS.
 """
+import sys
 import os
 
 from qgis.PyQt.QtGui import QColor, QFont, QFontDatabase, QPalette
@@ -840,7 +841,16 @@ def install_guard():
     _GUARD = Guard()
     app = QApplication.instance()
     if app is not None:
+        # a DCS Core reloaded by an upgrade left its old guard on the application: every widget was treated twice,
+        # by the old code (audit 23 Nov 2026). The guard in use is kept on the sys module, like the registry.
+        old = sys.__dict__.get("_dcs_core_theme_guard")
+        if old is not None:
+            try:
+                app.removeEventFilter(old)
+            except (RuntimeError, TypeError):
+                pass
         app.installEventFilter(_GUARD)
+        sys.__dict__["_dcs_core_theme_guard"] = _GUARD
     return _GUARD
 
 
@@ -852,6 +862,8 @@ def remove_guard():
     app = QApplication.instance()
     if app is not None:
         app.removeEventFilter(_GUARD)
+    if sys.__dict__.get("_dcs_core_theme_guard") is _GUARD:
+        sys.__dict__.pop("_dcs_core_theme_guard", None)
     _GUARD = None
 
 
