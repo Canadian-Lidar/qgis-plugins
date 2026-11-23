@@ -24,6 +24,7 @@ import struct
 import time
 
 import numpy as np
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 KNOT = 10                       # a placed position every KNOT samples (linear between)
 BIN_M = 0.5                     # the seabed profile in bins of slant range
@@ -258,7 +259,7 @@ def process_line(project, rec, ln, A, cal, traj, proj, geoid, sound_speed=None, 
              E=E, N=N, Z=Z, ang=ang, alt=alt.astype(np.float32), side=np.sign(side) or 1.0, head=did,
              raw_lo=lo, raw_hi=hi, hE=hE.astype(np.float32), hN=hN.astype(np.float32),
              hZ=hZ.astype(np.float32), nav=nav, sos=float(d0["sos_dmps"]) / 10.0)
-    os.replace(line_file(project, ln["id"]) + ".tmp.npz", line_file(project, ln["id"]))
+    _replace(line_file(project, ln["id"]) + ".tmp.npz", line_file(project, ln["id"]))
     if progress:
         progress(1.0)
     return {"pings": n, "samples": ns, "placed_pct": round(100.0 * float(np.isfinite(E).mean()), 1),
@@ -588,7 +589,7 @@ def write_geotiff(path, G, x0, y1, cell, origin, crs, byte=False, palette="grey"
         ds.SetProjection(wkt)
     ds.FlushCache()
     ds = None
-    os.replace(tmp, path)
+    _replace(tmp, path)
     return path
 
 
@@ -820,7 +821,7 @@ def write_xtf(project, line_ids, path, progress=None, cancel=None):
             struct.pack_into("<I", P, 232, d.microsecond // 1000)
             f.write(P + body + b"\0" * (tot64 - tot))
             written += 1
-    os.replace(path + ".tmp", path)
+    _replace(path + ".tmp", path)
     if progress:
         progress(1.0)
     return written

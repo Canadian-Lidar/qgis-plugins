@@ -11,6 +11,7 @@ import shutil
 import time
 
 from . import engine, geo, products, rinex
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 
 class Ctx:
@@ -1272,10 +1273,10 @@ def publish_handover(project, ctx):
         os.remove(os.path.join(od, "trajectory.json"))
     except OSError:
         pass
-    os.replace(written[0], sbet)
-    os.replace(written[1], smr)
+    _replace(written[0], sbet)
+    _replace(written[1], smr)
     shutil.copyfile(os.path.join(project.work_dir, "results", "qc.csv"), qcf + ".tmp")
-    os.replace(qcf + ".tmp", qcf)
+    _replace(qcf + ".tmp", qcf)
     c = project.cfg
     span = project.rover_span() or (0, 0)
     leap = geo.leap_seconds(geo.gps_to_utc(span[0])) if span[0] else 18

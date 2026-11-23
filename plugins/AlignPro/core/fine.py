@@ -15,6 +15,7 @@ import time
 import numpy as np
 
 from . import clraw, engine, hesai
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 DENSE_VERSION = 2
 BOX_KINDS = ("roll", "pitch", "heading")
@@ -302,7 +303,7 @@ def dense_points(project, boxes, progress=None, cancelled=None):
         tmp = cpath + ".tmp.npz"
         np.savez(tmp, meta=np.frombuffer(json.dumps({"names": names, "stats": stats}).encode(), np.uint8),
                  **{k: v for k, v in out.items()})
-        os.replace(tmp, cpath)
+        _replace(tmp, cpath)
         _prune(project.work, cpath)
     out["stats"] = stats
     return out

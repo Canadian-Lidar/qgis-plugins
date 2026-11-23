@@ -122,7 +122,7 @@ class ClrawFile:
             raise ClrawError("%s: not an MCAP/.clraw file (%s)" % (self.name, e))
         self.profile = self._m.profile
         self.metadata = dict(self._m.metadata.get("clraw", {}))
-        self.attachments = {k: bytes(v) for k, v in self._m.attachments.items()}
+        self.attachments = self._m.attachments          # read when asked for (1.19.4)
         self.channels = {cid: c["topic"] for cid, c in self._m.channels.items()}       # id -> topic
         self._as_ch = {cid: TOPICS.get(t, cid) for cid, t in self.channels.items()}   # file id -> CH_*
         self.chunks = 0

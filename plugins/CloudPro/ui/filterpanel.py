@@ -15,6 +15,7 @@ import os
 from ..core import filters as F
 from ..qt import QtCore, QtWidgets, Qt, Signal, exec_
 from . import chrome, theme
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 SCOPES = ["Inspection Area", "Slice", "Selected lines (whole project)", "Entire project"]
 MOD_TEXT = {"R": "rejects points", "C": "sets classes", "Z": "shifts heights", "R/Z/C": "re-accepts, resets shifts "
@@ -327,7 +328,7 @@ class FilterPanel(QtWidgets.QWidget):
             tmp = os.path.join(self.folder, "groups.json.tmp")
             with open(tmp, "w") as f:
                 json.dump([g.to_dict() for g in self.groups], f, indent=1)
-            os.replace(tmp, os.path.join(self.folder, "groups.json"))
+            _replace(tmp, os.path.join(self.folder, "groups.json"))
 
     def save(self):
         if not self.folder:

@@ -18,6 +18,7 @@ import os
 import sys
 
 import numpy as np
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 VERSION = 3                         # cp_version() this code expects
 _lib = None
@@ -80,7 +81,7 @@ def _loadable_copy(src):
             fd, tmp = tempfile.mkstemp(dir=dst_dir, suffix=ext + ".tmp")
             os.close(fd)
             shutil.copyfile(src, tmp)
-            os.replace(tmp, dst)
+            _replace(tmp, dst)
         for f in os.listdir(dst_dir):                       # older copies (fails silently while in use)
             if f != os.path.basename(dst) and f.startswith(name + "-"):
                 try:

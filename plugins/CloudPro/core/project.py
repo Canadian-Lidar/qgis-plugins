@@ -21,6 +21,7 @@ import os
 import numpy as np
 
 from .store import Store
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 VERSION = 2
 PLUGIN = "CloudPro"
@@ -46,10 +47,10 @@ def _atomic_json(path, obj):
         json.dump(obj, f, indent=1)
     if os.path.exists(path):
         try:
-            os.replace(path, path + ".bak")
+            _replace(path, path + ".bak")
         except OSError:
             pass
-    os.replace(tmp, path)
+    _replace(tmp, path)
 
 
 def crs_from_dcs(dcs):
@@ -237,11 +238,11 @@ class Project:
         if os.path.exists(cur):
             aside = "%s.old_%s" % (cur, _dt.datetime.now().strftime("%Y%m%d%H%M%S%f"))
             try:
-                os.replace(cur, aside)
+                _replace(cur, aside)
             except OSError:
                 gc.collect()                    # Windows: a memory map not yet released
-                os.replace(cur, aside)
-        os.replace(new, cur)
+                _replace(cur, aside)
+        _replace(new, cur)
         if aside:
             shutil.rmtree(aside, ignore_errors=True)
 
@@ -306,10 +307,10 @@ class Project:
             d = os.path.join(self.work, name)
             if os.path.exists(d):
                 try:
-                    os.replace(d, "%s.old_%s" % (d, stamp))
+                    _replace(d, "%s.old_%s" % (d, stamp))
                 except OSError:
                     gc.collect()
-                    os.replace(d, "%s.old_%s" % (d, stamp))
+                    _replace(d, "%s.old_%s" % (d, stamp))
                 shutil.rmtree("%s.old_%s" % (d, stamp), ignore_errors=True)
         self.data["lines"] = []
         self.data["inputs"] = {}

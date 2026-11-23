@@ -6,6 +6,7 @@ import io
 import os
 import re
 import shutil
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 
 
@@ -41,7 +42,7 @@ def decompress_to(path, out_dir):
     tmp = out + ".part"
     with gzip.open(path, "rb") as fi, open(tmp, "wb") as fo:
         shutil.copyfileobj(fi, fo, 1 << 20)
-    os.replace(tmp, out)
+    _replace(tmp, out)
     return out
 
 

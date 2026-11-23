@@ -25,6 +25,7 @@ import time
 import numpy as np
 
 from . import clraw, engine, geo, lines as lines_mod, trajectory
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 VERSION = "1.11.0"
 STAGE_FILE = "alignpro.json"
@@ -186,7 +187,7 @@ class Project:
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 f.write(text)
-            os.replace(tmp, self.path)
+            _replace(tmp, self.path)
 
     def log(self, msg):
         line = "%s  %s" % (dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), msg)

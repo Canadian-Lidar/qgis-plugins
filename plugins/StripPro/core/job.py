@@ -20,6 +20,7 @@ from . import strip as ST
 from dcs_core import frames as _frames
 
 from .frames import LocalFrame, rodrigues, zyx_from_rot
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 Z0 = _frames.HESAI_ZERO               # the hesai_navaq adapter's zero (dcs_core.frames)
 KEEP_PACKET = 1               # every Lidar packet ...
@@ -287,7 +288,7 @@ def write_outputs(inputs, summary, plugin_version="", progress=None):
     tmp = sb + ".tmp"
     dsbet.write(tmp, ct["t"], ct["lat"], ct["lon"], ct["h"], ct["roll"], ct["pitch"], ct["heading"],
                 tr.leap, start=tr.week_start)
-    os.replace(tmp, sb)
+    _replace(tmp, sb)
     files = {"sbet": sb}
     if inputs.smrmsg and os.path.exists(inputs.smrmsg):
         tm, m = dsbet.read_smrmsg(inputs.smrmsg, tr.week_start, tr.leap)
@@ -297,7 +298,7 @@ def write_outputs(inputs, summary, plugin_version="", progress=None):
             out[k] = np.interp(ct["t"], tm, m[k])
         sm = os.path.join(od, "trajectory_smrmsg.out")
         out.tofile(sm + ".tmp")
-        os.replace(sm + ".tmp", sm)
+        _replace(sm + ".tmp", sm)
         files["smrmsg"] = sm
     doc = inputs.traj_doc
     rh = dsbet.holes_summary(ct["t"])

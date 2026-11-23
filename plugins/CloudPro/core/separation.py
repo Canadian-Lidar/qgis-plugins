@@ -54,6 +54,7 @@ MIN_WALLS = 30.0                  # horizontal information (sum of nx^2+ny^2 per
 
 
 from .importer import Cancelled                      # noqa: E402  (the window treats it as cancelled: nothing written)
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 
 def folder(project):
@@ -954,7 +955,7 @@ def _atomic_json(path, obj):
     tmp = path + ".part"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(obj, f, indent=1)
-    os.replace(tmp, path)
+    _replace(tmp, path)
 
 
 def write_feedback(project, res, tol=DEFAULT_TOLERANCE):
@@ -990,11 +991,11 @@ def save(project, res):
         arrs = {("t" + k): v for k, v in res.grids.items()}
         arrs.update({("p%s_%d_%d" % kab): v for kab, v in res.pair_cells.items()})
         np.savez_compressed(f, **arrs)
-    os.replace(tmp, os.path.join(d, "grids.npz"))
+    _replace(tmp, os.path.join(d, "grids.npz"))
     tmp = os.path.join(d, "separation.json.part")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(res.data, f, indent=1)
-    os.replace(tmp, os.path.join(d, "separation.json"))
+    _replace(tmp, os.path.join(d, "separation.json"))
 
 
 def stamp(project):

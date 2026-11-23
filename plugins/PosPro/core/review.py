@@ -29,6 +29,7 @@ import os
 import shutil
 import struct
 import time
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 TRJ_HDR = 72
 TRJ = struct.Struct("<dddd30fBBBBf")          # trj_rec_t, 160 bytes
@@ -350,7 +351,7 @@ def snapshot_original(project):
     for src, dst in ((os.path.join(d, "trajectory.bin"), tb), (os.path.join(d, "qc.csv"), qb)):
         if os.path.exists(src):
             shutil.copyfile(src, dst + ".tmp")
-            os.replace(dst + ".tmp", dst)
+            _replace(dst + ".tmp", dst)
     r = state(project)
     r["excluded_in_run"] = [list(w) for w in exclusions(project)]
 
@@ -417,7 +418,7 @@ def apply(project):
             fh.write(b"".join(TRJ.pack(*r_) for r_ in recs))
             for r_ in recs:
                 changed[round(r_[I_T], 3)] = r_
-    os.replace(out + ".tmp", out)
+    _replace(out + ".tmp", out)
     _rewrite_qc(qb, outq, changed)
     return len(changed)
 
@@ -516,7 +517,7 @@ def _rewrite_qc(src, dst, changed):
                     row[ix["sd_e"]] = "%.4f" % r_[I_SDP + 1]
                     row[ix["sd_d"]] = "%.4f" % r_[I_SDP + 2]
             wr.writerow(row)
-    os.replace(dst + ".tmp", dst)
+    _replace(dst + ".tmp", dst)
 
 
 def summary(project):
@@ -573,5 +574,5 @@ def rt_to_pass(rt_path, out_path, span=None):
         fo.write(b"PPTRJ001" + struct.pack("<Q", n) + struct.pack("<3d", 0, 0, 0) + struct.pack("<ii", 0, 1) +
                  b"\0" * 24)
         out.tofile(fo)
-    os.replace(out_path + ".tmp", out_path)
+    _replace(out_path + ".tmp", out_path)
     return n

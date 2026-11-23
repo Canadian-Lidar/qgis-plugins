@@ -17,6 +17,7 @@ import zlib
 
 from . import geo
 from .engine import PLUGIN_DIR
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 BKG = "https://igs.bkg.bund.de/root_ftp/IGS"
 IGN = "https://igs.ign.fr/pub/igs"
@@ -293,7 +294,7 @@ def _save(data, path):
     tmp = path + ".part"
     with open(tmp, "wb") as fh:
         fh.write(data)
-    os.replace(tmp, path)
+    _replace(tmp, path)
 
 
 def complete(path, day=None, min_size=1):
@@ -334,10 +335,10 @@ def fetch(urls, out_path, log=None, min_size=100, timeout=120, day=None):
                 with gzip.open(dl, "rb") as fi, open(part, "wb") as fo:
                     shutil.copyfileobj(fi, fo, 1 << 20)
             else:
-                os.replace(dl, part)
+                _replace(dl, part)
             if os.path.getsize(part) < min_size:
                 raise DownloadError("%s: empty file" % u)
-            os.replace(part, out_path)
+            _replace(part, out_path)
             return out_path
         except (DownloadError, OSError, zlib.error, EOFError) as e:
             errors.append(str(e))
@@ -433,7 +434,7 @@ def precise(day, log=None):
                 os.makedirs(os.path.dirname(missing_f), exist_ok=True)
                 with open(missing_f + ".tmp", "w", encoding="utf-8") as fh:
                     json.dump(missing, fh)
-                os.replace(missing_f + ".tmp", missing_f)
+                _replace(missing_f + ".tmp", missing_f)
             except OSError:
                 pass
     raise DownloadError("no precise orbit/clock found for %s (final products appear ~2 weeks after "
@@ -444,14 +445,14 @@ def antex(log=None, max_age_days=60):
     out = os.path.join(cache_dir(), "igs20.atx")
     if os.path.exists(out) and time.time() - os.path.getmtime(out) > max_age_days * 86400:
         try:
-            os.replace(out, out + ".old")
+            _replace(out, out + ".old")
         except OSError:
             pass
     try:
         return fetch(["%s/igs20.atx" % IGS_FILES, "%s/station/general/igs20.atx" % IGN], out, log, 100000)
     except DownloadError:
         if os.path.exists(out + ".old"):
-            os.replace(out + ".old", out)
+            _replace(out + ".old", out)
             return out
         raise
 
@@ -470,7 +471,7 @@ def crx2rnx(path, log=None):
         if not (os.path.exists(plain) and os.path.getmtime(plain) >= os.path.getmtime(src)):
             with gzip.open(src, "rb") as fi, open(plain + ".part", "wb") as fo:
                 shutil.copyfileobj(fi, fo, 1 << 20)
-            os.replace(plain + ".part", plain)
+            _replace(plain + ".part", plain)
         src = plain
     low = src.lower()
     if low.endswith(".crx"):
@@ -490,7 +491,7 @@ def crx2rnx(path, log=None):
         if r.returncode not in (0, 2):
             raise DownloadError("compact RINEX could not be decompressed: %s" %
                                 r.stderr.decode(errors="replace")[:300])
-        os.replace(out + ".part", out)
+        _replace(out + ".part", out)
     finally:
         if os.path.exists(out + ".part"):
             try:

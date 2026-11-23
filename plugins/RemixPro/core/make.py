@@ -30,6 +30,7 @@ import time
 
 from . import NAME, __version__, beamworx, inertial, notes
 from .sources import BEAMWORX, CLRAW, IE, OUTPUT_LABELS, QINERTIA
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 NOTE = ".made_from.json"
 DAY_CLRAW = "CLRAW"
@@ -174,7 +175,7 @@ def _publish_day(work, folder, item, line, files, sig, extra):
             except OSError:
                 pass
     for f in files:
-        os.replace(os.path.join(work, f), os.path.join(folder, f))
+        _replace(os.path.join(work, f), os.path.join(folder, f))
     lines_path = os.path.join(notes_dir, LINES_FILE)
     known = _read_json(lines_path, {})
     known[item.name] = int(line)
@@ -189,7 +190,7 @@ def _write_json(path, obj):
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(obj, f, indent=1)
-    os.replace(tmp, path)
+    _replace(tmp, path)
 
 
 def _check_out_root(out_root, item):
@@ -218,8 +219,8 @@ def _publish(work, final, files, sig, extra):
     old = final + ".old"
     shutil.rmtree(old, ignore_errors=True)
     if os.path.isdir(final):
-        os.replace(final, old)
-    os.replace(work, final)
+        _replace(final, old)
+    _replace(work, final)
     shutil.rmtree(old, ignore_errors=True)
 
 

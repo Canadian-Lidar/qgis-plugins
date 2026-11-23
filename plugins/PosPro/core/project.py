@@ -8,6 +8,7 @@ import copy
 import json
 import os
 import time
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 PROJECT_SUFFIX = ".pospro.json"
 
@@ -319,7 +320,7 @@ class Project:
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(self.cfg, fh, indent=1, sort_keys=False)
-        os.replace(tmp, self.path)
+        _replace(tmp, self.path)
         self.dirty = False
         try:
             self.sync_dcs()

@@ -7,6 +7,7 @@ import numpy as np
 from .las import writer_for
 from .pointset import PointSet, rect_corners, to_box_frame
 from .store import REJECTED, parse_key
+from dcs_core.files import replace as _replace   # retried while Windows holds the target open (audit 23 Nov 2026)
 
 
 def _iter_tiles(project, box=None, lines=None, include_rejected=False, classes=None, keys=None):
@@ -151,7 +152,7 @@ def _finish(pairs, cancelled):
                 pass
         raise Cancelled("cancelled: nothing was written")
     for a, b in pairs:
-        os.replace(a, b)
+        _replace(a, b)
 
 
 def export_las(project, path, box=None, lines=None, include_rejected=False, classes=None, per_line=False,
@@ -401,7 +402,7 @@ def export_grid(project, path, cell=0.5, stat="mean", box=None, lines=None, clas
         except OSError:
             pass
         raise
-    os.replace(tmp, path)
+    _replace(tmp, path)
     return path, valid
 
 
@@ -417,7 +418,7 @@ def write_grid(path, G, x0, ytop, cell, crs):
             f.write("ncols %d\nnrows %d\nxllcorner %.3f\nyllcorner %.3f\ncellsize %.4f\nNODATA_value -9999\n" %
                     (G.shape[1], G.shape[0], x0, ytop - G.shape[0] * cell, cell))
             np.savetxt(f, np.where(np.isnan(G), -9999.0, G), fmt="%.3f")
-        os.replace(_tmp(p), p)
+        _replace(_tmp(p), p)
         return p
     drv = gdal.GetDriverByName("GTiff")
     ds = drv.Create(_tmp(path), G.shape[1], G.shape[0], 1, gdal.GDT_Float32, ["COMPRESS=DEFLATE", "TILED=YES"])
@@ -430,7 +431,7 @@ def write_grid(path, G, x0, ytop, cell, crs):
     b.WriteArray(np.where(np.isnan(G), -9999.0, G).astype(np.float32))
     ds.FlushCache()
     ds = None
-    os.replace(_tmp(path), path)
+    _replace(_tmp(path), path)
     return path
 
 
